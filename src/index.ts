@@ -2,7 +2,16 @@ import {
   ContainerIdentificationError,
   ContainerIdentificationService
 } from "./application/containerIdentificationService";
-import { SurveyRepository } from "./infrastructure/d1/surveyRepository";
+import {
+  DoorIdentificationError,
+  DoorIdentificationService
+} from "./application/doorIdentificationService";
+import { QwenDoorIdentityProvider } from "./infrastructure/ai/qwenDoorIdentityProvider";
+import {
+  IdentificationAttemptRepository,
+  SurveyRepository
+} from "./infrastructure/d1/surveyRepository";
+import { PhotoStore } from "./infrastructure/r2/photoStore";
 
 export interface Env {
   DB: D1Database;
@@ -32,14 +41,106 @@ function identificationService(env: Env): ContainerIdentificationService {
   return new ContainerIdentificationService(new SurveyRepository(env.DB));
 }
 
+function doorIdentificationService(env: Env): DoorIdentificationService {
+  const ai = env.AI as unknown as {
+    run(model: string, input: unknown): Promise<unknown>;
+  };
+
+  return new DoorIdentificationService(
+    new QwenDoorIdentityProvider(ai),
+    new PhotoStore(env.PHOTOS),
+    new IdentificationAttemptRepository(env.DB),
+    new SurveyRepository(env.DB)
+  );
+}
+
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method === "GET" && url.pathname === "/api/health") {
     return json({
       ok: true,
       service: "Container Survey LLM AI",
-      phase: "POC foundation",
+      phase: "POC phase 2 - door OCR",
+      visionModel: "@cf/qwen/qwen3.8-27b",
       time: new Date().toISOString()
     });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/door/identify") {
+    try {
+      const form = await request.formData();
+      const value = form.get("doorPhoto");
+
+      if (!(value instanceof File)) {
+        throw new DoorIdentificationError(
+          "A door photo is required.",
+          "IMAGE_REQUIRED"
+        );
+      }
+
+      const result = await doorIdentificationService(env).analyse(value);
+      return json({ ok: true, result });
+    } catch (error) {
+      if (error instanceof DoorIdentificationError) {
+        return json(
+          { ok: false, error: error.code, message: error.message },
+          422
+        );
+      }
+
+      return json(
+        {
+          ok: false,
+          error: "DOOR_OCR_FAILED",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to analyse the container door photo."
+        },
+        502
+      );
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/door/confirm") {
+    try {
+      const body = await readJson<{
+        attemptId?: string;
+        containerNo?: string;
+        isoSizeType?: string;
+        depotCode?: string;
+      }>(request);
+
+      const result = await doorIdentificationService(env).confirm({
+        attemptId: body.attemptId ?? "",
+        containerNo: body.containerNo ?? "",
+        isoSizeType: body.isoSizeType ?? "",
+        depotCode: body.depotCode
+      });
+
+      return json(
+        { ok: true, result },
+        result.survey.resumed ? 200 : 201
+      );
+    } catch (error) {
+      if (error instanceof DoorIdentificationError) {
+        return json(
+          { ok: false, error: error.code, message: error.message },
+          422
+        );
+      }
+
+      return json(
+        {
+          ok: false,
+          error: "DOOR_CONFIRM_FAILED",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to confirm the container identity."
+        },
+        500
+      );
+    }
   }
 
   if (request.method === "POST" && url.pathname === "/api/container/validate") {
