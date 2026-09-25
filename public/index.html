@@ -40,6 +40,13 @@
       </label>
       <input id="doorGalleryPhoto" type="file" accept="image/*" hidden>
 
+      <div class="info">
+        <strong>Front-end testing shortcut</strong>
+        <span>Skip door OCR when you only need to test the survey screens. No door photo will be attached to the survey.</span>
+        <button id="manualIdentityBtn" class="secondary" type="button">Skip door photo · Enter manually</button>
+        <button id="defaultGpBtn" class="secondary" type="button">Use default GP test container</button>
+      </div>
+
       <div id="previewWrap" class="previewWrap" hidden>
         <img id="preview" alt="Door photo preview">
         <button id="retake" class="secondary" type="button">Retake photo</button>
@@ -62,7 +69,7 @@
         <span class="stepNo">2</span>
         <div>
           <h2>Confirm identity</h2>
-          <p>Review the OCR result. Edit only if the marking was read incorrectly.</p>
+          <p id="reviewIntro">Review the OCR result. Edit only if the marking was read incorrectly.</p>
         </div>
       </div>
 
