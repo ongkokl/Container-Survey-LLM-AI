@@ -161,6 +161,17 @@
         </div>
       </div>
       <button id="analyseComponentBtn" class="secondary" type="button" hidden>Analyse CEDEX component</button>
+      <div id="damageReview" class="info" hidden>
+        <strong>AI damage suggestion</strong>
+        <span id="damageSuggestion"></span><span id="damageCandidates"></span>
+        <div id="damageDecision" hidden>
+          <label for="damageSelect">Surveyor damage</label>
+          <select id="damageSelect"></select>
+          <button id="confirmDamageBtn" class="primary" type="button">Accept damage</button>
+          <span id="damageDecisionMessage" class="message" aria-live="polite"></span>
+        </div>
+      </div>
+      <button id="analyseDamageBtn" class="secondary" type="button" hidden>Analyse IICL damage</button>
     </section>
   </main>
 
