@@ -577,7 +577,10 @@ confirmComponentBtn.addEventListener("click",async()=>{
       ?"Component accepted: "+result.finalCode
       :"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
     componentSelect.disabled=true;confirmComponentBtn.disabled=true;confirmComponentBtn.textContent="Component confirmed ✓";
-    analyseDamageBtn.hidden=false;
+    analyseDamageBtn.hidden=!result.damageAnalysisAvailable;
+    if(!result.damageAnalysisAvailable){
+      componentDecisionMessage.textContent+=" · Damage-code analysis is not yet loaded for this component.";
+    }
   }catch(e){
     componentDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save component decision.";
     setBusy(confirmComponentBtn,false,"Saving…","Accept component");
@@ -592,13 +595,18 @@ analyseDamageBtn.addEventListener("click",async()=>{
     const result=await apiJson("/api/cedex/damage-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
     damageSuggestion.textContent=result.selectedCode?result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":""):"No reliable damage selected · surveyor review required";
     damageCandidates.textContent=result.candidates?.length?"Candidates: "+result.candidates.map(x=>x.code+" "+Math.round((x.confidence??0)*100)+"%").join(" · "):"No valid damage candidates returned.";
-    damageAiCode=result.selectedCode??null;damageSelect.innerHTML="";
+    damageAiCode=result.selectedCode??null;damageSelect.innerHTML="";damageSelect.disabled=false;
+    if(!result.selectedCode){
+      const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="Select damage code";placeholder.disabled=true;placeholder.selected=true;damageSelect.appendChild(placeholder);
+    }
     for(const x of result.allowedDamages??[]){const o=document.createElement("option");o.value=x.damage_code;o.textContent=x.damage_code+" — "+x.damage_name;if(x.damage_code===result.selectedCode)o.selected=true;damageSelect.appendChild(o);}
-    damageDecision.hidden=!result.selectedCode;damageDecisionMessage.textContent="";confirmDamageBtn.textContent="Accept "+(result.selectedCode??"damage");
+    damageDecision.hidden=!(result.allowedDamages?.length);damageDecisionMessage.textContent="";
+    confirmDamageBtn.disabled=!damageSelect.value;
+    confirmDamageBtn.textContent=result.selectedCode?"Accept "+result.selectedCode:"Select damage code";
   }catch(e){damageSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse damage.";}
   finally{setBusy(analyseDamageBtn,false,"Analysing damage…","Analyse IICL damage");}
 });
-damageSelect.addEventListener("change",()=>{confirmDamageBtn.textContent=damageSelect.value===damageAiCode?"Accept "+damageAiCode:"Confirm correction";});
+damageSelect.addEventListener("change",()=>{confirmDamageBtn.disabled=!damageSelect.value;confirmDamageBtn.textContent=damageSelect.value===damageAiCode?"Accept "+damageAiCode:"Confirm correction";});
 confirmDamageBtn.addEventListener("click",async()=>{
   if(!currentFinding||!damageSelect.value)return;setBusy(confirmDamageBtn,true,"Saving…","Accept damage");
   try{

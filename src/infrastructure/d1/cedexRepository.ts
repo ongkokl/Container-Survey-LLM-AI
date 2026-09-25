@@ -160,6 +160,7 @@ export class CedexRepository {
       this.db.prepare("UPDATE findings SET final_component_code=?,status=?,updated_at=? WHERE id=?")
         .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId)
     ]);
-    return {decisionId,predictionId:prediction.prediction_id,aiCode:prediction.selected_code,finalCode,decision,equipment};
+    const damageRules=await this.damageCodesForFinding(input.findingId);
+    return {decisionId,predictionId:prediction.prediction_id,aiCode:prediction.selected_code,finalCode,decision,equipment,damageAnalysisAvailable:damageRules.damages.length>0,damageCodeCount:damageRules.damages.length};
   }
 }
