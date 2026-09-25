@@ -29,9 +29,9 @@ Evidence
 
 The system does not rely on one unconstrained prompt to invent four codes.
 
-## Phase 1 foundation
+## Implemented
 
-Implemented on branch `poc-phase-1-foundation`:
+### Phase 1 — foundation
 
 - Cloudflare Worker + static mobile UI
 - D1 normalized data model
@@ -42,6 +42,21 @@ Implemented on branch `poc-phase-1-foundation`:
 - R2/Workers AI bindings prepared
 - Architecture and data-model documentation
 - ISO 6346 unit tests
+
+### Phase 2 — door Vision OCR
+
+- Mobile door-camera upload
+- Client-side image optimisation for OCR
+- Door photo stored in R2
+- Qwen 3.8 27B vision provider
+- Extracts container number + ISO size/type
+- ISO 6346 check-digit validation
+- D1 ISO size/type lookup
+- Surveyor review/edit before confirmation
+- Creates or resumes the correct gate-in cycle
+- Preserves the original OCR attempt and final confirmed identity separately
+- Door photo linked to the survey evidence
+- CI workflow for TypeScript + unit tests
 
 ## Cloudflare resources
 
@@ -66,6 +81,22 @@ npm run db:migrate:local
 npm run dev
 ```
 
+For the deployed database:
+
+```bash
+npm run db:migrate:remote
+```
+
+## Vision model
+
+Phase 2 uses Cloudflare Workers AI:
+
+```
+@cf/qwen/qwen3.8-27b
+```
+
+The model is used only to read visible markings. Application code performs ISO 6346 validation and database lookup rather than trusting model interpretation.
+
 ## Current API
 
 ### Health
@@ -74,32 +105,67 @@ npm run dev
 GET /api/health
 ```
 
-### Validate container identity
+### Analyse door photo
 
 ```
-POST /api/container/validate
+POST /api/door/identify
+Content-Type: multipart/form-data
+
+doorPhoto=<image>
+```
+
+Returns the OCR observation, confidence, deterministic validation result, and derived GP/RF/container dimensions when the ISO code exists in D1.
+
+### Confirm door identity
+
+```
+POST /api/door/confirm
 Content-Type: application/json
 
 {
-  "containerNo": "MSCU6639870",
-  "isoSizeType": "45G1"
-}
-```
-
-### Start or resume gate cycle
-
-```
-POST /api/surveys/start
-Content-Type: application/json
-
-{
+  "attemptId": "...",
   "containerNo": "MSCU6639870",
   "isoSizeType": "45G1",
   "depotCode": "POC"
 }
 ```
 
-If the same container already has an active gate cycle, the API returns that existing survey instead of creating a duplicate cycle.
+Confirmation creates a new gate cycle or resumes the existing active gate cycle for the same container.
+
+### Validate identity manually
+
+```
+POST /api/container/validate
+Content-Type: application/json
+```
+
+### Start/resume manually
+
+```
+POST /api/surveys/start
+Content-Type: application/json
+```
+
+## Data handling
+
+The container number is the long-lived asset identity, not the survey key.
+
+```
+Container
+  -> Gate Cycle 1 -> Survey
+  -> Gate Cycle 2 -> Survey
+  -> Gate Cycle 3 -> Survey
+```
+
+Door OCR is also treated as evidence rather than truth:
+
+```
+Door photo
+  -> AI OCR observation
+  -> ISO validation
+  -> Surveyor confirmation/edit
+  -> final gate-cycle identity
+```
 
 ## Documentation
 
@@ -108,4 +174,11 @@ If the same container already has an active gate cycle, the API returns that exi
 
 ## Next phase
 
-Phase 2 will connect the door-camera image to Vision OCR, store the image in R2, extract container number + ISO size/type, validate them, and create/resume the gate cycle automatically.
+Phase 3 will add finding capture:
+
+- overview photo of the relevant container face
+- surveyor-drawn container-face boundary
+- damage location marker
+- close-up component photo
+- component and damage annotations
+- R2 + D1 persistence ready for CEDEX vision analysis
