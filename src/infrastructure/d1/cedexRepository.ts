@@ -17,7 +17,15 @@ export class CedexRepository {
   async components(equipment:"GP"|"RF"):Promise<ComponentCandidate[]>{
     const result=await this.db.prepare(`
       SELECT component_code,component_name,standard_version
-      FROM component_codes WHERE equipment_type=? AND active=1
+      FROM component_codes c
+      WHERE c.equipment_type=? AND c.active=1
+        AND NOT EXISTS (
+          SELECT 1 FROM component_codes newer
+          WHERE newer.equipment_type=c.equipment_type
+            AND newer.component_code=c.component_code
+            AND newer.active=1
+            AND COALESCE(newer.effective_from,'0000-00-00') > COALESCE(c.effective_from,'0000-00-00')
+        )
       ORDER BY component_code`).bind(equipment).all<ComponentCandidate>();
     return result.results;
   }
