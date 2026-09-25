@@ -10,7 +10,8 @@
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply container-survey-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply container-survey-db --remote",
-    "cf:types": "wrangler types"
+    "cf:types": "wrangler types",
+    "test:damage:d1": "node scripts/test-damage-d1.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260924.1",
