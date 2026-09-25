@@ -62,4 +62,33 @@ export class CedexRepository {
     }
     return {predictionId};
   }
+
+  async latestComponentPrediction(findingId:string){
+    return this.db.prepare(`
+      SELECT ap.id AS prediction_id,ap.selected_code
+      FROM ai_predictions ap
+      JOIN ai_runs ar ON ar.id=ap.ai_run_id
+      WHERE ar.finding_id=? AND ap.prediction_type='COMPONENT'
+      ORDER BY ap.created_at DESC LIMIT 1`
+    ).bind(findingId).first<{prediction_id:string;selected_code:string|null}>();
+  }
+
+  async decideComponent(input:{findingId:string;finalCode:string;}){
+    const equipment=await this.equipmentForFinding(input.findingId);
+    const allowed=await this.components(equipment);
+    const finalCode=input.finalCode.trim().toUpperCase();
+    if(!allowed.some(x=>x.component_code===finalCode)) throw new Error("Select a verified component code for this equipment type.");
+    const prediction=await this.latestComponentPrediction(input.findingId);
+    if(!prediction) throw new Error("Analyse the component before confirming it.");
+    const decision=prediction.selected_code===finalCode?"APPROVED":"CORRECTED";
+    const now=new Date().toISOString(),decisionId=crypto.randomUUID();
+    await this.db.batch([
+      this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'COMPONENT',?,?,?,?)")
+        .bind(decisionId,input.findingId,prediction.prediction_id,prediction.selected_code,finalCode,decision,now),
+      this.db.prepare("UPDATE ai_predictions SET status=? WHERE id=?").bind(decision,prediction.prediction_id),
+      this.db.prepare("UPDATE findings SET final_component_code=?,status=?,updated_at=? WHERE id=?")
+        .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId)
+    ]);
+    return {decisionId,predictionId:prediction.prediction_id,aiCode:prediction.selected_code,finalCode,decision,equipment};
+  }
 }

@@ -347,6 +347,11 @@ const analyseComponentBtn=document.querySelector("#analyseComponentBtn");
 const cedexReview=document.querySelector("#cedexReview");
 const cedexSuggestion=document.querySelector("#cedexSuggestion");
 const cedexCandidates=document.querySelector("#cedexCandidates");
+const componentDecision=document.querySelector("#componentDecision");
+const componentSelect=document.querySelector("#componentSelect");
+const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
+const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
+let componentAiCode=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
 let aiLocationPoint=null,aiDamageBox=null;
@@ -516,7 +521,37 @@ analyseComponentBtn.addEventListener("click",async()=>{
     cedexCandidates.textContent=result.candidates?.length
       ? "Candidates: "+result.candidates.map(x=>x.code+" "+Math.round((x.confidence??0)*100)+"%").join(" · ")
       : "No valid CEDEX candidates returned.";
+    componentAiCode=result.selectedCode??null;
+    componentDecision.hidden=!result.selectedCode;
+    componentDecisionMessage.textContent="";
+    componentSelect.innerHTML="";
+    for(const candidate of (result.allowedComponents??result.candidates??[])){
+      const code=candidate.component_code??candidate.code,name=candidate.component_name??code;
+      if(!code)continue;
+      const option=document.createElement("option");option.value=code;option.textContent=code+" — "+name;
+      if(code===result.selectedCode)option.selected=true;componentSelect.appendChild(option);
+    }
+    confirmComponentBtn.textContent="Accept "+(result.selectedCode??"component");
   }catch(e){
     cedexSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse CEDEX component.";
   }finally{setBusy(analyseComponentBtn,false,"Analysing component…","Analyse CEDEX component");}
+});
+
+
+componentSelect.addEventListener("change",()=>{
+  confirmComponentBtn.textContent=componentSelect.value===componentAiCode?"Accept "+componentAiCode:"Confirm correction";
+});
+confirmComponentBtn.addEventListener("click",async()=>{
+  if(!currentFinding||!componentSelect.value)return;
+  setBusy(confirmComponentBtn,true,"Saving…","Accept component");
+  try{
+    const result=await apiJson("/api/cedex/component-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:componentSelect.value})});
+    componentDecisionMessage.textContent=result.decision==="APPROVED"
+      ?"Component accepted: "+result.finalCode
+      :"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
+    componentSelect.disabled=true;confirmComponentBtn.disabled=true;confirmComponentBtn.textContent="Component confirmed ✓";
+  }catch(e){
+    componentDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save component decision.";
+    setBusy(confirmComponentBtn,false,"Saving…","Accept component");
+  }
 });

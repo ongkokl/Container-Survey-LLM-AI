@@ -149,7 +149,17 @@
         <button id="saveFindingBtn" class="primary" type="button" disabled>Save finding evidence</button>
       </div>
       <p id="findingMessage" class="message" aria-live="polite"></p>
-      <div id="cedexReview" class="info" hidden><strong>AI component suggestion</strong><span id="cedexSuggestion"></span><span id="cedexCandidates"></span></div>
+      <div id="cedexReview" class="info" hidden>
+        <strong>AI component suggestion</strong>
+        <span id="cedexSuggestion"></span>
+        <span id="cedexCandidates"></span>
+        <div id="componentDecision" hidden>
+          <label for="componentSelect">Surveyor component</label>
+          <select id="componentSelect"></select>
+          <button id="confirmComponentBtn" class="primary" type="button">Accept component</button>
+          <span id="componentDecisionMessage" class="message" aria-live="polite"></span>
+        </div>
+      </div>
       <button id="analyseComponentBtn" class="secondary" type="button" hidden>Analyse CEDEX component</button>
     </section>
   </main>

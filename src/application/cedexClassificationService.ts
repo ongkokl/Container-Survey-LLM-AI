@@ -61,7 +61,7 @@ Return at most 3 candidates, all from the allowed list.`;
     const rawCandidates=Array.isArray(parsed.candidates)?parsed.candidates:[];
     const candidates=rawCandidates.map((v:any)=>({code:String(v?.code??"").toUpperCase(),confidence:confidence(v?.confidence),reason:String(v?.reason??"")})).filter(x=>allowedSet.has(x.code)).slice(0,3);
     if(selected&&!candidates.some(x=>x.code===selected))candidates.unshift({code:selected,confidence:confidence(parsed.confidence),reason:String(parsed.reason??"")});
-    const result={equipment,selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:String(parsed.reason??""),candidates:candidates.slice(0,3),allowedCount:allowed.length,model:MODEL};
+    const result={equipment,selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:String(parsed.reason??""),candidates:candidates.slice(0,3),allowedComponents:allowed,allowedCount:allowed.length,model:MODEL};
     await this.repo.saveComponentPrediction({findingId,surveyId:context.survey_id,modelName:MODEL,selectedCode:selected,confidence:result.confidence,candidates:result.candidates,response:raw});
     return result;
   }
