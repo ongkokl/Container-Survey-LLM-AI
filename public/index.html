@@ -11,7 +11,7 @@
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">POC · PHASE 2</p>
+        <p class="eyebrow">POC · PHASE 3</p>
         <h1>Container Survey AI</h1>
       </div>
       <span class="status">No login</span>
@@ -127,7 +127,28 @@
         </div>
       </div>
 
-      <p class="message">The next POC phase will add overview damage capture and CEDEX location marking.</p>
+      <button id="addFindingBtn" class="primary" type="button">Add damage finding</button>
+    </section>
+    <section id="findingCard" class="card" hidden>
+      <div class="step"><span class="stepNo">3</span><div><h2>Capture finding</h2><p>Select the container face, take an overview photo and tap the damage position.</p></div></div>
+      <label class="field"><span>Container face</span><select id="findingFace">
+        <option value="">Select face</option><option value="LEFT">Left side</option><option value="RIGHT">Right side</option>
+        <option value="FRONT">Front end</option><option value="DOOR">Door end</option><option value="ROOF">Roof</option><option value="FLOOR">Floor / underside</option>
+      </select></label>
+      <button id="createFindingBtn" class="primary" type="button">Create finding</button>
+      <div id="findingCapture" hidden>
+        <p class="findingLabel" id="findingLabel"></p>
+        <label class="camera compact" for="overviewPhoto"><span class="cameraIcon">▣</span><strong>Take overview photo</strong><span>Show enough of the container face to establish location.</span></label>
+        <input id="overviewPhoto" type="file" accept="image/*" capture="environment" hidden>
+        <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview photo"><canvas id="overviewCanvas"></canvas></div>
+        <p id="tapHelp" class="message" hidden>Tap the damaged position on the overview photo.</p>
+        <label class="camera compact" for="closeupPhoto"><span class="cameraIcon">▣</span><strong>Take close-up photo</strong><span>Keep the damaged component clear and in focus.</span></label>
+        <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
+        <div id="closeupStage" class="annotationStage" hidden><img id="closeupPreview" alt="Close-up photo"><canvas id="closeupCanvas"></canvas></div>
+        <p id="boxHelp" class="message" hidden>Drag a box around the damaged area.</p>
+        <button id="saveFindingBtn" class="primary" type="button" disabled>Save finding evidence</button>
+      </div>
+      <p id="findingMessage" class="message" aria-live="polite"></p>
     </section>
   </main>
 
