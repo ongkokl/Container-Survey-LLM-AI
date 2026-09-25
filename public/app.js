@@ -346,6 +346,7 @@ const findingMessage=document.querySelector("#findingMessage");
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
 let aiLocationPoint=null,aiDamageBox=null;
+let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 
 addFindingBtn.addEventListener("click",()=>{
   currentSurveyId=startedSurvey.textContent.trim();
@@ -372,7 +373,8 @@ function showImage(file,img,stage,canvas,ready){
 }
 
 overviewPhoto.addEventListener("change",()=>{
-  overviewFile=overviewPhoto.files?.[0]??null; locationPoint=null;aiLocationPoint=null;
+  overviewFile=overviewPhoto.files?.[0]??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+  const requestId=++overviewAiRequest;
   if(!overviewFile)return;
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
@@ -380,6 +382,7 @@ overviewPhoto.addEventListener("change",()=>{
       const upload=await compressForOcr(overviewFile),form=new FormData();
       form.append("photo",upload,upload.name||"overview.jpg");form.append("mode","point");
       const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
+      if(requestId!==overviewAiRequest||overviewEdited)return;
       if(result.found&&result.geometry){
         aiLocationPoint={...result.geometry};locationPoint={...result.geometry};drawTarget(overviewCanvas,locationPoint,true);
         tapHelp.textContent="AI proposed this position. Tap the photo to correct it if needed.";
@@ -408,6 +411,7 @@ function drawBox(canvas,box,isAi=false){
 }
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
+  overviewEdited=true;
   const rect=overviewCanvas.getBoundingClientRect();
   locationPoint={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
   drawTarget(overviewCanvas,locationPoint,false);
@@ -417,7 +421,8 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 
 let dragStart=null;
 closeupPhoto.addEventListener("change",()=>{
-  closeupFile=closeupPhoto.files?.[0]??null;damageBox=null;aiDamageBox=null;
+  closeupFile=closeupPhoto.files?.[0]??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
+  const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
     boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
@@ -425,6 +430,7 @@ closeupPhoto.addEventListener("change",()=>{
       const upload=await compressForOcr(closeupFile),form=new FormData();
       form.append("photo",upload,upload.name||"closeup.jpg");form.append("mode","box");
       const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
+      if(requestId!==closeupAiRequest||closeupEdited)return;
       if(result.found&&result.geometry){
         aiDamageBox={...result.geometry};damageBox={...result.geometry};drawBox(closeupCanvas,damageBox,true);
         boxHelp.textContent="AI proposed this damage box. Drag to redraw it if needed.";
@@ -439,6 +445,7 @@ closeupPhoto.addEventListener("change",()=>{
 });
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
+  closeupEdited=true;
   const r=closeupCanvas.getBoundingClientRect();dragStart={x:(event.clientX-r.left)/r.width,y:(event.clientY-r.top)/r.height};closeupCanvas.setPointerCapture(event.pointerId);
 });
 closeupCanvas.addEventListener("pointerup",(event)=>{
