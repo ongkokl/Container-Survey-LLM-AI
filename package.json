@@ -1,0 +1,20 @@
+{
+  "name": "container-survey-llm-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply container-survey-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply container-survey-db --remote"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260925.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.40.0"
+  }
+}
