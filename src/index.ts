@@ -14,6 +14,7 @@ import {
 import { PhotoStore } from "./infrastructure/r2/photoStore";
 import { FindingRepository } from "./infrastructure/d1/findingRepository";
 import { FindingCaptureService } from "./application/findingCaptureService";
+import { MoondreamDamageMarker } from "./infrastructure/ai/moondreamDamageMarker";
 
 export interface Env {
   DB: D1Database;
@@ -71,6 +72,20 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     });
   }
 
+  if (request.method === "POST" && url.pathname === "/api/vision/mark-damage") {
+    try {
+      const form=await request.formData(),file=form.get("photo"),mode=String(form.get("mode")??"point");
+      if(!(file instanceof File)) throw new Error("A photo is required.");
+      if(file.size>8*1024*1024) throw new Error("Photo must be below 8 MB.");
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const marker=new MoondreamDamageMarker(ai);
+      const result=mode==="box"?await marker.detect(file):await marker.point(file);
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"AI_MARK_FAILED",message:error instanceof Error?error.message:"Unable to locate damage."},422);
+    }
+  }
+
   if (request.method === "POST" && url.pathname === "/api/findings") {
     try {
       const body=await readJson<{surveyId?:string;containerFace?:string}>(request);
@@ -111,10 +126,10 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (request.method === "POST" && url.pathname === "/api/annotations") {
     try {
-      const body=await readJson<{photoId?:string;annotationType?:string;geometryType?:string;geometry?:unknown}>(request);
+      const body=await readJson<{photoId?:string;annotationType?:string;geometryType?:string;geometry?:unknown;createdBy?:"AI"|"SURVEYOR"}>(request);
       const result=await findingService(env).annotate({
         photoId:body.photoId??"",annotationType:body.annotationType??"",
-        geometryType:body.geometryType??"",geometry:body.geometry
+        geometryType:body.geometryType??"",geometry:body.geometry,createdBy:body.createdBy
       });
       return json({ok:true,result},201);
     } catch(error) {

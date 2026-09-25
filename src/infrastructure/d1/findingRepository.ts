@@ -55,11 +55,11 @@ export class FindingRepository {
     return id;
   }
 
-  async addAnnotation(input:{photoId:string;type:"CONTAINER_FACE"|"COMPONENT"|"DAMAGE"|"LOCATION_POINT";geometryType:"POINT"|"BOX"|"POLYGON"|"LINE";geometry:unknown;}):Promise<string>{
+  async addAnnotation(input:{photoId:string;type:"CONTAINER_FACE"|"COMPONENT"|"DAMAGE"|"LOCATION_POINT";geometryType:"POINT"|"BOX"|"POLYGON"|"LINE";geometry:unknown;createdBy?:"AI"|"SURVEYOR";}):Promise<string>{
     const id=crypto.randomUUID(),now=new Date().toISOString();
     await this.db.prepare(
-      "INSERT INTO annotations (id,photo_id,annotation_type,geometry_type,geometry_json,created_by,created_at) VALUES (?,?,?,?,?,'SURVEYOR',?)"
-    ).bind(id,input.photoId,input.type,input.geometryType,JSON.stringify(input.geometry),now).run();
+      "INSERT INTO annotations (id,photo_id,annotation_type,geometry_type,geometry_json,created_by,created_at) VALUES (?,?,?,?,?,?,?)"
+    ).bind(id,input.photoId,input.type,input.geometryType,JSON.stringify(input.geometry),input.createdBy??"SURVEYOR",now).run();
     return id;
   }
 }
