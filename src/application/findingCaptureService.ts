@@ -40,7 +40,7 @@ export class FindingCaptureService {
     return {photoId,r2Key:stored.key,role:input.role};
   }
 
-  async annotate(input:{photoId:string;annotationType:string;geometryType:string;geometry:unknown;}){
+  async annotate(input:{photoId:string;annotationType:string;geometryType:string;geometry:unknown;createdBy?:"AI"|"SURVEYOR";}){
     const types=new Set(["CONTAINER_FACE","COMPONENT","DAMAGE","LOCATION_POINT"]);
     const geometries=new Set(["POINT","BOX","POLYGON","LINE"]);
     if(!types.has(input.annotationType)||!geometries.has(input.geometryType)) throw new Error("Invalid annotation.");
@@ -48,7 +48,8 @@ export class FindingCaptureService {
       photoId:input.photoId,
       type:input.annotationType as "CONTAINER_FACE"|"COMPONENT"|"DAMAGE"|"LOCATION_POINT",
       geometryType:input.geometryType as "POINT"|"BOX"|"POLYGON"|"LINE",
-      geometry:input.geometry
+      geometry:input.geometry,
+      createdBy:input.createdBy??"SURVEYOR"
     })};
   }
 }
