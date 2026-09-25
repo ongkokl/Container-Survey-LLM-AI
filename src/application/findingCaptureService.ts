@@ -32,6 +32,7 @@ export class FindingCaptureService {
       bytes,contentType
     });
     await this.repo.addPhoto({
+      photoId,
       surveyId:input.surveyId,findingId:input.findingId,
       role:input.role as "FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP",
       r2Key:stored.key,contentType,width:input.width,height:input.height
