@@ -11,6 +11,9 @@ class FakeStatement {
   bind(...args: unknown[]) { this.args = args; return this; }
 
   async first<T>(): Promise<T|null> {
+    if (this.sql.includes("SELECT gc.observed_container_type AS equipment")) {
+      return { equipment: "GP" } as T;
+    }
     if (this.sql.includes("SELECT final_component_code FROM findings")) {
       return { final_component_code: this.db.finding.final_component_code } as T;
     }
@@ -24,6 +27,12 @@ class FakeStatement {
   }
 
   async all<T>(): Promise<{results:T[]}> {
+    if (this.sql.includes("FROM component_codes c")) {
+      return {results:[
+        {component_code:"PAA",component_name:"Panel Assembly",standard_version:"test"} as T,
+        {component_code:"RLA",component_name:"Rail Assembly",standard_version:"test"} as T
+      ]};
+    }
     if (this.sql.includes("FROM component_damage_rules r")) {
       const componentCode = String(this.args[1]);
       const results = componentCode===this.db.finding.final_component_code
@@ -68,6 +77,10 @@ class FakeStatement {
       const [code,status]=this.args;
       this.db.finding.final_damage_code=String(code);
       this.db.finding.status=String(status);
+    } else if (sql.includes("UPDATE findings SET final_component_code=?")) {
+      const [code,status]=this.args;
+      this.db.finding.final_component_code=String(code);
+      this.db.finding.status=String(status);
     }
     return {success:true};
   }
@@ -99,6 +112,30 @@ function repositoryWithFakeDb(){
 }
 
 describe("damage decision integration",()=>{
+  it("reports damage analysis availability after component confirmation",async()=>{
+    const {db,repo}=repositoryWithFakeDb();
+    db.aiRuns.push({id:"component-run",survey_id:"survey-1",finding_id:"finding-1",task_type:"COMPONENT_CLASSIFICATION"});
+    db.predictions.push({id:"component-prediction",ai_run_id:"component-run",selected_code:"PAA",confidence:0.95,status:"SUGGESTED",created_at:new Date().toISOString()});
+
+    const result=await repo.decideComponent({findingId:"finding-1",finalCode:"PAA"});
+
+    expect(result.damageAnalysisAvailable).toBe(true);
+    expect(result.damageCodeCount).toBe(2);
+    expect(db.finding.final_component_code).toBe("PAA");
+  });
+
+  it("does not expose damage analysis for a component without loaded rules",async()=>{
+    const {db,repo}=repositoryWithFakeDb();
+    db.aiRuns.push({id:"component-run",survey_id:"survey-1",finding_id:"finding-1",task_type:"COMPONENT_CLASSIFICATION"});
+    db.predictions.push({id:"component-prediction",ai_run_id:"component-run",selected_code:"RLA",confidence:0.91,status:"SUGGESTED",created_at:new Date().toISOString()});
+
+    const result=await repo.decideComponent({findingId:"finding-1",finalCode:"RLA"});
+
+    expect(result.damageAnalysisAvailable).toBe(false);
+    expect(result.damageCodeCount).toBe(0);
+    expect(db.finding.final_component_code).toBe("RLA");
+  });
+
   it("persists a suggested damage and moves the finding back to review",async()=>{
     const {db,repo}=repositoryWithFakeDb();
 
