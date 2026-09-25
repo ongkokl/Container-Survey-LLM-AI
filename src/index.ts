@@ -12,6 +12,8 @@ import {
   SurveyRepository
 } from "./infrastructure/d1/surveyRepository";
 import { PhotoStore } from "./infrastructure/r2/photoStore";
+import { FindingRepository } from "./infrastructure/d1/findingRepository";
+import { FindingCaptureService } from "./application/findingCaptureService";
 
 export interface Env {
   DB: D1Database;
@@ -54,15 +56,70 @@ function doorIdentificationService(env: Env): DoorIdentificationService {
   );
 }
 
+function findingService(env: Env): FindingCaptureService {
+  return new FindingCaptureService(new FindingRepository(env.DB), new PhotoStore(env.PHOTOS));
+}
+
 async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
   if (request.method === "GET" && url.pathname === "/api/health") {
     return json({
       ok: true,
       service: "Container Survey LLM AI",
-      phase: "POC phase 2 - door OCR",
+      phase: "POC phase 3 - finding capture",
       visionModel: "@cf/qwen/qwen3.8-27b",
       time: new Date().toISOString()
     });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/findings") {
+    try {
+      const body=await readJson<{surveyId?:string;containerFace?:string}>(request);
+      const result=await findingService(env).create(body.surveyId??"",body.containerFace??"");
+      return json({ok:true,result},201);
+    } catch(error) {
+      return json({ok:false,error:"FINDING_CREATE_FAILED",message:error instanceof Error?error.message:"Unable to create finding."},422);
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/findings") {
+    try {
+      const surveyId=url.searchParams.get("surveyId")??"";
+      return json({ok:true,result:await findingService(env).list(surveyId)});
+    } catch(error) {
+      return json({ok:false,error:"FINDING_LIST_FAILED",message:error instanceof Error?error.message:"Unable to list findings."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/findings/photo") {
+    try {
+      const form=await request.formData();
+      const file=form.get("photo");
+      if(!(file instanceof File)) throw new Error("A photo is required.");
+      const result=await findingService(env).upload({
+        surveyId:String(form.get("surveyId")??""),
+        findingId:String(form.get("findingId")??""),
+        role:String(form.get("role")??""),
+        file,
+        width:Number(form.get("width"))||null,
+        height:Number(form.get("height"))||null
+      });
+      return json({ok:true,result},201);
+    } catch(error) {
+      return json({ok:false,error:"PHOTO_UPLOAD_FAILED",message:error instanceof Error?error.message:"Unable to upload photo."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/annotations") {
+    try {
+      const body=await readJson<{photoId?:string;annotationType?:string;geometryType?:string;geometry?:unknown}>(request);
+      const result=await findingService(env).annotate({
+        photoId:body.photoId??"",annotationType:body.annotationType??"",
+        geometryType:body.geometryType??"",geometry:body.geometry
+      });
+      return json({ok:true,result},201);
+    } catch(error) {
+      return json({ok:false,error:"ANNOTATION_FAILED",message:error instanceof Error?error.message:"Unable to save annotation."},422);
+    }
   }
 
   if (request.method === "POST" && url.pathname === "/api/door/identify") {
