@@ -1,4 +1,5 @@
 const input = document.querySelector("#doorPhoto");
+const galleryInput = document.querySelector("#doorGalleryPhoto");
 const previewWrap = document.querySelector("#previewWrap");
 const preview = document.querySelector("#preview");
 const retake = document.querySelector("#retake");
@@ -66,6 +67,7 @@ function clearPreview() {
   previewWrap.hidden = true;
   analyseBtn.disabled = true;
   input.value = "";
+  galleryInput.value = "";
   message.textContent = "";
 
   reviewCard.hidden = true;
@@ -208,9 +210,8 @@ function markEdited() {
   }
 }
 
-input.addEventListener("change", () => {
-  const [file] = input.files ?? [];
-  if (!file) return clearPreview();
+function selectDoorPhoto(file, source) {
+  if (!file) return;
 
   selectedFile = file;
 
@@ -225,7 +226,23 @@ input.addEventListener("change", () => {
   attemptId = null;
 
   message.textContent =
-    "Photo ready. The app will optimise it before Vision OCR.";
+    source === "gallery"
+      ? "Gallery photo ready. The app will optimise it before Vision OCR."
+      : "Photo ready. The app will optimise it before Vision OCR.";
+}
+
+input.addEventListener("change", () => {
+  const [file] = input.files ?? [];
+  if (!file) return;
+  galleryInput.value = "";
+  selectDoorPhoto(file, "camera");
+});
+
+galleryInput.addEventListener("change", () => {
+  const [file] = galleryInput.files ?? [];
+  if (!file) return;
+  input.value = "";
+  selectDoorPhoto(file, "gallery");
 });
 
 retake.addEventListener("click", () => {
