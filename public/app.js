@@ -351,6 +351,8 @@ const componentDecision=document.querySelector("#componentDecision");
 const componentSelect=document.querySelector("#componentSelect");
 const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
 const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
+const analyseDamageBtn=document.querySelector("#analyseDamageBtn"),damageReview=document.querySelector("#damageReview"),damageSuggestion=document.querySelector("#damageSuggestion"),damageCandidates=document.querySelector("#damageCandidates"),damageDecision=document.querySelector("#damageDecision"),damageSelect=document.querySelector("#damageSelect"),confirmDamageBtn=document.querySelector("#confirmDamageBtn"),damageDecisionMessage=document.querySelector("#damageDecisionMessage");
+let damageAiCode=null;
 let componentAiCode=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
@@ -550,8 +552,33 @@ confirmComponentBtn.addEventListener("click",async()=>{
       ?"Component accepted: "+result.finalCode
       :"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
     componentSelect.disabled=true;confirmComponentBtn.disabled=true;confirmComponentBtn.textContent="Component confirmed ✓";
+    analyseDamageBtn.hidden=false;
   }catch(e){
     componentDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save component decision.";
     setBusy(confirmComponentBtn,false,"Saving…","Accept component");
   }
+});
+
+
+analyseDamageBtn.addEventListener("click",async()=>{
+  if(!currentFinding)return;setBusy(analyseDamageBtn,true,"Analysing damage…","Analyse IICL damage");
+  damageReview.hidden=false;damageSuggestion.textContent="Checking visible damage against valid IICL codes for the confirmed component…";damageCandidates.textContent="";
+  try{
+    const result=await apiJson("/api/cedex/damage-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
+    damageSuggestion.textContent=result.selectedCode?result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":""):"No reliable damage selected · surveyor review required";
+    damageCandidates.textContent=result.candidates?.length?"Candidates: "+result.candidates.map(x=>x.code+" "+Math.round((x.confidence??0)*100)+"%").join(" · "):"No valid damage candidates returned.";
+    damageAiCode=result.selectedCode??null;damageSelect.innerHTML="";
+    for(const x of result.allowedDamages??[]){const o=document.createElement("option");o.value=x.damage_code;o.textContent=x.damage_code+" — "+x.damage_name;if(x.damage_code===result.selectedCode)o.selected=true;damageSelect.appendChild(o);}
+    damageDecision.hidden=!result.selectedCode;damageDecisionMessage.textContent="";confirmDamageBtn.textContent="Accept "+(result.selectedCode??"damage");
+  }catch(e){damageSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse damage.";}
+  finally{setBusy(analyseDamageBtn,false,"Analysing damage…","Analyse IICL damage");}
+});
+damageSelect.addEventListener("change",()=>{confirmDamageBtn.textContent=damageSelect.value===damageAiCode?"Accept "+damageAiCode:"Confirm correction";});
+confirmDamageBtn.addEventListener("click",async()=>{
+  if(!currentFinding||!damageSelect.value)return;setBusy(confirmDamageBtn,true,"Saving…","Accept damage");
+  try{
+    const result=await apiJson("/api/cedex/damage-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:damageSelect.value})});
+    damageDecisionMessage.textContent=result.decision==="APPROVED"?"Damage accepted: "+result.finalCode:"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
+    damageSelect.disabled=true;confirmDamageBtn.disabled=true;confirmDamageBtn.textContent="Damage confirmed ✓";
+  }catch(e){damageDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save damage decision.";setBusy(confirmDamageBtn,false,"Saving…","Accept damage");}
 });
