@@ -10,13 +10,24 @@ function dataUri(bytes:ArrayBuffer,type:string){
   return `data:${type||"image/jpeg"};base64,${btoa(binary)}`;
 }
 function parseJson(raw:unknown):Record<string,unknown>{
-  if(raw&&typeof raw==="object"){
-    const o=raw as Record<string,unknown>;
-    const text=typeof o.response==="string"?o.response:typeof o.result==="string"?o.result:null;
-    if(text){const m=text.match(/\{[\s\S]*\}/);if(m)try{return JSON.parse(m[0]);}catch{}}
-    return o;
+  if(!raw||typeof raw!=="object")return {};
+  const o=raw as Record<string,unknown>;
+  const choices=Array.isArray(o.choices)?o.choices:[];
+  const first=choices[0]&&typeof choices[0]==="object"?choices[0] as Record<string,unknown>:null;
+  const message=first?.message&&typeof first.message==="object"?first.message as Record<string,unknown>:null;
+  const candidates=[
+    message?.content,
+    o.response,
+    o.result,
+    o.output_text
+  ];
+  for(const candidate of candidates){
+    if(typeof candidate!=="string")continue;
+    const text=candidate.trim().replace(/^\`\`\`(?:json)?\s*/i,"").replace(/\s*\`\`\`$/,"");
+    const m=text.match(/\{[\s\S]*\}/);
+    if(m)try{return JSON.parse(m[0]);}catch{}
   }
-  return {};
+  return o;
 }
 function confidence(v:unknown):number|null{
   const n=Number(v);if(!Number.isFinite(n))return null;return Math.max(0,Math.min(1,n>1?n/100:n));
