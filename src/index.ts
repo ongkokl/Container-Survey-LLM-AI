@@ -15,6 +15,8 @@ import { PhotoStore } from "./infrastructure/r2/photoStore";
 import { FindingRepository } from "./infrastructure/d1/findingRepository";
 import { FindingCaptureService } from "./application/findingCaptureService";
 import { MoondreamDamageMarker } from "./infrastructure/ai/moondreamDamageMarker";
+import { CedexRepository } from "./infrastructure/d1/cedexRepository";
+import { CedexClassificationService } from "./application/cedexClassificationService";
 
 export interface Env {
   DB: D1Database;
@@ -57,6 +59,11 @@ function doorIdentificationService(env: Env): DoorIdentificationService {
   );
 }
 
+function cedexService(env:Env):CedexClassificationService{
+  const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+  return new CedexClassificationService(new CedexRepository(env.DB),env.PHOTOS,ai);
+}
+
 function findingService(env: Env): FindingCaptureService {
   return new FindingCaptureService(new FindingRepository(env.DB), new PhotoStore(env.PHOTOS));
 }
@@ -66,7 +73,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({
       ok: true,
       service: "Container Survey LLM AI",
-      phase: "POC phase 3 - finding capture",
+      phase: "POC phase 4 - constrained CEDEX component classification",
       visionModel: "@cf/qwen/qwen3.8-27b",
       time: new Date().toISOString()
     });
@@ -83,6 +90,15 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"AI_MARK_FAILED",message:error instanceof Error?error.message:"Unable to locate damage."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/component-suggest") {
+    try {
+      const body=await readJson<{findingId?:string}>(request);
+      return json({ok:true,result:await cedexService(env).analyseComponent(body.findingId??"")});
+    } catch(error) {
+      return json({ok:false,error:"CEDEX_COMPONENT_FAILED",message:error instanceof Error?error.message:"Unable to classify component."},422);
     }
   }
 
