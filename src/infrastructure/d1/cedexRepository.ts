@@ -63,6 +63,57 @@ export class CedexRepository {
     return {predictionId};
   }
 
+
+  async damageCodesForFinding(findingId:string){
+    const row=await this.db.prepare("SELECT final_component_code FROM findings WHERE id=?").bind(findingId).first<{final_component_code:string|null}>();
+    if(!row?.final_component_code) throw new Error("Confirm the component before analysing damage.");
+    const result=await this.db.prepare(`
+      SELECT d.damage_code,d.damage_name
+      FROM component_damage_rules r
+      JOIN damage_codes d ON d.damage_code=r.damage_code AND d.active=1
+      WHERE r.equipment_type=(SELECT gc.observed_container_type FROM findings f JOIN surveys s ON s.id=f.survey_id JOIN gate_cycles gc ON gc.id=s.gate_cycle_id WHERE f.id=?)
+        AND r.component_code=? AND r.active=1
+      ORDER BY d.damage_code`
+    ).bind(findingId,row.final_component_code).all<{damage_code:string;damage_name:string}>();
+    return {componentCode:row.final_component_code,damages:result.results};
+  }
+
+  async saveDamagePrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;}){
+    const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
+    await this.db.batch([
+      this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(runId,input.surveyId,input.findingId,"DAMAGE_CLASSIFICATION",JSON.stringify({model:input.modelName}),JSON.stringify(input.response),now,now),
+      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'DAMAGE',?,?, 'SUGGESTED',?)")
+        .bind(predictionId,runId,input.selectedCode,input.confidence,now)
+    ]);
+    for(let i=0;i<input.candidates.length;i++){
+      const x=input.candidates[i];
+      await this.db.prepare("INSERT INTO prediction_candidates (id,prediction_id,candidate_code,rank,confidence,evidence_json) VALUES (?,?,?,?,?,?)")
+        .bind(crypto.randomUUID(),predictionId,x.code,i+1,x.confidence,JSON.stringify({reason:x.reason??null})).run();
+    }
+    return {predictionId};
+  }
+
+  async decideDamage(input:{findingId:string;finalCode:string;}){
+    const allowed=await this.damageCodesForFinding(input.findingId),finalCode=input.finalCode.trim().toUpperCase();
+    if(!allowed.damages.some(x=>x.damage_code===finalCode)) throw new Error("Select a valid damage code for the confirmed component.");
+    const prediction=await this.db.prepare(`
+      SELECT ap.id AS prediction_id,ap.selected_code FROM ai_predictions ap
+      JOIN ai_runs ar ON ar.id=ap.ai_run_id WHERE ar.finding_id=? AND ap.prediction_type='DAMAGE'
+      ORDER BY ap.created_at DESC LIMIT 1`).bind(input.findingId).first<{prediction_id:string;selected_code:string|null}>();
+    if(!prediction) throw new Error("Analyse the damage before confirming it.");
+    const decision=prediction.selected_code===finalCode?"APPROVED":"CORRECTED",now=new Date().toISOString(),decisionId=crypto.randomUUID();
+    await this.db.batch([
+      this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'DAMAGE',?,?,?,?)")
+        .bind(decisionId,input.findingId,prediction.prediction_id,prediction.selected_code,finalCode,decision,now),
+      this.db.prepare("UPDATE ai_predictions SET status=? WHERE id=?").bind(decision,prediction.prediction_id),
+      this.db.prepare("UPDATE findings SET final_damage_code=?,status=?,updated_at=? WHERE id=?")
+        .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId)
+    ]);
+    return {decisionId,aiCode:prediction.selected_code,finalCode,decision,componentCode:allowed.componentCode};
+  }
+
+
   async latestComponentPrediction(findingId:string){
     return this.db.prepare(`
       SELECT ap.id AS prediction_id,ap.selected_code
