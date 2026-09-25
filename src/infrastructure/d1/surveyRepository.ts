@@ -34,12 +34,125 @@ export interface StartSurveyResult {
   status: string;
 }
 
+export interface IdentificationAttemptRecord {
+  id: string;
+  door_photo_r2_key: string;
+  content_type: string;
+  image_size_bytes: number;
+  model_name: string | null;
+  ocr_container_no: string | null;
+  ocr_iso_size_type: string | null;
+  status: "ANALYSED" | "NEEDS_REVIEW" | "CONFIRMED" | "FAILED";
+  created_at: string;
+}
+
+export interface CreateIdentificationAttemptInput {
+  id: string;
+  doorPhotoR2Key: string;
+  contentType: string;
+  imageSizeBytes: number;
+  modelName: string | null;
+  rawResponseJson: string | null;
+  ocrContainerNo: string | null;
+  ocrIsoSizeType: string | null;
+  containerConfidence: number | null;
+  isoConfidence: number | null;
+  containerFormatValid: boolean;
+  containerCheckDigitValid: boolean;
+  expectedCheckDigit: number | null;
+  isoCodeFound: boolean;
+  status: "ANALYSED" | "NEEDS_REVIEW" | "FAILED";
+  errorMessage: string | null;
+}
+
 const ACTIVE_STATUSES: ActiveGateCycleStatus[] = [
   "CREATED",
   "IDENTIFIED",
   "SURVEYING",
   "REVIEW_REQUIRED"
 ];
+
+export class IdentificationAttemptRepository {
+  constructor(private readonly db: D1Database) {}
+
+  async create(input: CreateIdentificationAttemptInput): Promise<void> {
+    const now = new Date().toISOString();
+
+    await this.db
+      .prepare(
+        `INSERT INTO container_identification_attempts (
+           id, door_photo_r2_key, content_type, image_size_bytes,
+           model_name, raw_response_json, ocr_container_no, ocr_iso_size_type,
+           container_confidence, iso_confidence, container_format_valid,
+           container_check_digit_valid, expected_check_digit, iso_code_found,
+           status, error_message, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        input.id,
+        input.doorPhotoR2Key,
+        input.contentType,
+        input.imageSizeBytes,
+        input.modelName,
+        input.rawResponseJson,
+        input.ocrContainerNo,
+        input.ocrIsoSizeType,
+        input.containerConfidence,
+        input.isoConfidence,
+        input.containerFormatValid ? 1 : 0,
+        input.containerCheckDigitValid ? 1 : 0,
+        input.expectedCheckDigit,
+        input.isoCodeFound ? 1 : 0,
+        input.status,
+        input.errorMessage,
+        now
+      )
+      .run();
+  }
+
+  async findById(id: string): Promise<IdentificationAttemptRecord | null> {
+    return this.db
+      .prepare(
+        `SELECT id, door_photo_r2_key, content_type, image_size_bytes,
+                model_name, ocr_container_no, ocr_iso_size_type, status, created_at
+           FROM container_identification_attempts
+          WHERE id = ?`
+      )
+      .bind(id)
+      .first<IdentificationAttemptRecord>();
+  }
+
+  async confirm(input: {
+    id: string;
+    finalContainerNo: string;
+    finalIsoSizeType: string;
+    surveyId: string;
+    gateCycleId: string;
+  }): Promise<void> {
+    const now = new Date().toISOString();
+
+    await this.db
+      .prepare(
+        `UPDATE container_identification_attempts
+            SET status = 'CONFIRMED',
+                final_container_no = ?,
+                final_iso_size_type = ?,
+                survey_id = ?,
+                gate_cycle_id = ?,
+                confirmed_at = ?
+          WHERE id = ?`
+      )
+      .bind(
+        input.finalContainerNo,
+        input.finalIsoSizeType,
+        input.surveyId,
+        input.gateCycleId,
+        now,
+        input.id
+      )
+      .run();
+  }
+}
 
 export class SurveyRepository {
   constructor(private readonly db: D1Database) {}
@@ -178,5 +291,51 @@ export class SurveyRepository {
       resumed: false,
       status: "IDENTIFIED"
     };
+  }
+
+  async attachDoorPhoto(input: {
+    surveyId: string;
+    r2Key: string;
+    contentType: string;
+    capturedAt: string;
+  }): Promise<string> {
+    const existing = await this.db
+      .prepare("SELECT id FROM survey_photos WHERE r2_key = ?")
+      .bind(input.r2Key)
+      .first<{ id: string }>();
+
+    if (existing) {
+      return existing.id;
+    }
+
+    const now = new Date().toISOString();
+    const photoId = crypto.randomUUID();
+
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT INTO survey_photos (
+             id, survey_id, finding_id, photo_role, r2_key,
+             content_type, captured_at, created_at
+           ) VALUES (?, ?, NULL, 'DOOR_IDENTITY', ?, ?, ?, ?)`
+        )
+        .bind(
+          photoId,
+          input.surveyId,
+          input.r2Key,
+          input.contentType,
+          input.capturedAt,
+          now
+        ),
+      this.db
+        .prepare(
+          `UPDATE surveys
+              SET door_photo_r2_key = ?, updated_at = ?
+            WHERE id = ?`
+        )
+        .bind(input.r2Key, now, input.surveyId)
+    ]);
+
+    return photoId;
   }
 }
