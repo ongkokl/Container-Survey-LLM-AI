@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b1220">
+  <title>Container Survey AI</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">POC</p>
+        <h1>Container Survey AI</h1>
+      </div>
+      <span class="status">No login</span>
+    </header>
+
+    <section class="card">
+      <div class="step">
+        <span class="stepNo">1</span>
+        <div>
+          <h2>Identify container</h2>
+          <p>Take a clear photo of the container door showing the container number and ISO size/type code.</p>
+        </div>
+      </div>
+
+      <label class="camera" for="doorPhoto">
+        <span class="cameraIcon">▣</span>
+        <strong>Take door photo</strong>
+        <span>Use rear camera</span>
+      </label>
+      <input id="doorPhoto" type="file" accept="image/*" capture="environment" hidden>
+
+      <div id="previewWrap" class="previewWrap" hidden>
+        <img id="preview" alt="Door photo preview">
+        <button id="retake" class="secondary" type="button">Retake</button>
+      </div>
+
+      <div class="info">
+        <strong>Automatic identification</strong>
+        <span>Container number → ISO 6346 validation → ISO size/type → GP/RF and dimensions.</span>
+      </div>
+
+      <button id="continueBtn" class="primary" type="button" disabled>
+        Continue to OCR
+      </button>
+
+      <p id="message" class="message" aria-live="polite"></p>
+    </section>
+
+    <section class="card compact">
+      <h3>POC workflow</h3>
+      <ol>
+        <li>Door identity photo</li>
+        <li>Overview damage photo + location marker</li>
+        <li>Close-up component/damage photo</li>
+        <li>AI suggests 4 CEDEX codes</li>
+        <li>Surveyor approves or corrects</li>
+      </ol>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
