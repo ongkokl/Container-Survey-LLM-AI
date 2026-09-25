@@ -15,7 +15,7 @@
     {
       "binding": "DB",
       "database_name": "container-survey-db",
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "63a4abf5-e386-498b-829c-83f67d0e3351",
       "migrations_dir": "migrations"
     }
   ],
