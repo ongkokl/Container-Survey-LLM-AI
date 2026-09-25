@@ -78,6 +78,24 @@ export class CedexRepository {
     return {componentCode:row.final_component_code,damages:result.results};
   }
 
+
+  async surveyorDamageBox(findingId:string){
+    const row=await this.db.prepare(`
+      SELECT a.geometry_json
+      FROM annotations a
+      JOIN survey_photos p ON p.id=a.photo_id
+      WHERE p.finding_id=? AND p.photo_role='DAMAGE_CLOSEUP'
+        AND a.annotation_type='DAMAGE' AND a.geometry_type='BOX' AND a.created_by='SURVEYOR'
+      ORDER BY a.created_at DESC LIMIT 1`
+    ).bind(findingId).first<{geometry_json:string}>();
+    if(!row)return null;
+    try{
+      const g=JSON.parse(row.geometry_json) as {x?:number;y?:number;width?:number;height?:number};
+      if([g.x,g.y,g.width,g.height].every(v=>typeof v==="number"))return g as {x:number;y:number;width:number;height:number};
+    }catch{}
+    return null;
+  }
+
   async saveDamagePrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;}){
     const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
     await this.db.batch([
