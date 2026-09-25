@@ -17,6 +17,7 @@ import { FindingCaptureService } from "./application/findingCaptureService";
 import { MoondreamDamageMarker } from "./infrastructure/ai/moondreamDamageMarker";
 import { CedexRepository } from "./infrastructure/d1/cedexRepository";
 import { CedexClassificationService } from "./application/cedexClassificationService";
+import { DamageClassificationService } from "./application/damageClassificationService";
 
 export interface Env {
   DB: D1Database;
@@ -109,6 +110,26 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result:await repo.decideComponent({findingId:body.findingId??"",finalCode:body.finalCode??""})});
     } catch(error) {
       return json({ok:false,error:"CEDEX_COMPONENT_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save component decision."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/damage-suggest") {
+    try {
+      const body=await readJson<{findingId?:string}>(request);
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const service=new DamageClassificationService(new CedexRepository(env.DB),env.PHOTOS,ai);
+      return json({ok:true,result:await service.analyse(body.findingId??"")});
+    } catch(error) {
+      return json({ok:false,error:"CEDEX_DAMAGE_FAILED",message:error instanceof Error?error.message:"Unable to classify damage."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/damage-decision") {
+    try {
+      const body=await readJson<{findingId?:string;finalCode?:string}>(request);
+      return json({ok:true,result:await new CedexRepository(env.DB).decideDamage({findingId:body.findingId??"",finalCode:body.finalCode??""})});
+    } catch(error) {
+      return json({ok:false,error:"CEDEX_DAMAGE_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save damage decision."},422);
     }
   }
 
