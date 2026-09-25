@@ -17,7 +17,7 @@ class FakeStatement {
     if (this.sql.includes("SELECT final_component_code FROM findings")) {
       return { final_component_code: this.db.finding.final_component_code } as T;
     }
-    if (this.sql.includes("SELECT ap.id AS prediction_id,ap.selected_code FROM ai_predictions")) {
+    if (this.sql.includes("SELECT ap.id AS prediction_id") && this.sql.includes("FROM ai_predictions ap")) {
       const findingId = String(this.args[0]);
       const runIds = this.db.aiRuns.filter(x=>x.finding_id===findingId).map(x=>x.id);
       const p = [...this.db.predictions].reverse().find(x=>runIds.includes(x.ai_run_id));
