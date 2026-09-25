@@ -11,54 +11,123 @@
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">POC</p>
+        <p class="eyebrow">POC · PHASE 2</p>
         <h1>Container Survey AI</h1>
       </div>
       <span class="status">No login</span>
     </header>
 
-    <section class="card">
+    <section class="card" id="captureCard">
       <div class="step">
         <span class="stepNo">1</span>
         <div>
           <h2>Identify container</h2>
-          <p>Take a clear photo of the container door showing the container number and ISO size/type code.</p>
+          <p>Take one clear door photo. Keep the full container number and ISO size/type marking readable.</p>
         </div>
       </div>
 
       <label class="camera" for="doorPhoto">
         <span class="cameraIcon">▣</span>
         <strong>Take door photo</strong>
-        <span>Use rear camera</span>
+        <span>Rear camera · full door preferred</span>
       </label>
       <input id="doorPhoto" type="file" accept="image/*" capture="environment" hidden>
 
       <div id="previewWrap" class="previewWrap" hidden>
         <img id="preview" alt="Door photo preview">
-        <button id="retake" class="secondary" type="button">Retake</button>
+        <button id="retake" class="secondary" type="button">Retake photo</button>
       </div>
 
       <div class="info">
         <strong>Automatic identification</strong>
-        <span>Container number → ISO 6346 validation → ISO size/type → GP/RF and dimensions.</span>
+        <span>Vision OCR → ISO 6346 check digit → ISO size/type lookup → GP/RF and container dimensions.</span>
       </div>
 
-      <button id="continueBtn" class="primary" type="button" disabled>
-        Continue to OCR
+      <button id="analyseBtn" class="primary" type="button" disabled>
+        Analyse door photo
       </button>
 
       <p id="message" class="message" aria-live="polite"></p>
     </section>
 
-    <section class="card compact">
-      <h3>POC workflow</h3>
-      <ol>
-        <li>Door identity photo</li>
-        <li>Overview damage photo + location marker</li>
-        <li>Close-up component/damage photo</li>
-        <li>AI suggests 4 CEDEX codes</li>
-        <li>Surveyor approves or corrects</li>
-      </ol>
+    <section id="reviewCard" class="card" hidden>
+      <div class="step">
+        <span class="stepNo">2</span>
+        <div>
+          <h2>Confirm identity</h2>
+          <p>Review the OCR result. Edit only if the marking was read incorrectly.</p>
+        </div>
+      </div>
+
+      <div class="formGrid">
+        <label class="field">
+          <span>Container number</span>
+          <input id="containerNo" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="11">
+          <small id="containerValidation"></small>
+        </label>
+
+        <label class="field">
+          <span>ISO size/type</span>
+          <input id="isoSizeType" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="4">
+          <small id="isoValidation"></small>
+        </label>
+      </div>
+
+      <div id="derivedCard" class="resultPanel" hidden>
+        <div>
+          <span>Type</span>
+          <strong id="containerType">—</strong>
+        </div>
+        <div>
+          <span>Length</span>
+          <strong id="containerLength">—</strong>
+        </div>
+        <div>
+          <span>Height</span>
+          <strong id="containerHeight">—</strong>
+        </div>
+      </div>
+
+      <div class="confidenceRow">
+        <span id="containerConfidence" class="chip">Container OCR —</span>
+        <span id="isoConfidence" class="chip">ISO OCR —</span>
+      </div>
+
+      <button id="confirmBtn" class="primary" type="button">
+        Confirm & start survey
+      </button>
+      <button id="backBtn" class="secondary" type="button">
+        Retake instead
+      </button>
+
+      <p id="reviewMessage" class="message" aria-live="polite"></p>
+    </section>
+
+    <section id="startedCard" class="card successCard" hidden>
+      <div class="step">
+        <span class="stepNo success">✓</span>
+        <div>
+          <h2 id="startedTitle">Survey ready</h2>
+          <p id="startedText"></p>
+        </div>
+      </div>
+
+      <div class="resultPanel">
+        <div>
+          <span>Container</span>
+          <strong id="startedContainer">—</strong>
+        </div>
+        <div>
+          <span>Gate cycle</span>
+          <strong id="startedCycle">—</strong>
+        </div>
+        <div>
+          <span>Survey ID</span>
+          <strong id="startedSurvey" class="mono">—</strong>
+        </div>
+      </div>
+
+      <p class="message">The next POC phase will add overview damage capture and CEDEX location marking.</p>
     </section>
   </main>
 
