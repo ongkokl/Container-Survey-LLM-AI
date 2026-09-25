@@ -29,13 +29,13 @@ If the image is insufficient or the damage cannot be distinguished, return selec
 Allowed damage codes for ${allowed.componentCode}:
 ${allowedText}
 Return JSON only:
-{"selected_code":"XX or null","confidence":0.0,"needs_review":true,"reason":"short visual reason","candidates":[{"code":"XX","confidence":0.0,"reason":"short reason"}]}
-Do not explain your reasoning outside the JSON. Return at most 3 candidates, all from the allowed list.`;
-    const raw=await this.ai.run(MODEL,{messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:image}}]}],max_tokens:1000,temperature:0});
+{"selected_code":"XX","confidence":0.0,"needs_review":true,"candidates":[{"code":"XX","confidence":0.0}]}
+If uncertain, selected_code must be null. Do not include explanations or reasons. Do not explain your reasoning outside the JSON. Return at most 2 candidates, all from the allowed list.`;
+    const raw=await this.ai.run(MODEL,{messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:image}}]}],max_tokens:400,temperature:0});
     const parsed=parseJson(raw),allowedSet=new Set(allowed.damages.map(x=>x.damage_code)),selected=typeof parsed.selected_code==="string"&&allowedSet.has(parsed.selected_code.toUpperCase())?parsed.selected_code.toUpperCase():null;
-    const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).map((v:any)=>({code:String(v?.code??"").toUpperCase(),confidence:confidence(v?.confidence),reason:String(v?.reason??"")})).filter(x=>allowedSet.has(x.code)).slice(0,3);
-    if(selected&&!candidates.some(x=>x.code===selected))candidates.unshift({code:selected,confidence:confidence(parsed.confidence),reason:String(parsed.reason??"")});
-    const result={componentCode:allowed.componentCode,roiUsed:Boolean(roi),selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:String(parsed.reason??""),candidates:candidates.slice(0,3),allowedDamages:allowed.damages,model:MODEL};
+    const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).map((v:any)=>({code:String(v?.code??"").toUpperCase(),confidence:confidence(v?.confidence),reason:""})).filter(x=>allowedSet.has(x.code)).slice(0,2);
+    if(selected&&!candidates.some(x=>x.code===selected))candidates.unshift({code:selected,confidence:confidence(parsed.confidence),reason:""});
+    const result={componentCode:allowed.componentCode,roiUsed:Boolean(roi),selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:"",candidates:candidates.slice(0,2),allowedDamages:allowed.damages,model:MODEL};
     await this.repo.saveDamagePrediction({findingId,surveyId:context.survey_id,modelName:MODEL,selectedCode:selected,confidence:result.confidence,candidates:result.candidates,response:{roi,modelResponse:raw}});
     return result;
   }
