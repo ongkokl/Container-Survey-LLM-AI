@@ -343,6 +343,10 @@ const closeupCanvas=document.querySelector("#closeupCanvas");
 const boxHelp=document.querySelector("#boxHelp");
 const saveFindingBtn=document.querySelector("#saveFindingBtn");
 const findingMessage=document.querySelector("#findingMessage");
+const analyseComponentBtn=document.querySelector("#analyseComponentBtn");
+const cedexReview=document.querySelector("#cedexReview");
+const cedexSuggestion=document.querySelector("#cedexSuggestion");
+const cedexCandidates=document.querySelector("#cedexCandidates");
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
 let aiLocationPoint=null,aiDamageBox=null;
@@ -477,5 +481,24 @@ saveFindingBtn.addEventListener("click",async()=>{
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
     findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
     saveFindingBtn.textContent="Finding saved ✓";saveFindingBtn.disabled=true;
+    analyseComponentBtn.hidden=false;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to save finding evidence.";setBusy(saveFindingBtn,false,"Saving…","Save finding evidence");}
+});
+
+
+analyseComponentBtn.addEventListener("click",async()=>{
+  if(!currentFinding)return;
+  setBusy(analyseComponentBtn,true,"Analysing component…","Analyse CEDEX component");
+  cedexReview.hidden=false;cedexSuggestion.textContent="Checking the close-up against the verified GP/RF component master…";cedexCandidates.textContent="";
+  try{
+    const result=await apiJson("/api/cedex/component-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
+    cedexSuggestion.textContent=result.selectedCode
+      ? result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":"")
+      : "No reliable component selected · surveyor review required";
+    cedexCandidates.textContent=result.candidates?.length
+      ? "Candidates: "+result.candidates.map(x=>x.code+" "+Math.round((x.confidence??0)*100)+"%").join(" · ")
+      : "No valid CEDEX candidates returned.";
+  }catch(e){
+    cedexSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse CEDEX component.";
+  }finally{setBusy(analyseComponentBtn,false,"Analysing component…","Analyse CEDEX component");}
 });
