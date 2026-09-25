@@ -5,6 +5,8 @@ const preview = document.querySelector("#preview");
 const retake = document.querySelector("#retake");
 const analyseBtn = document.querySelector("#analyseBtn");
 const message = document.querySelector("#message");
+const manualIdentityBtn = document.querySelector("#manualIdentityBtn");
+const defaultGpBtn = document.querySelector("#defaultGpBtn");
 
 const captureCard = document.querySelector("#captureCard");
 const reviewCard = document.querySelector("#reviewCard");
@@ -21,6 +23,7 @@ const isoConfidence = document.querySelector("#isoConfidence");
 const confirmBtn = document.querySelector("#confirmBtn");
 const backBtn = document.querySelector("#backBtn");
 const reviewMessage = document.querySelector("#reviewMessage");
+const reviewIntro = document.querySelector("#reviewIntro");
 
 const startedCard = document.querySelector("#startedCard");
 const startedTitle = document.querySelector("#startedTitle");
@@ -29,9 +32,18 @@ const startedContainer = document.querySelector("#startedContainer");
 const startedCycle = document.querySelector("#startedCycle");
 const startedSurvey = document.querySelector("#startedSurvey");
 
+const DEFAULT_GP_TEST = {
+  containerNo: "CSQU3054383",
+  isoSizeType: "45G1",
+  containerType: "GP",
+  lengthFt: 40,
+  height: "High Cube"
+};
+
 let selectedFile = null;
 let objectUrl = null;
 let attemptId = null;
+let identityMode = "photo";
 let originalDetected = {
   containerNo: "",
   isoSizeType: ""
@@ -58,6 +70,7 @@ function normalizeIsoText(value) {
 function clearPreview() {
   selectedFile = null;
   attemptId = null;
+  identityMode = "photo";
   originalDetected = { containerNo: "", isoSizeType: "" };
 
   if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -133,7 +146,9 @@ async function apiJson(url, options) {
 }
 
 function populateReview(result) {
+  identityMode = "photo";
   attemptId = result.attemptId;
+  reviewIntro.textContent = "Review the OCR result. Edit only if the marking was read incorrectly.";
 
   const detectedContainer = result.detected?.containerNo ?? "";
   const detectedIso = result.detected?.isoSizeType ?? "";
@@ -188,6 +203,48 @@ function populateReview(result) {
       : "Identity validated. Confirm to create or resume the gate-in cycle.";
 
   reviewCard.hidden = false;
+  reviewCard.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function showNoPhotoReview(useDefault) {
+  identityMode = useDefault ? "default" : "manual";
+  attemptId = null;
+  selectedFile = null;
+  originalDetected = {
+    containerNo: useDefault ? DEFAULT_GP_TEST.containerNo : "",
+    isoSizeType: useDefault ? DEFAULT_GP_TEST.isoSizeType : ""
+  };
+
+  containerNoInput.value = originalDetected.containerNo;
+  isoSizeTypeInput.value = originalDetected.isoSizeType;
+  reviewIntro.textContent = useDefault
+    ? "Door photo skipped. The default GP test identity is ready; edit it if required."
+    : "Door photo skipped. Enter a valid container number and ISO size/type code.";
+
+  containerValidation.textContent = useDefault
+    ? "Test value · validated when survey starts"
+    : "Enter a valid ISO 6346 container number";
+  containerValidation.dataset.state = useDefault ? "ok" : "neutral";
+  isoValidation.textContent = useDefault
+    ? "45G1 · GP · validated when survey starts"
+    : "Enter an active ISO size/type code";
+  isoValidation.dataset.state = useDefault ? "ok" : "neutral";
+
+  containerConfidence.textContent = "Door OCR skipped";
+  isoConfidence.textContent = useDefault ? "Default GP test data" : "Manual test entry";
+
+  if (useDefault) {
+    derivedCard.hidden = false;
+    containerType.textContent = DEFAULT_GP_TEST.containerType;
+    containerLength.textContent = DEFAULT_GP_TEST.lengthFt + " ft";
+    containerHeight.textContent = DEFAULT_GP_TEST.height;
+  } else {
+    derivedCard.hidden = true;
+  }
+
+  reviewMessage.textContent = "Front-end test mode. Confirm to validate the identity and start or resume the survey.";
+  reviewCard.hidden = false;
+  startedCard.hidden = true;
   reviewCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -251,8 +308,17 @@ retake.addEventListener("click", () => {
 });
 
 backBtn.addEventListener("click", () => {
+  const wasPhotoMode = identityMode === "photo";
   clearPreview();
-  input.click();
+  if (wasPhotoMode) input.click();
+});
+
+manualIdentityBtn.addEventListener("click", () => {
+  showNoPhotoReview(false);
+});
+
+defaultGpBtn.addEventListener("click", () => {
+  showNoPhotoReview(true);
 });
 
 containerNoInput.addEventListener("input", markEdited);
@@ -285,7 +351,7 @@ analyseBtn.addEventListener("click", async () => {
 });
 
 confirmBtn.addEventListener("click", async () => {
-  if (!attemptId) {
+  if (identityMode === "photo" && !attemptId) {
     reviewMessage.textContent = "Analyse a door photo first.";
     return;
   }
@@ -293,21 +359,26 @@ confirmBtn.addEventListener("click", async () => {
   const containerNo = normalizeContainerText(containerNoInput.value);
   const isoSizeType = normalizeIsoText(isoSizeTypeInput.value);
 
+  if (!containerNo || !isoSizeType) {
+    reviewMessage.textContent = "Enter both the container number and ISO size/type code.";
+    return;
+  }
+
   setBusy(confirmBtn, true, "Starting survey…", "Confirm & start survey");
-  reviewMessage.textContent = "Validating container identity…";
+  reviewMessage.textContent = identityMode === "photo"
+    ? "Validating container identity…"
+    : "Validating test identity without a door photo…";
 
   try {
-    const result = await apiJson("/api/door/confirm", {
+    const skipDoorPhoto = identityMode !== "photo";
+    const result = await apiJson(skipDoorPhoto ? "/api/surveys/start" : "/api/door/confirm", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        attemptId,
-        containerNo,
-        isoSizeType,
-        depotCode: "POC"
-      })
+      body: JSON.stringify(skipDoorPhoto
+        ? { containerNo, isoSizeType, depotCode: "POC" }
+        : { attemptId, containerNo, isoSizeType, depotCode: "POC" })
     });
 
     captureCard.hidden = true;
@@ -318,16 +389,23 @@ confirmBtn.addEventListener("click", async () => {
       ? "Existing survey resumed"
       : "New gate cycle created";
 
-    startedText.textContent = result.survey.resumed
+    const noPhotoNote = skipDoorPhoto
+      ? " Door photo was skipped for front-end testing."
+      : "";
+    startedText.textContent = (result.survey.resumed
       ? "This container already had an active gate-in cycle, so the existing survey was resumed."
-      : "A new gate-in cycle and survey were created for this container visit.";
+      : "A new gate-in cycle and survey were created for this container visit.") + noPhotoNote;
+
+    const resultContainerNo = result.container.containerNo ?? result.container.normalized ?? containerNo;
+    const resultIso = result.container.isoSizeType ?? result.isoSizeType ?? isoSizeType;
+    const resultType = result.container.containerType ?? result.iso?.app_container_type ?? "—";
 
     startedContainer.textContent =
-      result.container.containerNo +
+      resultContainerNo +
       " · " +
-      result.container.isoSizeType +
+      resultIso +
       " · " +
-      result.container.containerType;
+      resultType;
 
     startedCycle.textContent = String(result.survey.cycleSequence);
     startedSurvey.textContent = result.survey.surveyId;
