@@ -55,19 +55,19 @@ function makeHarness(options?: {
 
   const savedPredictions: unknown[] = [];
   const repo = {
-    findingContext: vi.fn(async () => ({
+    findingContext: vi.fn(async (_findingId: string) => ({
       id: "finding-1",
       survey_id: "survey-1",
       container_face: "RIGHT",
       equipment_type: "GP",
       length_ft: 40
     })),
-    damageCodesForFinding: vi.fn(async () => ({
+    damageCodesForFinding: vi.fn(async (_findingId: string) => ({
       componentCode: "PAA",
       damages
     })),
-    surveyorDamageBox: vi.fn(async () => roi),
-    findingPhoto: vi.fn(async () => photo),
+    surveyorDamageBox: vi.fn(async (_findingId: string) => roi),
+    findingPhoto: vi.fn(async (_findingId: string, _role: string) => photo),
     saveDamagePrediction: vi.fn(async (input: unknown) => {
       savedPredictions.push(input);
       return { predictionId: "prediction-1" };
@@ -75,7 +75,7 @@ function makeHarness(options?: {
   } as unknown as CedexRepository;
 
   const bucket = {
-    get: vi.fn(async () =>
+    get: vi.fn(async (_key: string) =>
       options?.objectAvailable === false
         ? null
         : {
@@ -85,7 +85,7 @@ function makeHarness(options?: {
   };
 
   const ai = {
-    run: vi.fn(async () => aiResponse)
+    run: vi.fn(async (_model: string, _input: unknown) => aiResponse)
   };
 
   const service = new DamageClassificationService(repo, bucket, ai);
