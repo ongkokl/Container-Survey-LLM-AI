@@ -323,3 +323,105 @@ confirmBtn.addEventListener("click", async () => {
     setBusy(confirmBtn, false, "Starting survey…", "Confirm & start survey");
   }
 });
+
+
+const addFindingBtn=document.querySelector("#addFindingBtn");
+const findingCard=document.querySelector("#findingCard");
+const findingFace=document.querySelector("#findingFace");
+const createFindingBtn=document.querySelector("#createFindingBtn");
+const findingCapture=document.querySelector("#findingCapture");
+const findingLabel=document.querySelector("#findingLabel");
+const overviewPhoto=document.querySelector("#overviewPhoto");
+const overviewStage=document.querySelector("#overviewStage");
+const overviewPreview=document.querySelector("#overviewPreview");
+const overviewCanvas=document.querySelector("#overviewCanvas");
+const tapHelp=document.querySelector("#tapHelp");
+const closeupPhoto=document.querySelector("#closeupPhoto");
+const closeupStage=document.querySelector("#closeupStage");
+const closeupPreview=document.querySelector("#closeupPreview");
+const closeupCanvas=document.querySelector("#closeupCanvas");
+const boxHelp=document.querySelector("#boxHelp");
+const saveFindingBtn=document.querySelector("#saveFindingBtn");
+const findingMessage=document.querySelector("#findingMessage");
+
+let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
+
+addFindingBtn.addEventListener("click",()=>{
+  currentSurveyId=startedSurvey.textContent.trim();
+  findingCard.hidden=false;
+  findingCard.scrollIntoView({behavior:"smooth",block:"start"});
+});
+
+createFindingBtn.addEventListener("click",async()=>{
+  if(!findingFace.value){findingMessage.textContent="Select the container face first.";return;}
+  setBusy(createFindingBtn,true,"Creating…","Create finding");
+  try{
+    currentFinding=await apiJson("/api/findings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({surveyId:currentSurveyId,containerFace:findingFace.value})});
+    findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
+    findingCapture.hidden=false; createFindingBtn.hidden=true; findingFace.disabled=true;
+    findingMessage.textContent="Finding created. Capture the overview photo.";
+  }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
+  finally{setBusy(createFindingBtn,false,"Creating…","Create finding");}
+});
+
+function showImage(file,img,stage,canvas,ready){
+  const url=URL.createObjectURL(file);
+  img.onload=()=>{canvas.width=img.clientWidth;canvas.height=img.clientHeight;stage.hidden=false;ready();};
+  img.src=url;
+}
+
+overviewPhoto.addEventListener("change",()=>{
+  overviewFile=overviewPhoto.files?.[0]??null; locationPoint=null;
+  if(!overviewFile)return;
+  showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,()=>{tapHelp.hidden=false;});
+});
+
+overviewCanvas.addEventListener("pointerdown",(event)=>{
+  const rect=overviewCanvas.getBoundingClientRect();
+  locationPoint={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
+  const ctx=overviewCanvas.getContext("2d");ctx.clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+  ctx.beginPath();ctx.arc(locationPoint.x*overviewCanvas.width,locationPoint.y*overviewCanvas.height,10,0,Math.PI*2);ctx.lineWidth=4;ctx.strokeStyle="#fff";ctx.stroke();
+  tapHelp.textContent="Damage position marked. Tap again to adjust.";
+  updateFindingReady();
+});
+
+let dragStart=null;
+closeupPhoto.addEventListener("change",()=>{
+  closeupFile=closeupPhoto.files?.[0]??null;damageBox=null;
+  if(!closeupFile)return;
+  showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,()=>{boxHelp.hidden=false;});
+});
+
+closeupCanvas.addEventListener("pointerdown",(event)=>{
+  const r=closeupCanvas.getBoundingClientRect();dragStart={x:(event.clientX-r.left)/r.width,y:(event.clientY-r.top)/r.height};closeupCanvas.setPointerCapture(event.pointerId);
+});
+closeupCanvas.addEventListener("pointerup",(event)=>{
+  if(!dragStart)return;
+  const r=closeupCanvas.getBoundingClientRect(),end={x:(event.clientX-r.left)/r.width,y:(event.clientY-r.top)/r.height};
+  damageBox={x:Math.min(dragStart.x,end.x),y:Math.min(dragStart.y,end.y),width:Math.abs(end.x-dragStart.x),height:Math.abs(end.y-dragStart.y)};
+  dragStart=null;
+  const ctx=closeupCanvas.getContext("2d");ctx.clearRect(0,0,closeupCanvas.width,closeupCanvas.height);
+  ctx.lineWidth=4;ctx.strokeStyle="#fff";ctx.strokeRect(damageBox.x*closeupCanvas.width,damageBox.y*closeupCanvas.height,damageBox.width*closeupCanvas.width,damageBox.height*closeupCanvas.height);
+  boxHelp.textContent="Damage area marked. Drag again to adjust.";updateFindingReady();
+});
+
+function updateFindingReady(){saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox);}
+
+async function uploadFindingPhoto(file,role,img){
+  const upload=await compressForOcr(file),form=new FormData();
+  form.append("surveyId",currentSurveyId);form.append("findingId",currentFinding.id);form.append("role",role);
+  form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));form.append("photo",upload,upload.name||"photo.jpg");
+  return apiJson("/api/findings/photo",{method:"POST",body:form});
+}
+
+saveFindingBtn.addEventListener("click",async()=>{
+  setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
+  try{
+    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview);
+    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint})});
+    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview);
+    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox})});
+    findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
+    saveFindingBtn.textContent="Finding saved ✓";saveFindingBtn.disabled=true;
+  }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to save finding evidence.";setBusy(saveFindingBtn,false,"Saving…","Save finding evidence");}
+});
