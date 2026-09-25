@@ -349,11 +349,13 @@ const createFindingBtn=document.querySelector("#createFindingBtn");
 const findingCapture=document.querySelector("#findingCapture");
 const findingLabel=document.querySelector("#findingLabel");
 const overviewPhoto=document.querySelector("#overviewPhoto");
+const overviewGalleryPhoto=document.querySelector("#overviewGalleryPhoto");
 const overviewStage=document.querySelector("#overviewStage");
 const overviewPreview=document.querySelector("#overviewPreview");
 const overviewCanvas=document.querySelector("#overviewCanvas");
 const tapHelp=document.querySelector("#tapHelp");
 const closeupPhoto=document.querySelector("#closeupPhoto");
+const closeupGalleryPhoto=document.querySelector("#closeupGalleryPhoto");
 const closeupStage=document.querySelector("#closeupStage");
 const closeupPreview=document.querySelector("#closeupPreview");
 const closeupCanvas=document.querySelector("#closeupCanvas");
@@ -400,10 +402,11 @@ function showImage(file,img,stage,canvas,ready){
   img.src=url;
 }
 
-overviewPhoto.addEventListener("change",()=>{
-  overviewFile=overviewPhoto.files?.[0]??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+function selectOverviewPhoto(file,source){
+  overviewFile=file??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
   const requestId=++overviewAiRequest;
   if(!overviewFile)return;
+  if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
     try{
@@ -422,7 +425,9 @@ overviewPhoto.addEventListener("change",()=>{
     }
     updateFindingReady();
   });
-});
+}
+overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.files?.[0]??null,"camera"));
+overviewGalleryPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewGalleryPhoto.files?.[0]??null,"gallery"));
 
 function drawTarget(canvas,point,isAi=false){
   const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height,r=14;
@@ -465,10 +470,11 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 });
 
 let dragStart=null;
-closeupPhoto.addEventListener("change",()=>{
-  closeupFile=closeupPhoto.files?.[0]??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
+function selectCloseupPhoto(file,source){
+  closeupFile=file??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
+  if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
     boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
     try{
@@ -487,7 +493,9 @@ closeupPhoto.addEventListener("change",()=>{
     }
     updateFindingReady();
   });
-});
+}
+closeupPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupPhoto.files?.[0]??null,"camera"));
+closeupGalleryPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupGalleryPhoto.files?.[0]??null,"gallery"));
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
   closeupEdited=true;

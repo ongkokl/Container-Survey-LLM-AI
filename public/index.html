@@ -147,10 +147,14 @@
         <p class="findingLabel" id="findingLabel"></p>
         <label class="camera compact" for="overviewPhoto"><span class="cameraIcon">▣</span><strong>Take overview photo</strong><span>Show enough of the container face to establish location.</span></label>
         <input id="overviewPhoto" type="file" accept="image/*" capture="environment" hidden>
+        <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose overview from Gallery</strong><span>Use an existing overview photo from this phone.</span></label>
+        <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
         <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview photo"><canvas id="overviewCanvas"></canvas></div>
         <p id="tapHelp" class="message" hidden>AI will propose a damage position. Tap anywhere to correct it.</p>
         <label class="camera compact" for="closeupPhoto"><span class="cameraIcon">▣</span><strong>Take close-up photo</strong><span>Keep the damaged component clear and in focus.</span></label>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
+        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose close-up from Gallery</strong><span>Use an existing close-up photo from this phone.</span></label>
+        <input id="closeupGalleryPhoto" type="file" accept="image/*" hidden>
         <div id="closeupStage" class="annotationStage" hidden><img id="closeupPreview" alt="Close-up photo"><canvas id="closeupCanvas"></canvas></div>
         <p id="boxHelp" class="message" hidden>AI will propose a damage box. Drag to redraw it if needed.</p>
         <button id="saveFindingBtn" class="primary" type="button" disabled>Save finding evidence</button>
