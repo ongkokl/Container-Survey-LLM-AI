@@ -10,7 +10,7 @@ function parseJson(raw:unknown):Record<string,unknown>{
   for(const v of [message?.content,o.response,o.result,o.output_text]){if(typeof v!=="string")continue;const m=v.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"").match(/\{[\s\S]*\}/);if(m)try{return JSON.parse(m[0]);}catch{}}
   return o;
 }
-function confidence(v:unknown){if(v===null||v===undefined||v==="")return null;const n=Number(v);return Number.isFinite(n)?Math.max(0,Math.min(1,n>1?n/100:n)):null;}
+function confidence(v:unknown){const n=Number(v);return Number.isFinite(n)?Math.max(0,Math.min(1,n>1?n/100:n)):null;}
 
 export class DamageClassificationService{
   constructor(private readonly repo:CedexRepository,private readonly bucket:Bucket,private readonly ai:AiRunner){}
