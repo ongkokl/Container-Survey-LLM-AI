@@ -102,7 +102,9 @@ export class CedexRepository {
       this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
         .bind(runId,input.surveyId,input.findingId,"DAMAGE_CLASSIFICATION",JSON.stringify({model:input.modelName}),JSON.stringify(input.response),now,now),
       this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'DAMAGE',?,?, 'SUGGESTED',?)")
-        .bind(predictionId,runId,input.selectedCode,input.confidence,now)
+        .bind(predictionId,runId,input.selectedCode,input.confidence,now),
+      this.db.prepare("UPDATE findings SET status='REVIEW_REQUIRED',updated_at=? WHERE id=?")
+        .bind(now,input.findingId)
     ]);
     for(let i=0;i<input.candidates.length;i++){
       const x=input.candidates[i];
