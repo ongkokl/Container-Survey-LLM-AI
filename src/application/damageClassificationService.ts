@@ -17,12 +17,13 @@ export class DamageClassificationService{
   async analyse(findingId:string){
     const context=await this.repo.findingContext(findingId);if(!context)throw new Error("Finding not found.");
     const allowed=await this.repo.damageCodesForFinding(findingId);
+    const roi=await this.repo.surveyorDamageBox(findingId);
     if(!allowed.damages.length)throw new Error("No verified IICL damage rules are loaded for the confirmed component.");
     const photo=await this.repo.findingPhoto(findingId,"DAMAGE_CLOSEUP");if(!photo)throw new Error("Damage close-up photo is required.");
     const object=await this.bucket.get(photo.r2_key);if(!object)throw new Error("Damage close-up photo is unavailable.");
     const image=dataUri(await object.arrayBuffer(),photo.content_type),allowedText=allowed.damages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
     const prompt=`You are assisting a shipping-container surveyor using the IICL ECS coding system.
-Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.
+Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.\n${roi?`The surveyor marked the intended damage region using normalized image coordinates: x=${roi.x.toFixed(3)}, y=${roi.y.toFixed(3)}, width=${roi.width.toFixed(3)}, height=${roi.height.toFixed(3)}. Treat that marked region as the PRIMARY target. Ignore unrelated stains, dirt, marks, corrosion, or defects outside that region. The coordinates are metadata only; no artificial box is drawn into the image.`:"No surveyor damage region is available; classify cautiously."}
 Classify ONLY the visible physical damage to the confirmed component. Choose ONLY from the allowed damage codes below. Never invent a code.
 If the image is insufficient or the damage cannot be distinguished, return selected_code null and needs_review true.
 Allowed damage codes for ${allowed.componentCode}:
@@ -34,8 +35,8 @@ Do not explain your reasoning outside the JSON. Return at most 3 candidates, all
     const parsed=parseJson(raw),allowedSet=new Set(allowed.damages.map(x=>x.damage_code)),selected=typeof parsed.selected_code==="string"&&allowedSet.has(parsed.selected_code.toUpperCase())?parsed.selected_code.toUpperCase():null;
     const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).map((v:any)=>({code:String(v?.code??"").toUpperCase(),confidence:confidence(v?.confidence),reason:String(v?.reason??"")})).filter(x=>allowedSet.has(x.code)).slice(0,3);
     if(selected&&!candidates.some(x=>x.code===selected))candidates.unshift({code:selected,confidence:confidence(parsed.confidence),reason:String(parsed.reason??"")});
-    const result={componentCode:allowed.componentCode,selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:String(parsed.reason??""),candidates:candidates.slice(0,3),allowedDamages:allowed.damages,model:MODEL};
-    await this.repo.saveDamagePrediction({findingId,surveyId:context.survey_id,modelName:MODEL,selectedCode:selected,confidence:result.confidence,candidates:result.candidates,response:raw});
+    const result={componentCode:allowed.componentCode,roiUsed:Boolean(roi),selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:String(parsed.reason??""),candidates:candidates.slice(0,3),allowedDamages:allowed.damages,model:MODEL};
+    await this.repo.saveDamagePrediction({findingId,surveyId:context.survey_id,modelName:MODEL,selectedCode:selected,confidence:result.confidence,candidates:result.candidates,response:{roi,modelResponse:raw}});
     return result;
   }
 }
