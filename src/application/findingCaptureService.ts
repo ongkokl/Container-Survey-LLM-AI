@@ -44,6 +44,7 @@ export class FindingCaptureService {
     const types=new Set(["CONTAINER_FACE","COMPONENT","DAMAGE","LOCATION_POINT"]);
     const geometries=new Set(["POINT","BOX","POLYGON","LINE"]);
     if(!types.has(input.annotationType)||!geometries.has(input.geometryType)) throw new Error("Invalid annotation.");
+    if(input.createdBy!==undefined&&!["AI","SURVEYOR"].includes(input.createdBy)) throw new Error("Invalid annotation provenance.");
     return {annotationId:await this.repo.addAnnotation({
       photoId:input.photoId,
       type:input.annotationType as "CONTAINER_FACE"|"COMPONENT"|"DAMAGE"|"LOCATION_POINT",
