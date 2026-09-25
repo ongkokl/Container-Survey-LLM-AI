@@ -410,9 +410,26 @@ function drawTarget(canvas,point,isAi=false){
 }
 function drawBox(canvas,box,isAi=false){
   const ctx=canvas.getContext("2d");ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.lineWidth=5;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
+  ctx.save();
+  ctx.lineWidth=6;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
+  ctx.shadowColor="rgba(0,0,0,.85)";ctx.shadowBlur=4;
   ctx.strokeRect(box.x*canvas.width,box.y*canvas.height,box.width*canvas.width,box.height*canvas.height);
+  ctx.restore();
 }
+function syncAnnotationCanvas(img,canvas){
+  const rect=img.getBoundingClientRect(),width=Math.max(1,Math.round(rect.width)),height=Math.max(1,Math.round(rect.height));
+  if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+}
+function redrawAnnotations(){
+  if(!overviewStage.hidden&&overviewPreview.complete&&locationPoint){
+    syncAnnotationCanvas(overviewPreview,overviewCanvas);drawTarget(overviewCanvas,locationPoint,!overviewEdited);
+  }
+  if(!closeupStage.hidden&&closeupPreview.complete&&damageBox){
+    syncAnnotationCanvas(closeupPreview,closeupCanvas);drawBox(closeupCanvas,damageBox,!closeupEdited);
+  }
+}
+window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)requestAnimationFrame(redrawAnnotations);});
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
   overviewEdited=true;
@@ -480,6 +497,7 @@ saveFindingBtn.addEventListener("click",async()=>{
     if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
     findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
+    redrawAnnotations();
     saveFindingBtn.textContent="Finding saved ✓";saveFindingBtn.disabled=true;
     analyseComponentBtn.hidden=false;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to save finding evidence.";setBusy(saveFindingBtn,false,"Saving…","Save finding evidence");}
