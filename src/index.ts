@@ -102,6 +102,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (request.method === "POST" && url.pathname === "/api/cedex/component-decision") {
+    try {
+      const body=await readJson<{findingId?:string;finalCode?:string}>(request);
+      const repo=new CedexRepository(env.DB);
+      return json({ok:true,result:await repo.decideComponent({findingId:body.findingId??"",finalCode:body.finalCode??""})});
+    } catch(error) {
+      return json({ok:false,error:"CEDEX_COMPONENT_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save component decision."},422);
+    }
+  }
+
   if (request.method === "POST" && url.pathname === "/api/findings") {
     try {
       const body=await readJson<{surveyId?:string;containerFace?:string}>(request);
