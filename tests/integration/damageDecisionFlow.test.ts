@@ -35,7 +35,7 @@ class FakeStatement {
     }
     if (this.sql.includes("FROM component_damage_rules r")) {
       const componentCode = String(this.args[1]);
-      const results = componentCode===this.db.finding.final_component_code
+      const results = componentCode==="PAA"
         ? this.db.allowedDamages.map(x=>({damage_code:x.code,damage_name:x.name}) as T)
         : [];
       return {results};
