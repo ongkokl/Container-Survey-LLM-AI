@@ -345,6 +345,7 @@ const saveFindingBtn=document.querySelector("#saveFindingBtn");
 const findingMessage=document.querySelector("#findingMessage");
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
+let aiLocationPoint=null,aiDamageBox=null;
 
 addFindingBtn.addEventListener("click",()=>{
   currentSurveyId=startedSurvey.textContent.trim();
@@ -366,30 +367,75 @@ createFindingBtn.addEventListener("click",async()=>{
 
 function showImage(file,img,stage,canvas,ready){
   const url=URL.createObjectURL(file);
-  img.onload=()=>{canvas.width=img.clientWidth;canvas.height=img.clientHeight;stage.hidden=false;ready();};
+  img.onload=()=>{stage.hidden=false;requestAnimationFrame(()=>{canvas.width=img.clientWidth;canvas.height=img.clientHeight;ready();});};
   img.src=url;
 }
 
 overviewPhoto.addEventListener("change",()=>{
-  overviewFile=overviewPhoto.files?.[0]??null; locationPoint=null;
+  overviewFile=overviewPhoto.files?.[0]??null; locationPoint=null;aiLocationPoint=null;
   if(!overviewFile)return;
-  showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,()=>{tapHelp.hidden=false;});
+  showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
+    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
+    try{
+      const upload=await compressForOcr(overviewFile),form=new FormData();
+      form.append("photo",upload,upload.name||"overview.jpg");form.append("mode","point");
+      const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
+      if(result.found&&result.geometry){
+        aiLocationPoint={...result.geometry};locationPoint={...result.geometry};drawTarget(overviewCanvas,locationPoint,true);
+        tapHelp.textContent="AI proposed this position. Tap the photo to correct it if needed.";
+      }else{
+        tapHelp.textContent="AI could not locate damage confidently. Tap the damaged position.";
+      }
+    }catch{
+      tapHelp.textContent="AI marking unavailable. Tap the damaged position.";
+    }
+    updateFindingReady();
+  });
 });
+
+function drawTarget(canvas,point,isAi=false){
+  const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height,r=14;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.lineWidth=5;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";ctx.fillStyle=isAi?"#ffd54a":"#6ee7ff";
+  ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x-r-10,y);ctx.lineTo(x+r+10,y);ctx.moveTo(x,y-r-10);ctx.lineTo(x,y+r+10);ctx.stroke();
+  ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
+}
+function drawBox(canvas,box,isAi=false){
+  const ctx=canvas.getContext("2d");ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.lineWidth=5;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
+  ctx.strokeRect(box.x*canvas.width,box.y*canvas.height,box.width*canvas.width,box.height*canvas.height);
+}
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
   const rect=overviewCanvas.getBoundingClientRect();
   locationPoint={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
-  const ctx=overviewCanvas.getContext("2d");ctx.clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
-  ctx.beginPath();ctx.arc(locationPoint.x*overviewCanvas.width,locationPoint.y*overviewCanvas.height,10,0,Math.PI*2);ctx.lineWidth=4;ctx.strokeStyle="#fff";ctx.stroke();
+  drawTarget(overviewCanvas,locationPoint,false);
   tapHelp.textContent="Damage position marked. Tap again to adjust.";
   updateFindingReady();
 });
 
 let dragStart=null;
 closeupPhoto.addEventListener("change",()=>{
-  closeupFile=closeupPhoto.files?.[0]??null;damageBox=null;
+  closeupFile=closeupPhoto.files?.[0]??null;damageBox=null;aiDamageBox=null;
   if(!closeupFile)return;
-  showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,()=>{boxHelp.hidden=false;});
+  showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
+    boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
+    try{
+      const upload=await compressForOcr(closeupFile),form=new FormData();
+      form.append("photo",upload,upload.name||"closeup.jpg");form.append("mode","box");
+      const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
+      if(result.found&&result.geometry){
+        aiDamageBox={...result.geometry};damageBox={...result.geometry};drawBox(closeupCanvas,damageBox,true);
+        boxHelp.textContent="AI proposed this damage box. Drag to redraw it if needed.";
+      }else{
+        boxHelp.textContent="AI could not locate damage confidently. Drag a box around the damage.";
+      }
+    }catch{
+      boxHelp.textContent="AI marking unavailable. Drag a box around the damage.";
+    }
+    updateFindingReady();
+  });
 });
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
@@ -400,8 +446,7 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
   const r=closeupCanvas.getBoundingClientRect(),end={x:(event.clientX-r.left)/r.width,y:(event.clientY-r.top)/r.height};
   damageBox={x:Math.min(dragStart.x,end.x),y:Math.min(dragStart.y,end.y),width:Math.abs(end.x-dragStart.x),height:Math.abs(end.y-dragStart.y)};
   dragStart=null;
-  const ctx=closeupCanvas.getContext("2d");ctx.clearRect(0,0,closeupCanvas.width,closeupCanvas.height);
-  ctx.lineWidth=4;ctx.strokeStyle="#fff";ctx.strokeRect(damageBox.x*closeupCanvas.width,damageBox.y*closeupCanvas.height,damageBox.width*closeupCanvas.width,damageBox.height*closeupCanvas.height);
+  drawBox(closeupCanvas,damageBox,false);
   boxHelp.textContent="Damage area marked. Drag again to adjust.";updateFindingReady();
 });
 
@@ -418,9 +463,11 @@ saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
     const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview);
-    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint})});
+    if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
+    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview);
-    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox})});
+    if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
+    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
     findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
     saveFindingBtn.textContent="Finding saved ✓";saveFindingBtn.disabled=true;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to save finding evidence.";setBusy(saveFindingBtn,false,"Saving…","Save finding evidence");}
