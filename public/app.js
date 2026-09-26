@@ -452,8 +452,10 @@ const componentSelect=document.querySelector("#componentSelect");
 const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
 const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
 const analyseDamageBtn=document.querySelector("#analyseDamageBtn"),damageReview=document.querySelector("#damageReview"),damageSuggestion=document.querySelector("#damageSuggestion"),damageCandidates=document.querySelector("#damageCandidates"),damageDecision=document.querySelector("#damageDecision"),damageSelect=document.querySelector("#damageSelect"),confirmDamageBtn=document.querySelector("#confirmDamageBtn"),damageDecisionMessage=document.querySelector("#damageDecisionMessage");
+const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage");
 let damageAiCode=null;
 let componentAiCode=null;
+let repairAiCode=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
 let aiLocationPoint=null,aiDamageBox=null;
@@ -473,6 +475,7 @@ createFindingBtn.addEventListener("click",async()=>{
     findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
     findingCapture.hidden=false; createFindingBtn.hidden=true; findingFace.disabled=true;
     findingMessage.textContent="Finding created. Capture the overview photo.";
+    repairReview.hidden=true;analyseRepairBtn.hidden=true;repairAiCode=null;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
   finally{setBusy(createFindingBtn,false,"Creating…","Create finding");}
 });
@@ -751,5 +754,89 @@ confirmDamageBtn.addEventListener("click",async()=>{
     const result=await apiJson("/api/cedex/damage-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:damageSelect.value})});
     damageDecisionMessage.textContent=result.decision==="APPROVED"?"Damage accepted: "+result.finalCode:"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
     damageSelect.disabled=true;confirmDamageBtn.disabled=true;confirmDamageBtn.textContent="Damage confirmed ✓";
+    analyseRepairBtn.hidden=false;
   }catch(e){damageDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save damage decision.";setBusy(confirmDamageBtn,false,"Saving…","Accept damage");}
 });
+
+
+function renderRepairResult(result){
+  const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result.analysisStatus);
+  repairAiCode=result.selectedCode??null;
+  repairSuggestion.textContent=failed
+    ? result.reason
+    : result.selectedCode
+      ? result.selectedCode+" · "+(typeof result.confidence==="number"?Math.round(result.confidence*100)+"% model score":"score unavailable")+" · surveyor review required"
+      : "No reliable repair method selected · surveyor review required";
+  repairCandidates.textContent=result.candidates?.length
+    ? "Alternatives: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"% score":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
+    : failed ? "No completed AI repair recommendation is available." : result.reason || "Select a verified repair method manually.";
+
+  repairSelect.innerHTML="";
+  const placeholder=document.createElement("option");
+  placeholder.value="";placeholder.textContent="Select a repair method…";
+  repairSelect.appendChild(placeholder);
+  for(const x of (result.allowedRepairs??[])){
+    const option=document.createElement("option");
+    option.value=x.repair_code;
+    option.textContent=x.repair_code+" — "+x.repair_name;
+    repairSelect.appendChild(option);
+  }
+  repairSelect.value=result.selectedCode??"";
+  repairSelect.disabled=false;
+  repairDecision.hidden=repairSelect.options.length<=1;
+  repairDecisionMessage.textContent="";
+  confirmRepairBtn.disabled=!repairSelect.value;
+  confirmRepairBtn.textContent=repairAiCode&&repairSelect.value===repairAiCode
+    ?"Accept "+repairAiCode
+    :repairAiCode?"Confirm correction":"Confirm repair method";
+}
+
+analyseRepairBtn.addEventListener("click",async()=>{
+  if(!currentFinding)return;
+  setBusy(analyseRepairBtn,true,"Analysing repair…","Analyse repair method");
+  repairReview.hidden=false;
+  repairDecision.hidden=true;
+  repairSelect.disabled=true;
+  confirmRepairBtn.disabled=true;
+  repairAiCode=null;
+  repairSuggestion.textContent="Checking the confirmed component and damage against verified repair methods…";
+  repairCandidates.textContent="";
+  try{
+    const result=await apiJson("/api/cedex/repair-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
+    renderRepairResult(result);
+  }catch(e){
+    if(["CEDEX_REPAIR_INCOMPLETE","CEDEX_REPAIR_INVALID_RESPONSE"].includes(e?.code)&&e.result){
+      renderRepairResult(e.result);
+    }else{
+      repairSuggestion.textContent=e instanceof Error?e.message:"Unable to recommend repair method.";
+    }
+  }finally{
+    setBusy(analyseRepairBtn,false,"Analysing repair…","Analyse repair method");
+  }
+});
+
+repairSelect.addEventListener("change",()=>{
+  confirmRepairBtn.disabled=!repairSelect.value;
+  confirmRepairBtn.textContent=repairAiCode&&repairSelect.value===repairAiCode
+    ?"Accept "+repairAiCode
+    :repairAiCode?"Confirm correction":"Confirm repair method";
+});
+
+confirmRepairBtn.addEventListener("click",async()=>{
+  if(!currentFinding||!repairSelect.value)return;
+  setBusy(confirmRepairBtn,true,"Saving…","Confirm repair method");
+  try{
+    const result=await apiJson("/api/cedex/repair-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:repairSelect.value})});
+    repairDecisionMessage.textContent=result.decision==="APPROVED"
+      ?"Repair method accepted: "+result.finalCode
+      :result.aiCode?"AI repair corrected from "+result.aiCode+" to "+result.finalCode:"Repair method selected manually: "+result.finalCode;
+    repairSelect.disabled=true;
+    confirmRepairBtn.disabled=true;
+    confirmRepairBtn.textContent="Repair method confirmed ✓";
+    analyseRepairBtn.disabled=true;
+  }catch(e){
+    repairDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save repair decision.";
+    setBusy(confirmRepairBtn,false,"Saving…","Confirm repair method");
+  }
+});
+
