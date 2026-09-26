@@ -52,6 +52,24 @@ export class CedexRepository {
     ).bind(findingId,role).first<{id:string;r2_key:string;content_type:string}>();
   }
 
+  async surveyorLocationPoint(findingId:string,photoId?:string){
+    const row=await this.db.prepare(`
+      SELECT a.geometry_json
+      FROM annotations a
+      JOIN survey_photos p ON p.id=a.photo_id
+      WHERE p.finding_id=? AND p.photo_role='FACE_OVERVIEW' AND (? IS NULL OR p.id=?)
+        AND a.annotation_type='LOCATION_POINT' AND a.geometry_type='POINT' AND a.created_by='SURVEYOR'
+      ORDER BY a.created_at DESC LIMIT 1`
+    ).bind(findingId,photoId??null,photoId??null).first<{geometry_json:string}>();
+    if(!row)return null;
+    try{
+      const g=JSON.parse(row.geometry_json) as {x?:number;y?:number};
+      if(typeof g.x!=="number"||typeof g.y!=="number")return null;
+      if([g.x,g.y].every(Number.isFinite)&&g.x>=0&&g.x<=1&&g.y>=0&&g.y<=1)return {x:g.x,y:g.y};
+    }catch{}
+    return null;
+  }
+
   async findingContext(findingId:string){
     return this.db.prepare(`
       SELECT f.id,f.survey_id,f.container_face,gc.observed_container_type AS equipment_type,
