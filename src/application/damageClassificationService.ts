@@ -60,6 +60,10 @@ function selectedDamageRule(rules:DamageVisualRule[],code:string|null){
   return rules.find(rule=>rule.damage_code===code)??null;
 }
 
+function photoEligibleRules(rules:DamageVisualRule[]){
+  return rules.filter(rule=>rule.evidence_requirement==="VISUAL");
+}
+
 
 export class DamageClassificationService{
   constructor(private readonly repo:CedexRepository,private readonly bucket:Bucket,private readonly ai:AiRunner){}
@@ -86,7 +90,15 @@ export class DamageClassificationService{
     const equipment=context.equipment_type as "GP"|"RF";
     const visualRules=(await this.repo.damageVisualRules(equipment,allowed.componentCode))
       .filter(rule=>allowedSet.has(rule.damage_code));
-    const visualGuidance=formatDamageVisualGuidance(visualRules);
+    const photoRules=photoEligibleRules(visualRules);
+    const photoRuleCodes=new Set(photoRules.map(rule=>rule.damage_code));
+    const aiAllowedDamages=photoRules.length
+      ? allowed.damages.filter(x=>photoRuleCodes.has(x.damage_code))
+      : allowed.damages;
+    const aiAllowedCodes=[...new Set(aiAllowedDamages.map(x=>x.damage_code))];
+    const aiAllowedSet=new Set(aiAllowedCodes);
+    const aiAllowedText=aiAllowedDamages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
+    const visualGuidance=formatDamageVisualGuidance(photoRules.length?photoRules:visualRules);
 
     const prompt=`You are assisting a shipping-container surveyor using the verified IICL damage-code list supplied by the application.
 Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.
@@ -99,8 +111,9 @@ Do not abstain merely because exact severity or repair measurement is unavailabl
 
 ${visualGuidance}
 
-Allowed damage codes for ${allowed.componentCode}:
-${allowedText}
+Photo-eligible damage codes for ${allowed.componentCode}:
+${aiAllowedText}
+Codes requiring measurement, history or broader context remain available for manual surveyor selection but are intentionally excluded from this photo-only AI suggestion.
 
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (maximum 20 words), and candidates (at most 3 objects with code, confidence and a maximum 15-word reason). Keep the answer concise. Do not explain your reasoning outside the JSON.`;
 
@@ -117,7 +130,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
           schema:{
             type:"object",
             properties:{
-              selected_code:{type:["string","null"],enum:[...allowedCodes,null]},
+              selected_code:{type:["string","null"],enum:[...aiAllowedCodes,null]},
               confidence:{type:["number","null"],minimum:0,maximum:1},
               needs_review:{type:"boolean"},
               reason:{type:"string"},
@@ -126,7 +139,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
                 items:{
                   type:"object",
                   properties:{
-                    code:{type:"string",enum:allowedCodes},
+                    code:{type:"string",enum:aiAllowedCodes},
                     confidence:{type:["number","null"],minimum:0,maximum:1},
                     reason:{type:"string"}
                   },
@@ -166,7 +179,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         return candidate&&typeof candidate.code==="string"&&validConfidence(candidate.confidence)&&typeof candidate.reason==="string";
       })){
       const code=typeof parsed.selected_code==="string"?parsed.selected_code.trim().toUpperCase():null;
-      if(code===null||allowedSet.has(code)){
+      if(code===null||aiAllowedSet.has(code)){
         selectedCode=code;
         selectedConfidence=confidence(parsed.confidence);
         const rule=selectedDamageRule(visualRules,code);
@@ -181,7 +194,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         for(const value of parsed.candidates){
           const candidate=value as {code:string;confidence:number|null;reason:string};
           const candidateCode=candidate.code.trim().toUpperCase();
-          if(allowedSet.has(candidateCode)&&!candidates.some(x=>x.code===candidateCode)){
+          if(aiAllowedSet.has(candidateCode)&&!candidates.some(x=>x.code===candidateCode)){
             candidates.push({code:candidateCode,confidence:confidence(candidate.confidence),reason:candidate.reason.trim()});
           }
         }
@@ -204,6 +217,10 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       model:MODEL,
       damageVisualKnowledgeUsed:visualRules.length>0,
       damageVisualRuleCount:visualRules.length,
+      damageVisualRulesUsed:photoRules.length||visualRules.length,
+      aiEligibleDamageCount:aiAllowedDamages.length,
+      aiEligibleDamageCodes:aiAllowedCodes,
+      excludedFromPhotoOnlyAi:allowedCodes.filter(code=>!aiAllowedSet.has(code)),
       evidenceRequirement:selectedRule?.evidence_requirement??null,
       evidenceReviewRequired:selectedRule?.force_review===1,
       finishReason,
@@ -225,7 +242,10 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         damageReviewThreshold:DAMAGE_REVIEW_THRESHOLD,
         damageVisualKnowledgeUsed:visualRules.length>0,
         damageVisualRuleCount:visualRules.length,
+        damageVisualRulesUsed:photoRules.length||visualRules.length,
         damageVisualRuleCodes:[...new Set(visualRules.map(rule=>rule.damage_code))],
+        aiEligibleDamageCodes:aiAllowedCodes,
+        excludedFromPhotoOnlyAi:allowedCodes.filter(code=>!aiAllowedSet.has(code)),
         selectedEvidenceRequirement:selectedRule?.evidence_requirement??null,
         evidenceReviewRequired:selectedRule?.force_review===1,
         max_completion_tokens:MAX_COMPLETION_TOKENS,
