@@ -268,10 +268,15 @@ export function createGuidedCamera(elements){
       analysisContext.drawImage(video,0,0,aw,ah);
       const imageData=analysisContext.getImageData(0,0,aw,ah);
       lastMetrics=analyseImageData(imageData,current.face,current.mode,orientationGamma);
-      const primaryQuality=current.mode==="overview"?lastMetrics.measurementQuality:lastMetrics.identificationQuality;
+      const portraitSide=current.mode==="overview"&&["LEFT","RIGHT"].includes(current.face)&&video.videoHeight>video.videoWidth;
+      const primaryQuality=portraitSide
+        ?"POOR"
+        :current.mode==="overview"?lastMetrics.measurementQuality:lastMetrics.identificationQuality;
       qualityBadge.textContent=(current.mode==="overview"?"Measurement: ":"Photo: ")+primaryQuality.toLowerCase();
       qualityBadge.dataset.quality=primaryQuality;
-      statusText.textContent=guidanceInstruction(lastMetrics,current.face,current.mode);
+      statusText.textContent=portraitSide
+        ?"Rotate phone to landscape so the full side face can fit the geometry guide"
+        :guidanceInstruction(lastMetrics,current.face,current.mode);
       drawOverlay(overlay,current.face,current.equipmentType,current.mode,primaryQuality,current.geometry);
     }catch{
       statusText.textContent="Keep the damage centred and structural references visible";
@@ -292,6 +297,7 @@ export function createGuidedCamera(elements){
         identificationQuality:"POOR",measurementQuality:"POOR",
         identificationScore:0,measurementScore:0,sharpnessScore:0,exposureScore:0,glareScore:0,geometryScore:0,levelScore:0
       };
+      const portraitSide=current.mode==="overview"&&["LEFT","RIGHT"].includes(current.face)&&video.videoHeight>video.videoWidth;
       const metadata={
         version:"camera_guidance_v1",
         source:"guided_camera",
@@ -303,8 +309,9 @@ export function createGuidedCamera(elements){
         referenceFrame:current.mode==="overview"
           ? normalizedReferenceFrame(video.videoWidth,video.videoHeight,current.face,current.geometry)
           : null,
+        orientationSuitable:!portraitSide,
         identificationQuality:metrics.identificationQuality,
-        measurementQuality:metrics.measurementQuality,
+        measurementQuality:portraitSide?"POOR":metrics.measurementQuality,
         scores:{
           sharpness:metrics.sharpnessScore,
           exposure:metrics.exposureScore,
