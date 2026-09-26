@@ -114,9 +114,10 @@ export class LocationSuggestionService{
     const expected=expectedAspect(context.container_face,geometry);
     const score=geometryScore(referenceBox,input.imageWidth,input.imageHeight,expected);
     const guided=capture.referenceFrame!==null;
+    const knownGeometryAvailable=expected!==null;
     const guidedQualityOk=!guided||["GOOD","USABLE"].includes(capture.measurementQuality);
-    const galleryGeometryOk=guided||score===null||score>=0.68;
-    const autoUsable=Boolean(referenceBox)&&guidedQualityOk&&galleryGeometryOk;
+    const galleryGeometryOk=guided||(score!==null&&score>=0.68);
+    const autoUsable=Boolean(referenceBox)&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk;
 
     const calculated=referenceBox?suggestCedexLocation({
       face:context.container_face as SurveyFace,
@@ -134,11 +135,13 @@ export class LocationSuggestionService{
 
     const reason=!referenceBox
       ?"Container face reference could not be established. Mark the damage and enter the CEDEX location manually."
-      :!guidedQualityOk
-        ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
-        :!galleryGeometryOk
-          ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Enter the location manually."
-          :calculated?.reason??"Automatic location is unavailable for this container face.";
+      :!knownGeometryAvailable
+        ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
+        :!guidedQualityOk
+          ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
+          :!galleryGeometryOk
+            ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Enter the location manually."
+            :calculated?.reason??"Automatic location is unavailable for this container face.";
 
     const prediction=await this.repo.saveLocationPrediction({
       findingId:input.findingId,
