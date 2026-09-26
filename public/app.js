@@ -589,7 +589,11 @@ function normalizedLocationCode(value){
 }
 
 function validLocationCode(){
-  return LOCATION_CODE_PATTERN.test(normalizedLocationCode(locationCodeInput.value));
+  const code=normalizedLocationCode(locationCodeInput.value);
+  if(!LOCATION_CODE_PATTERN.test(code))return false;
+  if(findingFace.value==="LEFT"&&code[0]!=="L")return false;
+  if(findingFace.value==="RIGHT"&&code[0]!=="R")return false;
+  return true;
 }
 
 function resetOverviewLocation(){
@@ -620,18 +624,25 @@ function renderLocationResult(result){
     locationSuggestion.textContent=location?.reason||"Automatic location unavailable. Enter the CEDEX location manually.";
   }
 
+  const sideOrientation=findingFace.value==="RIGHT"
+    ?" · verify door end is at image left"
+    :findingFace.value==="LEFT"
+      ?" · verify door end is at image right"
+      :"";
   if(result?.referenceSource==="GUIDED_FRAME"){
     locationGeometryMessage.textContent=
       "Reference: guided known-geometry frame"+
-      (locationAutoUsable?" · suitable for automatic side-location calculation":" · not suitable for automatic location");
+      (locationAutoUsable?" · suitable for automatic side-location calculation":" · not suitable for automatic location")+
+      sideOrientation;
   }else if(result?.referenceSource==="AI_FACE"){
     const score=typeof result.geometryScore==="number"?Math.round(result.geometryScore*100):null;
     locationGeometryMessage.textContent=
       "Reference: container face detected from uploaded overview"+
       (score!==null?" · geometry match "+score+"%":"")+
-      (locationAutoUsable?"":" · manual location review required");
+      (locationAutoUsable?"":" · manual location review required")+
+      sideOrientation;
   }else{
-    locationGeometryMessage.textContent="No reliable container reference frame was established.";
+    locationGeometryMessage.textContent="No reliable container reference frame was established."+sideOrientation;
   }
   locationCodeInput.setAttribute("aria-invalid",validLocationCode()?"false":locationCodeInput.value?"true":"false");
 }
@@ -674,7 +685,7 @@ async function recalculateLocationFromMarkedPoint(){
 locationCodeInput.addEventListener("input",()=>{
   const normalized=normalizedLocationCode(locationCodeInput.value).replace(/[^A-Z0-9]/g,"").slice(0,4);
   if(locationCodeInput.value!==normalized)locationCodeInput.value=normalized;
-  locationCodeInput.setAttribute("aria-invalid",normalized.length>0&&!LOCATION_CODE_PATTERN.test(normalized)?"true":"false");
+  locationCodeInput.setAttribute("aria-invalid",normalized.length>0&&!validLocationCode()?"true":"false");
   updateFindingReady();
 });
 
@@ -818,7 +829,7 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
 
 function updateFindingReady(){
   const code=normalizedLocationCode(locationCodeInput.value);
-  const locationValid=LOCATION_CODE_PATTERN.test(code);
+  const locationValid=validLocationCode();
   if(locationCodeInput.value)locationCodeInput.setAttribute("aria-invalid",locationValid?"false":"true");
   saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox&&locationValid);
 }
