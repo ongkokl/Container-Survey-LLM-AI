@@ -386,10 +386,13 @@ export class CedexRepository {
       damageWidthCm?:number|null;
       damageDepthCm?:number|null;
       corrugationsAffected?:number|null;
+      deformationDirection?:"INWARD"|"OUTWARD"|"UNKNOWN"|null;
       notes?:string|null;
     };
   }){
     const allowed=await this.repairCodesForFinding(input.findingId);
+    const context=await this.findingContext(input.findingId);
+    if(!context) throw new Error("Finding not found.");
     const finalCode=input.finalCode.trim().toUpperCase();
     if(!allowed.repairs.some(x=>x.repair_code===finalCode)) throw new Error("Select a verified GP.xlsx repair method for the confirmed component and damage.");
     const prediction=await this.latestRepairPrediction(input.findingId);
@@ -398,8 +401,38 @@ export class CedexRepository {
     const now=new Date().toISOString(),decisionId=crypto.randomUUID();
     const m=input.measurements??{};
     const numeric=(value:number|null|undefined)=>typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null;
+    const lengthCm=numeric(m.damageLengthCm);
+    const widthCm=numeric(m.damageWidthCm);
+    const depthCm=numeric(m.damageDepthCm);
     const corr=typeof m.corrugationsAffected==="number"&&Number.isInteger(m.corrugationsAffected)&&m.corrugationsAffected>=0?m.corrugationsAffected:null;
+    const direction=["INWARD","OUTWARD"].includes(m.deformationDirection??"")
+      ? m.deformationDirection as "INWARD"|"OUTWARD"
+      : "UNKNOWN";
     const notes=m.notes?.trim()||null;
+
+    // IICL TB-013 dry-van dimensional criteria. This assessment does not
+    // decide whether a repair is required for any other condition and does
+    // not choose a repair method.
+    let iiclLimitMm:number|null=null;
+    let iiclDepthStatus:"WITHIN_DIMENSIONAL_CRITERION"|"EXCEEDS_DIMENSIONAL_CRITERION"|"NOT_MEASURED"|"NOT_APPLICABLE"="NOT_APPLICABLE";
+    const isGpPanelDent=allowed.equipment==="GP"&&allowed.componentCode==="PAA"&&allowed.damageCode==="DT";
+    const isSide=["LEFT","RIGHT"].includes(context.container_face);
+    const isFront=context.container_face==="FRONT";
+    if(isGpPanelDent&&(isSide||isFront)){
+      if(direction==="INWARD") iiclLimitMm=35;
+      else if(direction==="OUTWARD"&&isSide) iiclLimitMm=30;
+      else if(direction==="OUTWARD"&&isFront) iiclLimitMm=15;
+
+      if(iiclLimitMm!==null){
+        if(depthCm===null) iiclDepthStatus="NOT_MEASURED";
+        else iiclDepthStatus=depthCm*10<=iiclLimitMm
+          ?"WITHIN_DIMENSIONAL_CRITERION"
+          :"EXCEEDS_DIMENSIONAL_CRITERION";
+      }else{
+        iiclDepthStatus="NOT_MEASURED";
+      }
+    }
+
     await this.db.batch([
       this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'REPAIR',?,?,?,?)")
         .bind(decisionId,input.findingId,prediction.prediction_id,prediction.selected_code,finalCode,decision,now),
@@ -408,22 +441,36 @@ export class CedexRepository {
         .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId),
       this.db.prepare(`
         INSERT INTO repair_measurements
-          (finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,measurement_source,notes,created_at,updated_at)
-        VALUES (?,?,?,?,?,'SURVEYOR',?,?,?)
+          (
+            finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,
+            measurement_source,deformation_direction,geometry_iso_code,measurement_method,
+            applicable_iicl_limit_mm,iicl_depth_status,notes,created_at,updated_at
+          )
+        VALUES (?,?,?,?,?,'SURVEYOR',?,?,?, ?,?,?,?,?)
         ON CONFLICT(finding_id) DO UPDATE SET
           damage_length_cm=excluded.damage_length_cm,
           damage_width_cm=excluded.damage_width_cm,
           damage_depth_cm=excluded.damage_depth_cm,
           corrugations_affected=excluded.corrugations_affected,
           measurement_source='SURVEYOR',
+          deformation_direction=excluded.deformation_direction,
+          geometry_iso_code=excluded.geometry_iso_code,
+          measurement_method=excluded.measurement_method,
+          applicable_iicl_limit_mm=excluded.applicable_iicl_limit_mm,
+          iicl_depth_status=excluded.iicl_depth_status,
           notes=excluded.notes,
           updated_at=excluded.updated_at
       `).bind(
         input.findingId,
-        numeric(m.damageLengthCm),
-        numeric(m.damageWidthCm),
-        numeric(m.damageDepthCm),
+        lengthCm,
+        widthCm,
+        depthCm,
         corr,
+        direction,
+        context.observed_iso_code,
+        "SURVEYOR_MANUAL",
+        iiclLimitMm,
+        iiclDepthStatus,
         notes,
         now,
         now
@@ -438,16 +485,28 @@ export class CedexRepository {
       equipment:allowed.equipment,
       componentCode:allowed.componentCode,
       damageCode:allowed.damageCode,
-      measurementCaptured:Boolean(
-        numeric(m.damageLengthCm)!==null||
-        numeric(m.damageWidthCm)!==null||
-        numeric(m.damageDepthCm)!==null||
-        corr!==null||
-        notes
-      )
+      measurementCaptured:Boolean(lengthCm!==null||widthCm!==null||depthCm!==null||corr!==null||notes),
+      measurement:{
+        damageLengthCm:lengthCm,
+        damageWidthCm:widthCm,
+        damageDepthCm:depthCm,
+        corrugationsAffected:corr,
+        deformationDirection:direction,
+        geometryIsoCode:context.observed_iso_code,
+        measurementMethod:"SURVEYOR_MANUAL"
+      },
+      iiclDepthAssessment:{
+        applicable:iiclDepthStatus!=="NOT_APPLICABLE",
+        limitMm:iiclLimitMm,
+        status:iiclDepthStatus,
+        note:iiclDepthStatus==="WITHIN_DIMENSIONAL_CRITERION"
+          ?"Within this IICL dimensional criterion only; other damage criteria may still require repair."
+          :iiclDepthStatus==="EXCEEDS_DIMENSIONAL_CRITERION"
+            ?"Measured deformation exceeds this IICL dimensional criterion."
+            :"Depth criterion not assessed."
+      }
     };
   }
-
 
   async latestComponentPrediction(findingId:string){
     return this.db.prepare(`
