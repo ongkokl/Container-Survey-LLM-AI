@@ -10,6 +10,17 @@ export interface ComponentVisualRule {
   force_review:number;
   source_reference:string;
 }
+export interface DamageVisualRule {
+  damage_code:string;
+  component_code:string;
+  visual_definition:string;
+  positive_cues:string|null;
+  negative_cues:string|null;
+  confusable_with:string|null;
+  evidence_requirement:"VISUAL"|"VISUAL_CONTEXT"|"MEASUREMENT"|"HISTORY_CONTEXT";
+  force_review:number;
+  source_reference:string;
+}
 
 export class CedexRepository {
   constructor(private readonly db:D1Database){}
@@ -81,6 +92,26 @@ export class CedexRepository {
       // Keep component classification available during a staged deploy before
       // migration 0009 is applied. Other query failures still surface.
       if(error instanceof Error && /no such table.*component_visual_rules/i.test(error.message)) return [];
+      throw error;
+    }
+  }
+
+  async damageVisualRules(equipment:"GP"|"RF",componentCode:string):Promise<DamageVisualRule[]>{
+    const component=componentCode.trim().toUpperCase();
+    try{
+      const result=await this.db.prepare(`
+        SELECT damage_code,component_code,visual_definition,positive_cues,negative_cues,
+               confusable_with,evidence_requirement,force_review,source_reference
+        FROM damage_visual_rules
+        WHERE equipment_type=? AND active=1 AND component_code IN (?,'ANY')
+        ORDER BY damage_code,
+                 CASE WHEN component_code=? THEN 0 ELSE 1 END,
+                 priority DESC`
+      ).bind(equipment,component,component).all<DamageVisualRule>();
+      return result.results;
+    }catch(error){
+      // Allow staged deployment before migration 0010 is applied.
+      if(error instanceof Error && /no such table.*damage_visual_rules/i.test(error.message)) return [];
       throw error;
     }
   }

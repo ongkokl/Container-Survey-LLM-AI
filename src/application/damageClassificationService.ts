@@ -1,4 +1,4 @@
-import { CedexRepository } from "../infrastructure/d1/cedexRepository";
+import { CedexRepository, DamageVisualRule } from "../infrastructure/d1/cedexRepository";
 
 const MODEL="@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS=600;
@@ -39,6 +39,27 @@ function validConfidence(value:unknown):value is number|null{
 function confidence(value:number|null):number|null{
   return value===null?null:value;
 }
+function formatDamageVisualGuidance(rules:DamageVisualRule[]){
+  if(!rules.length){
+    return "No additional D1 damage visual guidance is loaded. Use only the verified allowed-code names and visible evidence.";
+  }
+  const lines=rules.map(rule=>{
+    const parts=[`- ${rule.damage_code}: ${rule.visual_definition}`];
+    if(rule.positive_cues)parts.push(`Positive cues: ${rule.positive_cues}`);
+    if(rule.negative_cues)parts.push(`Do not use when: ${rule.negative_cues}`);
+    if(rule.confusable_with)parts.push(`Common alternatives: ${rule.confusable_with}`);
+    parts.push(`Evidence requirement: ${rule.evidence_requirement}`);
+    if(rule.force_review===1)parts.push("If selected, surveyor review is mandatory.");
+    return parts.join(" ");
+  });
+  return `D1 damage visual knowledge (operational QA guidance; the allowed code master remains authoritative):\n${lines.join("\n")}`;
+}
+
+function selectedDamageRule(rules:DamageVisualRule[],code:string|null){
+  if(!code)return null;
+  return rules.find(rule=>rule.damage_code===code)??null;
+}
+
 
 export class DamageClassificationService{
   constructor(private readonly repo:CedexRepository,private readonly bucket:Bucket,private readonly ai:AiRunner){}
@@ -61,6 +82,11 @@ export class DamageClassificationService{
     const allowedCodes=[...new Set(allowed.damages.map(x=>x.damage_code))];
     const allowedSet=new Set(allowedCodes);
     const allowedText=allowed.damages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
+    if(!["GP","RF"].includes(context.equipment_type))throw new Error("Unable to determine GP/RF equipment type.");
+    const equipment=context.equipment_type as "GP"|"RF";
+    const visualRules=(await this.repo.damageVisualRules(equipment,allowed.componentCode))
+      .filter(rule=>allowedSet.has(rule.damage_code));
+    const visualGuidance=formatDamageVisualGuidance(visualRules);
 
     const prompt=`You are assisting a shipping-container surveyor using the verified IICL damage-code list supplied by the application.
 Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.
@@ -68,7 +94,11 @@ ${roi?`The surveyor marked the intended damage region on the close-up image usin
 
 Classify ONLY the visible physical damage affecting the confirmed component. Choose ONLY from the allowed codes below. Never invent a code.
 Use the physical morphology in the marked region. Do not classify unrelated dirt, stains, corrosion, marks or defects outside the marked region.
-Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
+Identify the PRIMARY damage represented by the marked region. Incidental paint chips, dirt, staining or discoloration caused by or adjacent to a clearer structural damage must not outrank the primary morphology.
+Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code. Codes whose evidence requirement is MEASUREMENT or HISTORY_CONTEXT may be suggested only when visually plausible, but must set needs_review true because the photo alone cannot establish the required evidence. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
+
+${visualGuidance}
+
 Allowed damage codes for ${allowed.componentCode}:
 ${allowedText}
 
@@ -139,11 +169,13 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       if(code===null||allowedSet.has(code)){
         selectedCode=code;
         selectedConfidence=confidence(parsed.confidence);
+        const rule=selectedDamageRule(visualRules,code);
         needsReview=
           parsed.needs_review||
           !code||
           selectedConfidence===null||
-          selectedConfidence<DAMAGE_REVIEW_THRESHOLD;
+          selectedConfidence<DAMAGE_REVIEW_THRESHOLD||
+          rule?.force_review===1;
         analysisStatus=code?"SUGGESTED":"ABSTAINED";
         reason=parsed.reason.trim()||(code?"Surveyor confirmation required.":"AI could not distinguish the visible damage type reliably.");
         for(const value of parsed.candidates){
@@ -158,6 +190,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       }
     }
 
+    const selectedRule=selectedDamageRule(visualRules,selectedCode);
     const result={
       componentCode:allowed.componentCode,
       analysisStatus,
@@ -168,7 +201,11 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       reason,
       candidates,
       allowedDamages:allowed.damages,
-      model:MODEL
+      model:MODEL,
+      damageVisualKnowledgeUsed:visualRules.length>0,
+      damageVisualRuleCount:visualRules.length,
+      evidenceRequirement:selectedRule?.evidence_requirement??null,
+      evidenceReviewRequired:selectedRule?.force_review===1
     };
 
     await this.repo.saveDamagePrediction({
@@ -184,6 +221,11 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         photoId:photo.id,
         roi,
         damageReviewThreshold:DAMAGE_REVIEW_THRESHOLD,
+        damageVisualKnowledgeUsed:visualRules.length>0,
+        damageVisualRuleCount:visualRules.length,
+        damageVisualRuleCodes:[...new Set(visualRules.map(rule=>rule.damage_code))],
+        selectedEvidenceRequirement:selectedRule?.evidence_requirement??null,
+        evidenceReviewRequired:selectedRule?.force_review===1,
         max_completion_tokens:MAX_COMPLETION_TOKENS,
         reasoning_effort:"low",
         analysisStatus,
