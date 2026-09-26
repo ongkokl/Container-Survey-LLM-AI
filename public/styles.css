@@ -13,7 +13,7 @@ body {
   background: linear-gradient(180deg, #08101d 0%, #0d1727 100%);
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 button { cursor: pointer; }
 
@@ -305,3 +305,35 @@ h3 { margin-bottom: 12px; }
 .annotationStage { position:relative;margin-top:12px;border-radius:16px;overflow:hidden;background:#050a12;touch-action:none; }
 .annotationStage img { display:block;width:100%;max-height:430px;object-fit:contain; }
 .annotationStage canvas { position:absolute;inset:0;width:100%;height:100%;touch-action:none; }
+
+
+.measurementGuide {
+  border: 1px solid #315845;
+}
+
+#repairDecision {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#repairDecision input,
+#repairDecision select {
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid #38506e;
+  border-radius: 12px;
+  background: #0b1625;
+  color: #f4f7fb;
+  padding: 0 12px;
+  outline: none;
+}
+
+#repairDentDirectionWrap {
+  display: grid;
+  gap: 8px;
+}
+
+#repairDepthCriterion {
+  margin-top: 0;
+}
