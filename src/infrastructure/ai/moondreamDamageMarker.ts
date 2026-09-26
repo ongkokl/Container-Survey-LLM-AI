@@ -85,19 +85,16 @@ export class MoondreamDamageMarker {
       faceName+" face; ignore logos, paint, dirt, stains, shadows, timestamps and normal corrugations";
     const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
     const damageBox=largestBox(damageRaw);
-    if(!damageBox){
-      return {found:false,model:MODEL,damageBox:null,referenceBox:knownReferenceBox??null,raw:{damage:damageRaw,reference:null}};
-    }
 
     if(knownReferenceBox){
-      return {found:true,model:MODEL,damageBox,referenceBox:knownReferenceBox,raw:{damage:damageRaw,reference:null}};
+      return {found:Boolean(damageBox),model:MODEL,damageBox,referenceBox:knownReferenceBox,raw:{damage:damageRaw,reference:null}};
     }
 
     const referenceTarget="entire visible "+faceName+" face of the shipping container including its outer structural frame";
     const referenceRaw=await this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3});
     const referenceBox=largestBox(referenceRaw);
     return {
-      found:true,
+      found:Boolean(damageBox),
       model:MODEL,
       damageBox,
       referenceBox,
