@@ -1,4 +1,5 @@
 import { assessDentDepth, type DeformationDirection } from "../../domain/container/dentDepth";
+import { isValidContainerLocationCode, normalizeLocationCode } from "../../domain/container/locationCode";
 
 export interface ComponentCandidate {component_code:string;component_name:string;standard_version:string;}
 export interface ComponentVisualRule {
@@ -461,6 +462,62 @@ export class CedexRepository {
     };
   }
 
+
+  async saveLocationPrediction(input:{
+    findingId:string;
+    surveyId:string;
+    modelName:string;
+    selectedCode:string|null;
+    response:unknown;
+    requestContext?:Record<string,unknown>;
+    status?:"SUGGESTED"|"REVIEW_REQUIRED"|"FAILED";
+  }){
+    const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
+    await this.db.batch([
+      this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(runId,input.surveyId,input.findingId,"LOCATION_SUGGESTION",JSON.stringify({model:input.modelName,...input.requestContext}),JSON.stringify(input.response),now,now),
+      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'LOCATION',?,NULL,?,?)")
+        .bind(predictionId,input.selectedCode,input.status??"REVIEW_REQUIRED",now)
+    ]);
+    return {predictionId};
+  }
+
+  async latestLocationPrediction(findingId:string){
+    return this.db.prepare(`
+      SELECT ap.id AS prediction_id,ap.selected_code
+      FROM ai_predictions ap
+      JOIN ai_runs ar ON ar.id=ap.ai_run_id
+      WHERE ar.finding_id=? AND ap.prediction_type='LOCATION'
+      ORDER BY ap.created_at DESC LIMIT 1`
+    ).bind(findingId).first<{prediction_id:string;selected_code:string|null}>();
+  }
+
+  async decideLocation(input:{findingId:string;finalCode:string;}){
+    const finalCode=normalizeLocationCode(input.finalCode);
+    if(!isValidContainerLocationCode(finalCode)) throw new Error("Enter a valid four-character CEDEX location code.");
+    const finding=await this.db.prepare("SELECT id FROM findings WHERE id=?").bind(input.findingId).first<{id:string}>();
+    if(!finding) throw new Error("Finding not found.");
+    const prediction=await this.latestLocationPrediction(input.findingId);
+    const decision=prediction?.selected_code===finalCode?"APPROVED":"CORRECTED";
+    const now=new Date().toISOString(),decisionId=crypto.randomUUID();
+    const statements=[
+      this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'LOCATION',?,?,?,?)")
+        .bind(decisionId,input.findingId,prediction?.prediction_id??null,prediction?.selected_code??null,finalCode,decision,now),
+      this.db.prepare("UPDATE findings SET final_location_code=?,updated_at=? WHERE id=?")
+        .bind(finalCode,now,input.findingId)
+    ];
+    if(prediction){
+      statements.push(this.db.prepare("UPDATE ai_predictions SET status=? WHERE id=?").bind(decision,prediction.prediction_id));
+    }
+    await this.db.batch(statements);
+    return {
+      decisionId,
+      predictionId:prediction?.prediction_id??null,
+      aiCode:prediction?.selected_code??null,
+      finalCode,
+      decision
+    };
+  }
 
   async latestComponentPrediction(findingId:string){
     return this.db.prepare(`
