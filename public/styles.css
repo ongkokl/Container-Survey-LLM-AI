@@ -410,3 +410,36 @@ button.camera {
   .guidedCameraDialog { justify-content:flex-start; padding:10px 12px 18px; }
   .guidedCameraActions { grid-template-columns:1fr; }
 }
+
+
+#repairDecision {
+  display:grid;
+  gap:8px;
+  margin-top:10px;
+}
+
+#repairDecision input,
+#repairDecision select {
+  width:100%;
+  min-height:46px;
+  border:1px solid #38506e;
+  border-radius:12px;
+  background:#0b1625;
+  color:#f4f7fb;
+  padding:0 12px;
+  outline:none;
+  font:inherit;
+}
+
+.dentDirectionFields:not([hidden]) {
+  display:grid;
+  gap:8px;
+}
+
+.dentDirectionFields[hidden] {
+  display:none;
+}
+
+#repairDepthCriterion {
+  margin-top:0;
+}
