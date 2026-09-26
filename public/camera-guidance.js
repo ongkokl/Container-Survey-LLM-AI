@@ -189,7 +189,7 @@ export function createGuidedCamera(elements){
   const analysisContext=analysisCanvas.getContext("2d",{willReadFrequently:true});
   const captureCanvas=document.createElement("canvas");
   const captureContext=captureCanvas.getContext("2d");
-  let stream=null,timer=null,current=null,lastMetrics=null,orientationGamma=null,running=false;
+  let stream=null,timer=null,current=null,lastMetrics=null,orientationGamma=null,running=false,openToken=0;
 
   window.addEventListener("deviceorientation",(event)=>{
     if(typeof event.gamma==="number")orientationGamma=event.gamma;
@@ -202,10 +202,12 @@ export function createGuidedCamera(elements){
   }
 
   function stop(){
+    openToken++;
     running=false;
     if(timer){clearTimeout(timer);timer=null;}
     if(stream){for(const track of stream.getTracks())track.stop();}
     stream=null;
+    current=null;
     video.srcObject=null;
     captureButton.disabled=true;
     setModalOpen(false);
@@ -277,22 +279,24 @@ export function createGuidedCamera(elements){
   }
 
   async function open(options){
-    current={
+    const token=++openToken;
+    const request={
       mode:options.mode==="closeup"?"closeup":"overview",
       face:String(options.face||"").toUpperCase(),
       equipmentType:String(options.equipmentType||"").toUpperCase()||null,
       fallbackInput:options.fallbackInput||null,
       onCapture:options.onCapture
     };
+    current=request;
     lastMetrics=null;
     qualityBadge.textContent="Checking photo…";
     qualityBadge.dataset.quality="POOR";
     statusText.textContent="Starting camera…";
     setModalOpen(true);
-    drawOverlay(overlay,current.face,current.equipmentType,current.mode,"POOR");
+    drawOverlay(overlay,request.face,request.equipmentType,request.mode,"POOR");
     try{
       if(!navigator.mediaDevices?.getUserMedia)throw new Error("Live camera guidance is not supported on this browser.");
-      stream=await navigator.mediaDevices.getUserMedia({
+      const acquiredStream=await navigator.mediaDevices.getUserMedia({
         audio:false,
         video:{
           facingMode:{ideal:"environment"},
@@ -300,16 +304,29 @@ export function createGuidedCamera(elements){
           height:{ideal:1080}
         }
       });
+      if(token!==openToken||current!==request||modal.hidden){
+        for(const track of acquiredStream.getTracks())track.stop();
+        return;
+      }
+      stream=acquiredStream;
       video.srcObject=stream;
       await video.play();
+      if(token!==openToken||current!==request||modal.hidden){
+        for(const track of stream.getTracks())track.stop();
+        stream=null;
+        video.srcObject=null;
+        return;
+      }
       if(video.videoWidth&&video.videoHeight)viewport.style.aspectRatio=video.videoWidth+" / "+video.videoHeight;
       captureButton.disabled=false;
       running=true;
       analyseFrame();
     }catch(error){
+      if(token!==openToken||current!==request)return;
+      const fallbackInput=request.fallbackInput;
       stop();
-      if(current?.fallbackInput){
-        current.fallbackInput.click();
+      if(fallbackInput){
+        fallbackInput.click();
         return;
       }
       throw error;
