@@ -97,7 +97,11 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   if (request.method === "POST" && url.pathname === "/api/cedex/component-suggest") {
     try {
       const body=await readJson<{findingId?:string}>(request);
-      return json({ok:true,result:await cedexService(env).analyseComponent(body.findingId??"")});
+      const result=await cedexService(env).analyseComponent(body.findingId??"");
+      if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
+        return json({ok:false,error:"CEDEX_COMPONENT_"+result.analysisStatus,message:result.reason,result},422);
+      }
+      return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"CEDEX_COMPONENT_FAILED",message:error instanceof Error?error.message:"Unable to classify component."},422);
     }

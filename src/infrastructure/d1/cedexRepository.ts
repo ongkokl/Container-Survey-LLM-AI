@@ -46,14 +46,15 @@ export class CedexRepository {
     ).bind(findingId).first<{id:string;survey_id:string;container_face:string;equipment_type:string;length_ft:number}>();
   }
 
-  async saveComponentPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;}){
+  async saveComponentPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"SUGGESTED"|"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
     const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
     await this.db.batch([
       this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(runId,input.surveyId,input.findingId,"COMPONENT_CLASSIFICATION",JSON.stringify({model:input.modelName}),JSON.stringify(input.response),now,now),
-      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'COMPONENT',?,?, 'SUGGESTED',?)")
-        .bind(predictionId,runId,input.selectedCode,input.confidence,now),
-      this.db.prepare("UPDATE findings SET status='AI_SUGGESTED',updated_at=? WHERE id=?").bind(now,input.findingId)
+        .bind(runId,input.surveyId,input.findingId,"COMPONENT_CLASSIFICATION",JSON.stringify({model:input.modelName,...input.requestContext}),JSON.stringify(input.response),now,now),
+      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'COMPONENT',?,?,?,?)")
+        .bind(predictionId,runId,input.selectedCode,input.confidence,input.status??"SUGGESTED",now),
+      this.db.prepare("UPDATE findings SET status=?,updated_at=? WHERE id=?")
+        .bind(input.status && input.status!=="SUGGESTED"?"REVIEW_REQUIRED":"AI_SUGGESTED",now,input.findingId)
     ]);
     for(let i=0;i<input.candidates.length;i++){
       const c=input.candidates[i];
@@ -79,19 +80,20 @@ export class CedexRepository {
   }
 
 
-  async surveyorDamageBox(findingId:string){
+  async surveyorDamageBox(findingId:string,photoId?:string){
     const row=await this.db.prepare(`
       SELECT a.geometry_json
       FROM annotations a
       JOIN survey_photos p ON p.id=a.photo_id
-      WHERE p.finding_id=? AND p.photo_role='DAMAGE_CLOSEUP'
+      WHERE p.finding_id=? AND p.photo_role='DAMAGE_CLOSEUP' AND (? IS NULL OR p.id=?)
         AND a.annotation_type='DAMAGE' AND a.geometry_type='BOX' AND a.created_by='SURVEYOR'
       ORDER BY a.created_at DESC LIMIT 1`
-    ).bind(findingId).first<{geometry_json:string}>();
+    ).bind(findingId,photoId??null,photoId??null).first<{geometry_json:string}>();
     if(!row)return null;
     try{
       const g=JSON.parse(row.geometry_json) as {x?:number;y?:number;width?:number;height?:number};
-      if([g.x,g.y,g.width,g.height].every(v=>typeof v==="number"))return g as {x:number;y:number;width:number;height:number};
+      if(typeof g.x!=="number"||typeof g.y!=="number"||typeof g.width!=="number"||typeof g.height!=="number")return null;
+      if([g.x,g.y,g.width,g.height].every(Number.isFinite) && g.x>=0 && g.y>=0 && g.width>0 && g.height>0 && g.x+g.width<=1.000001 && g.y+g.height<=1.000001)return {x:g.x,y:g.y,width:g.width,height:g.height};
     }catch{}
     return null;
   }
