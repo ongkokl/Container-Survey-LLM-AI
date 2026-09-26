@@ -14,19 +14,34 @@ export class CedexRepository {
     return row.equipment as "GP"|"RF";
   }
 
-  async components(equipment:"GP"|"RF"):Promise<ComponentCandidate[]>{
+  async components(equipment:"GP"|"RF",containerFace?:string|null):Promise<ComponentCandidate[]>{
+    const face=containerFace?.trim().toUpperCase()||null;
     const result=await this.db.prepare(`
-      SELECT component_code,component_name,standard_version
-      FROM component_codes c
-      WHERE c.equipment_type=? AND c.active=1
-        AND NOT EXISTS (
-          SELECT 1 FROM component_codes newer
-          WHERE newer.equipment_type=c.equipment_type
-            AND newer.component_code=c.component_code
-            AND newer.active=1
-            AND COALESCE(newer.effective_from,'0000-00-00') > COALESCE(c.effective_from,'0000-00-00')
+      WITH ranked AS (
+        SELECT c.equipment_type,c.component_code,c.component_name,c.standard_version,
+               ROW_NUMBER() OVER (
+                 PARTITION BY c.equipment_type,c.component_code
+                 ORDER BY COALESCE(c.effective_from,'0000-00-00') DESC,
+                          c.standard_version DESC,
+                          c.rowid DESC
+               ) AS rn
+        FROM component_codes c
+        WHERE c.equipment_type=? AND c.active=1
+      )
+      SELECT c.component_code,c.component_name,c.standard_version
+      FROM ranked c
+      WHERE c.rn=1
+        AND (
+          ? IS NULL OR EXISTS (
+            SELECT 1
+            FROM component_face_rules f
+            WHERE f.equipment_type=c.equipment_type
+              AND f.component_code=c.component_code
+              AND f.container_face=?
+              AND f.active=1
+          )
         )
-      ORDER BY component_code`).bind(equipment).all<ComponentCandidate>();
+      ORDER BY c.component_code`).bind(equipment,face,face).all<ComponentCandidate>();
     return result.results;
   }
 
@@ -145,10 +160,13 @@ export class CedexRepository {
   }
 
   async decideComponent(input:{findingId:string;finalCode:string;}){
-    const equipment=await this.equipmentForFinding(input.findingId);
-    const allowed=await this.components(equipment);
+    const context=await this.findingContext(input.findingId);
+    if(!context) throw new Error("Finding not found.");
+    if(!["GP","RF"].includes(context.equipment_type)) throw new Error("Unable to determine GP/RF equipment type.");
+    const equipment=context.equipment_type as "GP"|"RF";
+    const allowed=await this.components(equipment,context.container_face);
     const finalCode=input.finalCode.trim().toUpperCase();
-    if(!allowed.some(x=>x.component_code===finalCode)) throw new Error("Select a verified component code for this equipment type.");
+    if(!allowed.some(x=>x.component_code===finalCode)) throw new Error("Select a verified component code for this equipment type and container face.");
     const prediction=await this.latestComponentPrediction(input.findingId);
     if(!prediction) throw new Error("Analyse the component before confirming it.");
     const decision=prediction.selected_code===finalCode?"APPROVED":"CORRECTED";
