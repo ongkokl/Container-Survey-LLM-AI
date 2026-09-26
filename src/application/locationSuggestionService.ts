@@ -82,15 +82,51 @@ export class LocationSuggestionService{
       capture.referenceFrame
     );
 
+    const referenceBox=located.referenceBox;
+    const expected=expectedAspect(context.container_face,geometry);
+    const score=geometryScore(referenceBox,input.imageWidth,input.imageHeight,expected);
+    const guided=capture.referenceFrame!==null;
+    const sideSupported=["LEFT","RIGHT"].includes(context.container_face);
+    const knownGeometryAvailable=expected!==null;
+    const guidedQualityOk=!guided||["GOOD","USABLE"].includes(capture.measurementQuality);
+    const galleryGeometryOk=guided||(score!==null&&score>=0.68);
+    const autoUsable=Boolean(referenceBox)&&sideSupported&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk;
+
     if(!located.found||!located.damageBox){
+      const noDamageReason=!sideSupported
+        ?"Automatic CEDEX location is enabled for LEFT/RIGHT side overviews in this POC. Enter the location manually for this face."
+        :!referenceBox
+          ?"Container face reference could not be established. Mark the damage and enter the CEDEX location manually."
+          :!knownGeometryAvailable
+            ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
+            :!guidedQualityOk
+              ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
+              :!galleryGeometryOk
+                ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Enter the location manually."
+                :"Container geometry is ready. Tap the damaged position to calculate the CEDEX location.";
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
         surveyId:context.survey_id,
         modelName:located.model,
         selectedCode:null,
         status:"FAILED",
-        response:{found:false,damageBox:null,referenceBox:located.referenceBox},
-        requestContext:{face:context.container_face,captureSource:capture.source}
+        response:{
+          found:false,
+          damageBox:null,
+          referenceBox,
+          referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+          geometryScore:score,
+          autoUsable,
+          reason:noDamageReason
+        },
+        requestContext:{
+          face:context.container_face,
+          lengthFt:context.length_ft,
+          isoCode:context.observed_iso_code,
+          captureSource:capture.source,
+          measurementQuality:capture.measurementQuality,
+          referenceSource:guided?"GUIDED_FRAME":"AI_FACE"
+        }
       });
       return {
         found:false,
@@ -98,26 +134,18 @@ export class LocationSuggestionService{
         predictionId:prediction.predictionId,
         point:null,
         damageBox:null,
-        referenceBox:located.referenceBox,
-        referenceSource:capture.referenceFrame?"GUIDED_FRAME":"AI_FACE",
-        geometryScore:null,
-        autoUsable:false,
-        location:null
+        referenceBox,
+        referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+        geometryScore:score,
+        autoUsable,
+        location:{code:null,reviewRequired:true,reason:noDamageReason}
       };
     }
 
-    const referenceBox=located.referenceBox;
     const point={
       x:located.damageBox.x+located.damageBox.width/2,
       y:located.damageBox.y+located.damageBox.height/2
     };
-    const expected=expectedAspect(context.container_face,geometry);
-    const score=geometryScore(referenceBox,input.imageWidth,input.imageHeight,expected);
-    const guided=capture.referenceFrame!==null;
-    const knownGeometryAvailable=expected!==null;
-    const guidedQualityOk=!guided||["GOOD","USABLE"].includes(capture.measurementQuality);
-    const galleryGeometryOk=guided||(score!==null&&score>=0.68);
-    const autoUsable=Boolean(referenceBox)&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk;
 
     const calculated=referenceBox?suggestCedexLocation({
       face:context.container_face as SurveyFace,
