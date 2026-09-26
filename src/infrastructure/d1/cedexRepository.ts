@@ -1,3 +1,5 @@
+import { assessDentDepth, type DeformationDirection } from "../../domain/container/dentDepth";
+
 export interface ComponentCandidate {component_code:string;component_name:string;standard_version:string;}
 export interface ComponentVisualRule {
   component_code:string;
@@ -179,10 +181,17 @@ export class CedexRepository {
   async findingContext(findingId:string){
     return this.db.prepare(`
       SELECT f.id,f.survey_id,f.container_face,gc.observed_container_type AS equipment_type,
-             gc.observed_length_ft AS length_ft
+             gc.observed_length_ft AS length_ft,gc.observed_iso_code
       FROM findings f JOIN surveys s ON s.id=f.survey_id
       JOIN gate_cycles gc ON gc.id=s.gate_cycle_id WHERE f.id=?`
-    ).bind(findingId).first<{id:string;survey_id:string;container_face:string;equipment_type:string;length_ft:number}>();
+    ).bind(findingId).first<{
+      id:string;
+      survey_id:string;
+      container_face:string;
+      equipment_type:string;
+      length_ft:number;
+      observed_iso_code:string;
+    }>();
   }
 
   async geometryForFinding(findingId:string){
@@ -342,10 +351,13 @@ export class CedexRepository {
       damageWidthCm?:number|null;
       damageDepthCm?:number|null;
       corrugationsAffected?:number|null;
+      deformationDirection?:DeformationDirection|null;
       notes?:string|null;
     };
   }){
     const allowed=await this.repairCodesForFinding(input.findingId);
+    const context=await this.findingContext(input.findingId);
+    if(!context) throw new Error("Finding not found.");
     const finalCode=input.finalCode.trim().toUpperCase();
     if(!allowed.repairs.some(x=>x.repair_code===finalCode)) throw new Error("Select a verified GP.xlsx repair method for the confirmed component and damage.");
     const prediction=await this.latestRepairPrediction(input.findingId);
@@ -354,8 +366,23 @@ export class CedexRepository {
     const now=new Date().toISOString(),decisionId=crypto.randomUUID();
     const m=input.measurements??{};
     const numeric=(value:number|null|undefined)=>typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null;
+    const lengthCm=numeric(m.damageLengthCm);
+    const widthCm=numeric(m.damageWidthCm);
+    const depthCm=numeric(m.damageDepthCm);
     const corr=typeof m.corrugationsAffected==="number"&&Number.isInteger(m.corrugationsAffected)&&m.corrugationsAffected>=0?m.corrugationsAffected:null;
+    const direction:DeformationDirection=["INWARD","OUTWARD"].includes(m.deformationDirection??"")
+      ? m.deformationDirection as DeformationDirection
+      : "UNKNOWN";
     const notes=m.notes?.trim()||null;
+    const equipment=allowed.equipment as "GP"|"RF";
+    const depthAssessment=assessDentDepth({
+      equipment,
+      componentCode:allowed.componentCode,
+      damageCode:allowed.damageCode,
+      containerFace:context.container_face,
+      depthCm,
+      direction
+    });
     await this.db.batch([
       this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'REPAIR',?,?,?,?)")
         .bind(decisionId,input.findingId,prediction.prediction_id,prediction.selected_code,finalCode,decision,now),
@@ -364,22 +391,38 @@ export class CedexRepository {
         .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId),
       this.db.prepare(`
         INSERT INTO repair_measurements
-          (finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,measurement_source,notes,created_at,updated_at)
-        VALUES (?,?,?,?,?,'SURVEYOR',?,?,?)
+          (
+            finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,
+            measurement_source,deformation_direction,geometry_iso_code,measurement_method,
+            applicable_iicl_limit_mm,iicl_depth_status,iicl_criterion_source,notes,created_at,updated_at
+          )
+        VALUES (?,?,?,?,?,'SURVEYOR',?,?,?,?,?,?,?,?,?)
         ON CONFLICT(finding_id) DO UPDATE SET
           damage_length_cm=excluded.damage_length_cm,
           damage_width_cm=excluded.damage_width_cm,
           damage_depth_cm=excluded.damage_depth_cm,
           corrugations_affected=excluded.corrugations_affected,
           measurement_source='SURVEYOR',
+          deformation_direction=excluded.deformation_direction,
+          geometry_iso_code=excluded.geometry_iso_code,
+          measurement_method=excluded.measurement_method,
+          applicable_iicl_limit_mm=excluded.applicable_iicl_limit_mm,
+          iicl_depth_status=excluded.iicl_depth_status,
+          iicl_criterion_source=excluded.iicl_criterion_source,
           notes=excluded.notes,
           updated_at=excluded.updated_at
       `).bind(
         input.findingId,
-        numeric(m.damageLengthCm),
-        numeric(m.damageWidthCm),
-        numeric(m.damageDepthCm),
+        lengthCm,
+        widthCm,
+        depthCm,
         corr,
+        direction,
+        context.observed_iso_code,
+        "SURVEYOR_MANUAL",
+        depthAssessment.limitMm,
+        depthAssessment.status,
+        depthAssessment.sourceReference,
         notes,
         now,
         now
@@ -394,13 +437,27 @@ export class CedexRepository {
       equipment:allowed.equipment,
       componentCode:allowed.componentCode,
       damageCode:allowed.damageCode,
-      measurementCaptured:Boolean(
-        numeric(m.damageLengthCm)!==null||
-        numeric(m.damageWidthCm)!==null||
-        numeric(m.damageDepthCm)!==null||
-        corr!==null||
-        notes
-      )
+      measurementCaptured:Boolean(lengthCm!==null||widthCm!==null||depthCm!==null||corr!==null||notes),
+      measurement:{
+        damageLengthCm:lengthCm,
+        damageWidthCm:widthCm,
+        damageDepthCm:depthCm,
+        corrugationsAffected:corr,
+        deformationDirection:direction,
+        geometryIsoCode:context.observed_iso_code,
+        measurementMethod:"SURVEYOR_MANUAL"
+      },
+      iiclDepthAssessment:{
+        applicable:depthAssessment.applicable,
+        limitMm:depthAssessment.limitMm,
+        status:depthAssessment.status,
+        sourceReference:depthAssessment.sourceReference,
+        note:depthAssessment.status==="WITHIN_DIMENSIONAL_CRITERION"
+          ?"Within this IICL dimensional criterion only; other damage criteria may still require repair."
+          :depthAssessment.status==="EXCEEDS_DIMENSIONAL_CRITERION"
+            ?"Measured deformation exceeds this IICL dimensional criterion."
+            :"Depth criterion not assessed."
+      }
     };
   }
 
