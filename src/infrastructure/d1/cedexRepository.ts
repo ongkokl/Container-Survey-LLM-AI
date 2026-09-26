@@ -305,20 +305,56 @@ export class CedexRepository {
     ).bind(findingId).first<{prediction_id:string;selected_code:string|null}>();
   }
 
-  async decideRepair(input:{findingId:string;finalCode:string;}){
+  async decideRepair(input:{
+    findingId:string;
+    finalCode:string;
+    measurements?:{
+      damageLengthCm?:number|null;
+      damageWidthCm?:number|null;
+      damageDepthCm?:number|null;
+      corrugationsAffected?:number|null;
+      notes?:string|null;
+    };
+  }){
     const allowed=await this.repairCodesForFinding(input.findingId);
     const finalCode=input.finalCode.trim().toUpperCase();
-    if(!allowed.repairs.some(x=>x.repair_code===finalCode)) throw new Error("Select a verified repair method for the confirmed component.");
+    if(!allowed.repairs.some(x=>x.repair_code===finalCode)) throw new Error("Select a verified GP.xlsx repair method for the confirmed component and damage.");
     const prediction=await this.latestRepairPrediction(input.findingId);
-    if(!prediction) throw new Error("Analyse the repair method before confirming it.");
+    if(!prediction) throw new Error("Load the verified repair methods before confirming the repair.");
     const decision=prediction.selected_code===finalCode?"APPROVED":"CORRECTED";
     const now=new Date().toISOString(),decisionId=crypto.randomUUID();
+    const m=input.measurements??{};
+    const numeric=(value:number|null|undefined)=>typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null;
+    const corr=typeof m.corrugationsAffected==="number"&&Number.isInteger(m.corrugationsAffected)&&m.corrugationsAffected>=0?m.corrugationsAffected:null;
+    const notes=m.notes?.trim()||null;
     await this.db.batch([
       this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'REPAIR',?,?,?,?)")
         .bind(decisionId,input.findingId,prediction.prediction_id,prediction.selected_code,finalCode,decision,now),
       this.db.prepare("UPDATE ai_predictions SET status=? WHERE id=?").bind(decision,prediction.prediction_id),
       this.db.prepare("UPDATE findings SET final_repair_code=?,status=?,updated_at=? WHERE id=?")
-        .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId)
+        .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId),
+      this.db.prepare(`
+        INSERT INTO repair_measurements
+          (finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,measurement_source,notes,created_at,updated_at)
+        VALUES (?,?,?,?,?,'SURVEYOR',?,?,?)
+        ON CONFLICT(finding_id) DO UPDATE SET
+          damage_length_cm=excluded.damage_length_cm,
+          damage_width_cm=excluded.damage_width_cm,
+          damage_depth_cm=excluded.damage_depth_cm,
+          corrugations_affected=excluded.corrugations_affected,
+          measurement_source='SURVEYOR',
+          notes=excluded.notes,
+          updated_at=excluded.updated_at
+      `).bind(
+        input.findingId,
+        numeric(m.damageLengthCm),
+        numeric(m.damageWidthCm),
+        numeric(m.damageDepthCm),
+        corr,
+        notes,
+        now,
+        now
+      )
     ]);
     return {
       decisionId,
@@ -328,7 +364,14 @@ export class CedexRepository {
       decision,
       equipment:allowed.equipment,
       componentCode:allowed.componentCode,
-      damageCode:allowed.damageCode
+      damageCode:allowed.damageCode,
+      measurementCaptured:Boolean(
+        numeric(m.damageLengthCm)!==null||
+        numeric(m.damageWidthCm)!==null||
+        numeric(m.damageDepthCm)!==null||
+        corr!==null||
+        notes
+      )
     };
   }
 

@@ -452,7 +452,7 @@ const componentSelect=document.querySelector("#componentSelect");
 const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
 const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
 const analyseDamageBtn=document.querySelector("#analyseDamageBtn"),damageReview=document.querySelector("#damageReview"),damageSuggestion=document.querySelector("#damageSuggestion"),damageCandidates=document.querySelector("#damageCandidates"),damageDecision=document.querySelector("#damageDecision"),damageSelect=document.querySelector("#damageSelect"),confirmDamageBtn=document.querySelector("#confirmDamageBtn"),damageDecisionMessage=document.querySelector("#damageDecisionMessage");
-const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage");
+const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage"),repairLengthCm=document.querySelector("#repairLengthCm"),repairWidthCm=document.querySelector("#repairWidthCm"),repairDepthCm=document.querySelector("#repairDepthCm"),repairCorrugations=document.querySelector("#repairCorrugations"),repairNotes=document.querySelector("#repairNotes");
 let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
@@ -786,6 +786,11 @@ function renderRepairResult(result){
     repairSelect.appendChild(option);
   }
   repairSelect.value=result.selectedCode??"";
+  repairLengthCm.value="";
+  repairWidthCm.value="";
+  repairDepthCm.value="";
+  repairCorrugations.value="";
+  repairNotes.value="";
   repairSelect.disabled=false;
   repairDecision.hidden=repairSelect.options.length<=1;
   repairDecisionMessage.textContent="";
@@ -830,10 +835,19 @@ confirmRepairBtn.addEventListener("click",async()=>{
   if(!currentFinding||!repairSelect.value)return;
   setBusy(confirmRepairBtn,true,"Saving…","Confirm repair method");
   try{
-    const result=await apiJson("/api/cedex/repair-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:repairSelect.value})});
-    repairDecisionMessage.textContent=result.decision==="APPROVED"
-      ?"Repair method accepted: "+result.finalCode
-      :result.aiCode?"AI repair corrected from "+result.aiCode+" to "+result.finalCode:"Repair method selected manually: "+result.finalCode;
+    const numberOrNull=value=>value===""?null:Number(value);
+    const result=await apiJson("/api/cedex/repair-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
+      findingId:currentFinding.id,
+      finalCode:repairSelect.value,
+      measurements:{
+        damageLengthCm:numberOrNull(repairLengthCm.value),
+        damageWidthCm:numberOrNull(repairWidthCm.value),
+        damageDepthCm:numberOrNull(repairDepthCm.value),
+        corrugationsAffected:repairCorrugations.value===""?null:Number(repairCorrugations.value),
+        notes:repairNotes.value.trim()||null
+      }
+    })});
+    repairDecisionMessage.textContent="Repair method confirmed: "+result.finalCode+(result.measurementCaptured?" · measurements saved":"");
     repairSelect.disabled=true;
     confirmRepairBtn.disabled=true;
     confirmRepairBtn.textContent="Repair method confirmed ✓";

@@ -155,8 +155,22 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (request.method === "POST" && url.pathname === "/api/cedex/repair-decision") {
     try {
-      const body=await readJson<{findingId?:string;finalCode?:string}>(request);
-      return json({ok:true,result:await new CedexRepository(env.DB).decideRepair({findingId:body.findingId??"",finalCode:body.finalCode??""})});
+      const body=await readJson<{
+        findingId?:string;
+        finalCode?:string;
+        measurements?:{
+          damageLengthCm?:number|null;
+          damageWidthCm?:number|null;
+          damageDepthCm?:number|null;
+          corrugationsAffected?:number|null;
+          notes?:string|null;
+        };
+      }>(request);
+      return json({ok:true,result:await new CedexRepository(env.DB).decideRepair({
+        findingId:body.findingId??"",
+        finalCode:body.finalCode??"",
+        measurements:body.measurements
+      })});
     } catch(error) {
       return json({ok:false,error:"CEDEX_REPAIR_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save repair decision."},422);
     }
