@@ -163,6 +163,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
           damageWidthCm?:number|null;
           damageDepthCm?:number|null;
           corrugationsAffected?:number|null;
+          deformationDirection?:"INWARD"|"OUTWARD"|"UNKNOWN"|null;
           notes?:string|null;
         };
       }>(request);
@@ -173,6 +174,15 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       })});
     } catch(error) {
       return json({ok:false,error:"CEDEX_REPAIR_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save repair decision."},422);
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/measurement/geometry") {
+    try {
+      const findingId=url.searchParams.get("findingId")??"";
+      return json({ok:true,result:await new CedexRepository(env.DB).measurementGeometryForFinding(findingId)});
+    } catch(error) {
+      return json({ok:false,error:"MEASUREMENT_GEOMETRY_FAILED",message:error instanceof Error?error.message:"Unable to load measurement geometry."},422);
     }
   }
 
@@ -206,7 +216,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         role:String(form.get("role")??""),
         file,
         width:Number(form.get("width"))||null,
-        height:Number(form.get("height"))||null
+        height:Number(form.get("height"))||null,
+        captureSource:String(form.get("captureSource")??"")||null,
+        measurementRole:String(form.get("measurementRole")??"")||null
       });
       return json({ok:true,result},201);
     } catch(error) {
