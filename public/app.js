@@ -435,6 +435,8 @@ const overviewStage=document.querySelector("#overviewStage");
 const overviewPreview=document.querySelector("#overviewPreview");
 const overviewCanvas=document.querySelector("#overviewCanvas");
 const tapHelp=document.querySelector("#tapHelp");
+const measurementGuideText=document.querySelector("#measurementGuideText");
+const overviewQualityMessage=document.querySelector("#overviewQualityMessage");
 const closeupPhoto=document.querySelector("#closeupPhoto");
 const closeupGalleryPhoto=document.querySelector("#closeupGalleryPhoto");
 const closeupStage=document.querySelector("#closeupStage");
@@ -457,7 +459,7 @@ let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
 
-let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
+let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null,overviewSource=null,closeupSource=null;
 let aiLocationPoint=null,aiDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 
@@ -474,7 +476,11 @@ createFindingBtn.addEventListener("click",async()=>{
     currentFinding=await apiJson("/api/findings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({surveyId:currentSurveyId,containerFace:findingFace.value})});
     findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
     findingCapture.hidden=false; createFindingBtn.hidden=true; findingFace.disabled=true;
-    findingMessage.textContent="Finding created. Capture the overview photo.";
+    const sideFace=["LEFT","RIGHT"].includes(findingFace.value);
+    measurementGuideText.textContent=sideFace
+      ?"Use the 1× main camera. Face the side wall as squarely as possible, keep the damage near the centre, and include top/bottom rails plus vertical panel/structural references."
+      :"Use the 1× main camera. Face the selected container surface as squarely as practical, keep the damage near the centre, and include stable structural references around it.";
+    findingMessage.textContent="Finding created. Capture the measurement overview photo first.";
     repairReview.hidden=true;analyseRepairBtn.hidden=true;repairAiCode=null;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
   finally{setBusy(createFindingBtn,false,"Creating…","Create finding");}
@@ -487,10 +493,14 @@ function showImage(file,img,stage,canvas,ready){
 }
 
 function selectOverviewPhoto(file,source){
-  overviewFile=file??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+  overviewFile=file??null; overviewSource=source??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
   const requestId=++overviewAiRequest;
   if(!overviewFile)return;
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
+  overviewQualityMessage.hidden=false;
+  overviewQualityMessage.textContent=source==="gallery"
+    ?"Gallery overview selected · geometry suitability will be checked before any automatic measurement."
+    :"Camera overview selected · pending geometry/perspective quality check.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
     try{
@@ -555,7 +565,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 
 let dragStart=null;
 function selectCloseupPhoto(file,source){
-  closeupFile=file??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
+  closeupFile=file??null;closeupSource=source??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
@@ -596,20 +606,23 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
 
 function updateFindingReady(){saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox);}
 
-async function uploadFindingPhoto(file,role,img){
+async function uploadFindingPhoto(file,role,img,source){
   const upload=await compressForOcr(file),form=new FormData();
   form.append("surveyId",currentSurveyId);form.append("findingId",currentFinding.id);form.append("role",role);
-  form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));form.append("photo",upload,upload.name||"photo.jpg");
+  form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));
+  form.append("captureSource",source==="gallery"?"GALLERY":"CAMERA");
+  form.append("measurementIntent",role==="FACE_OVERVIEW"?"true":"false");
+  form.append("photo",upload,upload.name||"photo.jpg");
   return apiJson("/api/findings/photo",{method:"POST",body:form});
 }
 
 saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
-    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview);
+    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewSource);
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
-    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview);
+    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupSource);
     if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
     findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
