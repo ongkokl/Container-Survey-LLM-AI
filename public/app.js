@@ -764,12 +764,16 @@ function renderRepairResult(result){
   repairAiCode=result.selectedCode??null;
   repairSuggestion.textContent=failed
     ? result.reason
-    : result.selectedCode
-      ? result.selectedCode+" · "+(typeof result.confidence==="number"?Math.round(result.confidence*100)+"% model score":"score unavailable")+" · surveyor review required"
-      : "No reliable repair method selected · surveyor review required";
-  repairCandidates.textContent=result.candidates?.length
-    ? "Alternatives: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"% score":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
-    : failed ? "No completed AI repair recommendation is available." : result.reason || "Select a verified repair method manually.";
+    : result.recommendationMode==="RULES_ONLY_UNTIL_MEASUREMENTS"
+      ? "Repair method requires measurement · surveyor selection required"
+      : result.selectedCode
+        ? result.selectedCode+" · "+(typeof result.confidence==="number"?Math.round(result.confidence*100)+"% model score":"score unavailable")+" · surveyor review required"
+        : "No reliable repair method selected · surveyor review required";
+  repairCandidates.textContent=result.recommendationMode==="RULES_ONLY_UNTIL_MEASUREMENTS"
+    ? "Allowed by GP.xlsx: "+(result.allowedRepairs??[]).map(x=>x.repair_code+" — "+x.repair_name).join(" | ")+" · "+result.reason
+    : result.candidates?.length
+      ? "Alternatives: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"% score":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
+      : failed ? "No completed AI repair recommendation is available." : result.reason || "Select a verified repair method manually.";
 
   repairSelect.innerHTML="";
   const placeholder=document.createElement("option");
@@ -793,13 +797,13 @@ function renderRepairResult(result){
 
 analyseRepairBtn.addEventListener("click",async()=>{
   if(!currentFinding)return;
-  setBusy(analyseRepairBtn,true,"Analysing repair…","Analyse repair method");
+  setBusy(analyseRepairBtn,true,"Loading methods…","Load verified repair methods");
   repairReview.hidden=false;
   repairDecision.hidden=true;
   repairSelect.disabled=true;
   confirmRepairBtn.disabled=true;
   repairAiCode=null;
-  repairSuggestion.textContent="Checking the confirmed component and damage against verified repair methods…";
+  repairSuggestion.textContent="Loading verified repair methods from GP.xlsx…";
   repairCandidates.textContent="";
   try{
     const result=await apiJson("/api/cedex/repair-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
@@ -811,7 +815,7 @@ analyseRepairBtn.addEventListener("click",async()=>{
       repairSuggestion.textContent=e instanceof Error?e.message:"Unable to recommend repair method.";
     }
   }finally{
-    setBusy(analyseRepairBtn,false,"Analysing repair…","Analyse repair method");
+    setBusy(analyseRepairBtn,false,"Loading methods…","Load verified repair methods");
   }
 });
 
