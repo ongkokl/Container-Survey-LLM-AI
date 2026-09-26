@@ -157,14 +157,14 @@
           <span id="geometryReferenceText" class="message"></span>
           <span class="message">Overview = scale/perspective reference. Dent depth remains manual.</span>
         </div>
-        <label class="camera compact" for="overviewPhoto"><span class="cameraIcon">▣</span><strong>Take overview / measurement photo</strong><span>Use 1× main camera. Face the container squarely, keep the damage near centre, and include top/bottom rails plus structural references.</span></label>
+        <button id="overviewCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Take guided overview / measurement photo</strong><span>Live guide checks alignment, sharpness, glare and visible container geometry before capture.</span></button>
         <input id="overviewPhoto" type="file" accept="image/*" capture="environment" hidden>
         <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose overview from Gallery</strong><span>Allowed for testing; measurement quality depends on visible geometry and perspective.</span></label>
         <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
         <p class="message"><strong>Measurement photo:</strong> no digital zoom · avoid strong angle/glare · keep full damage visible · include known container geometry.</p>
         <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview measurement photo"><canvas id="overviewCanvas"></canvas></div>
         <p id="tapHelp" class="message" hidden>AI will propose a damage position. Tap anywhere to correct it.</p>
-        <label class="camera compact" for="closeupPhoto"><span class="cameraIcon">▣</span><strong>Take damage close-up</strong><span>Fill more of the frame with the damage, keep it sharp, and retain enough surrounding component detail for YOLO segmentation/classification.</span></label>
+        <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Take guided damage close-up</strong><span>Keep the full damage inside the live target and retain enough surrounding component detail for classification.</span></button>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
         <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose close-up from Gallery</strong><span>Suitable for classification; absolute size will come from the overview geometry when registration is available.</span></label>
         <input id="closeupGalleryPhoto" type="file" accept="image/*" hidden>
@@ -221,6 +221,27 @@
       <button id="analyseRepairBtn" class="secondary" type="button" hidden>Load verified repair methods</button>
     </section>
   </main>
+
+  <div id="cameraGuideModal" class="guidedCameraModal" hidden aria-hidden="true">
+    <section class="guidedCameraDialog" role="dialog" aria-modal="true" aria-labelledby="guidedCameraTitle">
+      <div class="guidedCameraHeader">
+        <div><strong id="guidedCameraTitle">Photo guidance</strong><span class="message">Align the container with the guide.</span></div>
+        <button id="guidedCameraCancel" class="guidedCameraClose" type="button" aria-label="Close camera">×</button>
+      </div>
+      <div id="guidedCameraViewport" class="guidedCameraViewport">
+        <video id="guidedCameraVideo" autoplay muted playsinline></video>
+        <canvas id="guidedCameraOverlay" aria-hidden="true"></canvas>
+      </div>
+      <div class="guidedCameraFeedback">
+        <strong id="guidedCameraStatus" aria-live="polite">Starting camera…</strong>
+        <span id="guidedCameraQuality" class="qualityPill" data-quality="POOR">Checking photo…</span>
+      </div>
+      <div class="guidedCameraActions">
+        <button id="guidedCameraCapture" class="primary" type="button" disabled>Capture photo</button>
+        <button id="guidedCameraFallback" class="secondary" type="button">Use system camera</button>
+      </div>
+    </section>
+  </div>
 
   <script type="module" src="/app.js"></script>
 </body>
