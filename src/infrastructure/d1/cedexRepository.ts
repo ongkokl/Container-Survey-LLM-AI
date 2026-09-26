@@ -179,10 +179,83 @@ export class CedexRepository {
   async findingContext(findingId:string){
     return this.db.prepare(`
       SELECT f.id,f.survey_id,f.container_face,gc.observed_container_type AS equipment_type,
-             gc.observed_length_ft AS length_ft
+             gc.observed_length_ft AS length_ft,gc.observed_iso_code
       FROM findings f JOIN surveys s ON s.id=f.survey_id
       JOIN gate_cycles gc ON gc.id=s.gate_cycle_id WHERE f.id=?`
-    ).bind(findingId).first<{id:string;survey_id:string;container_face:string;equipment_type:string;length_ft:number}>();
+    ).bind(findingId).first<{
+      id:string;
+      survey_id:string;
+      container_face:string;
+      equipment_type:string;
+      length_ft:number;
+      observed_iso_code:string;
+    }>();
+  }
+
+  async measurementGeometryForFinding(findingId:string){
+    const row=await this.db.prepare(`
+      SELECT
+        f.id AS finding_id,
+        f.container_face,
+        gc.observed_iso_code AS iso_code,
+        gc.observed_container_type AS equipment_type,
+        g.length_mm,
+        g.width_mm,
+        g.height_mm,
+        g.geometry_version,
+        g.source_reference
+      FROM findings f
+      JOIN surveys s ON s.id=f.survey_id
+      JOIN gate_cycles gc ON gc.id=s.gate_cycle_id
+      LEFT JOIN container_geometry_profiles g
+        ON g.iso_code=gc.observed_iso_code AND g.active=1
+      WHERE f.id=?`
+    ).bind(findingId).first<{
+      finding_id:string;
+      container_face:string;
+      iso_code:string;
+      equipment_type:string;
+      length_mm:number|null;
+      width_mm:number|null;
+      height_mm:number|null;
+      geometry_version:string|null;
+      source_reference:string|null;
+    }>();
+    if(!row) throw new Error("Finding not found.");
+    const profileAvailable=Number.isFinite(row.length_mm)&&Number.isFinite(row.width_mm)&&Number.isFinite(row.height_mm);
+    let referenceWidthMm:number|null=null,referenceHeightMm:number|null=null,referencePlane:string|null=null;
+    if(profileAvailable){
+      if(["LEFT","RIGHT"].includes(row.container_face)){
+        referenceWidthMm=row.length_mm;
+        referenceHeightMm=row.height_mm;
+        referencePlane="SIDE";
+      }else if(["FRONT","DOOR"].includes(row.container_face)){
+        referenceWidthMm=row.width_mm;
+        referenceHeightMm=row.height_mm;
+        referencePlane="END";
+      }else if(["ROOF","FLOOR"].includes(row.container_face)){
+        referenceWidthMm=row.length_mm;
+        referenceHeightMm=row.width_mm;
+        referencePlane=row.container_face;
+      }
+    }
+    return {
+      findingId:row.finding_id,
+      containerFace:row.container_face,
+      isoSizeType:row.iso_code,
+      equipmentType:row.equipment_type,
+      profileAvailable,
+      lengthMm:row.length_mm,
+      widthMm:row.width_mm,
+      heightMm:row.height_mm,
+      referencePlane,
+      referenceWidthMm,
+      referenceHeightMm,
+      geometryVersion:row.geometry_version,
+      sourceReference:row.source_reference,
+      measurementMethod:"KNOWN_CONTAINER_GEOMETRY",
+      depthMeasurement:"SURVEYOR_MANUAL"
+    };
   }
 
   async saveComponentPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"SUGGESTED"|"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
