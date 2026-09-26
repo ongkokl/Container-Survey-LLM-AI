@@ -1,4 +1,15 @@
 export interface ComponentCandidate {component_code:string;component_name:string;standard_version:string;}
+export interface ComponentVisualRule {
+  component_code:string;
+  container_face:string;
+  overview_zone:string;
+  visual_definition:string;
+  positive_cues:string|null;
+  negative_cues:string|null;
+  confusable_with:string|null;
+  force_review:number;
+  source_reference:string;
+}
 
 export class CedexRepository {
   constructor(private readonly db:D1Database){}
@@ -43,6 +54,35 @@ export class CedexRepository {
         )
       ORDER BY c.component_code`).bind(equipment,face,face).all<ComponentCandidate>();
     return result.results;
+  }
+
+  async componentVisualRules(equipment:"GP"|"RF",containerFace:string,overviewZone:string):Promise<ComponentVisualRule[]>{
+    const face=containerFace.trim().toUpperCase(),zone=overviewZone.trim().toUpperCase();
+    try{
+      const result=await this.db.prepare(`
+        WITH matching AS (
+          SELECT component_code,container_face,overview_zone,visual_definition,
+                 positive_cues,negative_cues,confusable_with,force_review,
+                 source_reference,priority,
+                 CASE WHEN container_face=? THEN 0 ELSE 1 END AS face_rank,
+                 CASE WHEN overview_zone=? THEN 0 ELSE 1 END AS zone_rank
+          FROM component_visual_rules
+          WHERE equipment_type=? AND active=1
+            AND container_face IN (?,'ANY')
+            AND overview_zone IN (?,'ANY')
+        )
+        SELECT component_code,container_face,overview_zone,visual_definition,
+               positive_cues,negative_cues,confusable_with,force_review,source_reference
+        FROM matching
+        ORDER BY component_code,face_rank,zone_rank,priority DESC`
+      ).bind(face,zone,equipment,face,zone).all<ComponentVisualRule>();
+      return result.results;
+    }catch(error){
+      // Keep component classification available during a staged deploy before
+      // migration 0009 is applied. Other query failures still surface.
+      if(error instanceof Error && /no such table.*component_visual_rules/i.test(error.message)) return [];
+      throw error;
+    }
   }
 
   async findingPhoto(findingId:string,role:"FACE_OVERVIEW"|"DAMAGE_CLOSEUP"){
