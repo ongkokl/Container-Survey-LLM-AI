@@ -481,7 +481,7 @@ const componentSelect=document.querySelector("#componentSelect");
 const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
 const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
 const analyseDamageBtn=document.querySelector("#analyseDamageBtn"),damageReview=document.querySelector("#damageReview"),damageSuggestion=document.querySelector("#damageSuggestion"),damageCandidates=document.querySelector("#damageCandidates"),damageDecision=document.querySelector("#damageDecision"),damageSelect=document.querySelector("#damageSelect"),confirmDamageBtn=document.querySelector("#confirmDamageBtn"),damageDecisionMessage=document.querySelector("#damageDecisionMessage");
-const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage"),repairLengthCm=document.querySelector("#repairLengthCm"),repairWidthCm=document.querySelector("#repairWidthCm"),repairDepthCm=document.querySelector("#repairDepthCm"),repairCorrugations=document.querySelector("#repairCorrugations"),repairNotes=document.querySelector("#repairNotes");
+const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage"),repairLengthCm=document.querySelector("#repairLengthCm"),repairWidthCm=document.querySelector("#repairWidthCm"),repairDepthCm=document.querySelector("#repairDepthCm"),repairDentDirectionWrap=document.querySelector("#repairDentDirectionWrap"),repairDirection=document.querySelector("#repairDirection"),repairDepthCriterion=document.querySelector("#repairDepthCriterion"),repairCorrugations=document.querySelector("#repairCorrugations"),repairNotes=document.querySelector("#repairNotes");
 let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
@@ -862,6 +862,49 @@ confirmDamageBtn.addEventListener("click",async()=>{
 });
 
 
+function dentDepthLimitMm(direction){
+  const face=findingFace.value;
+  if(direction==="INWARD"&&["LEFT","RIGHT","FRONT"].includes(face))return 35;
+  if(direction==="OUTWARD"&&["LEFT","RIGHT"].includes(face))return 30;
+  if(direction==="OUTWARD"&&face==="FRONT")return 15;
+  return null;
+}
+
+function updateDentCriterionHint(){
+  if(repairDentDirectionWrap.hidden)return;
+  const direction=repairDirection.value;
+  const depth=repairDepthCm.value===""?null:Number(repairDepthCm.value);
+  const limit=dentDepthLimitMm(direction);
+  if(depth!==null&&direction==="UNKNOWN"){
+    repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
+    return;
+  }
+  if(limit===null){
+    repairDepthCriterion.textContent=direction==="UNKNOWN"
+      ?"Select a direction when a dent depth is measured."
+      :"No mapped dimensional criterion is available for this face/direction.";
+    return;
+  }
+  if(depth===null||!Number.isFinite(depth)){
+    repairDepthCriterion.textContent="Dimensional reference: "+limit+" mm. Enter the manually measured depth to assess it.";
+    return;
+  }
+  const depthMm=depth*10;
+  repairDepthCriterion.textContent=depthMm<=limit
+    ?"Depth "+depthMm.toFixed(1)+" mm ≤ "+limit+" mm: within this dimensional criterion only."
+    :"Depth "+depthMm.toFixed(1)+" mm > "+limit+" mm: exceeds this dimensional criterion.";
+}
+
+function updateRepairConfirmState(){
+  const depthEntered=repairDepthCm.value!=="";
+  const missingDirection=!repairDentDirectionWrap.hidden&&depthEntered&&repairDirection.value==="UNKNOWN";
+  confirmRepairBtn.disabled=!repairSelect.value||missingDirection;
+  if(missingDirection)repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
+}
+
+repairDirection.addEventListener("change",()=>{updateDentCriterionHint();updateRepairConfirmState();});
+repairDepthCm.addEventListener("input",()=>{updateDentCriterionHint();updateRepairConfirmState();});
+
 function renderRepairResult(result){
   const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result.analysisStatus);
   repairAiCode=result.selectedCode??null;
@@ -892,12 +935,17 @@ function renderRepairResult(result){
   repairLengthCm.value="";
   repairWidthCm.value="";
   repairDepthCm.value="";
+  repairDirection.value="UNKNOWN";
+  const mappedDent=result.equipment==="GP"&&result.componentCode==="PAA"&&result.damageCode==="DT"&&["LEFT","RIGHT","FRONT"].includes(findingFace.value);
+  repairDentDirectionWrap.hidden=!mappedDent;
+  repairDepthCriterion.textContent="";
+  if(mappedDent)updateDentCriterionHint();
   repairCorrugations.value="";
   repairNotes.value="";
   repairSelect.disabled=false;
   repairDecision.hidden=repairSelect.options.length<=1;
   repairDecisionMessage.textContent="";
-  confirmRepairBtn.disabled=!repairSelect.value;
+  updateRepairConfirmState();
   confirmRepairBtn.textContent=repairAiCode&&repairSelect.value===repairAiCode
     ?"Accept "+repairAiCode
     :repairAiCode?"Confirm correction":"Confirm repair method";
@@ -928,7 +976,7 @@ analyseRepairBtn.addEventListener("click",async()=>{
 });
 
 repairSelect.addEventListener("change",()=>{
-  confirmRepairBtn.disabled=!repairSelect.value;
+  updateRepairConfirmState();
   confirmRepairBtn.textContent=repairAiCode&&repairSelect.value===repairAiCode
     ?"Accept "+repairAiCode
     :repairAiCode?"Confirm correction":"Confirm repair method";
@@ -936,6 +984,11 @@ repairSelect.addEventListener("change",()=>{
 
 confirmRepairBtn.addEventListener("click",async()=>{
   if(!currentFinding||!repairSelect.value)return;
+  if(!repairDentDirectionWrap.hidden&&repairDepthCm.value!==""&&repairDirection.value==="UNKNOWN"){
+    repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
+    updateRepairConfirmState();
+    return;
+  }
   setBusy(confirmRepairBtn,true,"Saving…","Confirm repair method");
   try{
     const numberOrNull=value=>value===""?null:Number(value);
@@ -947,10 +1000,19 @@ confirmRepairBtn.addEventListener("click",async()=>{
         damageWidthCm:numberOrNull(repairWidthCm.value),
         damageDepthCm:numberOrNull(repairDepthCm.value),
         corrugationsAffected:repairCorrugations.value===""?null:Number(repairCorrugations.value),
+        deformationDirection:repairDentDirectionWrap.hidden?"UNKNOWN":repairDirection.value,
         notes:repairNotes.value.trim()||null
       }
     })});
     repairDecisionMessage.textContent="Repair method confirmed: "+result.finalCode+(result.measurementCaptured?" · measurements saved":"");
+    if(result.iiclDepthAssessment?.applicable){
+      const assessment=result.iiclDepthAssessment;
+      repairDepthCriterion.textContent=assessment.status==="WITHIN_DIMENSIONAL_CRITERION"
+        ?"IICL depth assessment: within this dimensional criterion only; other inspection criteria still apply."
+        :assessment.status==="EXCEEDS_DIMENSIONAL_CRITERION"
+          ?"IICL depth assessment: measured deformation exceeds the applicable dimensional criterion."
+          :"IICL depth assessment not completed because no depth was measured.";
+    }
     repairSelect.disabled=true;
     confirmRepairBtn.disabled=true;
     confirmRepairBtn.textContent="Repair method confirmed ✓";
