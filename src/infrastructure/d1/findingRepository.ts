@@ -54,7 +54,7 @@ export class FindingRepository {
         "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,capture_metadata_json,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
       ).bind(id,input.surveyId,input.findingId,input.role,input.r2Key,input.width??null,input.height??null,input.contentType,input.captureMetadataJson??null,now,now).run();
     }catch(error){
-      if(!(error instanceof Error)||!/no such column.*capture_metadata_json/i.test(error.message))throw error;
+      if(!(error instanceof Error)||!/(no such column.*capture_metadata_json|no column named capture_metadata_json)/i.test(error.message))throw error;
       await this.db.prepare(
         "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
       ).bind(id,input.surveyId,input.findingId,input.role,input.r2Key,input.width??null,input.height??null,input.contentType,now,now).run();
