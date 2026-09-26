@@ -185,6 +185,35 @@ export class CedexRepository {
     ).bind(findingId).first<{id:string;survey_id:string;container_face:string;equipment_type:string;length_ft:number}>();
   }
 
+  async geometryForFinding(findingId:string){
+    try{
+      return await this.db.prepare(`
+        SELECT gc.observed_iso_code AS isoCode,
+               gc.observed_container_type AS equipmentType,
+               gc.observed_length_ft AS lengthFt,
+               gc.observed_height_description AS heightDescription,
+               p.length_mm AS lengthMm,
+               p.width_mm AS widthMm,
+               p.height_mm AS heightMm,
+               p.geometry_source AS geometrySource,
+               p.geometry_version AS geometryVersion
+        FROM findings f
+        JOIN surveys s ON s.id=f.survey_id
+        JOIN gate_cycles gc ON gc.id=s.gate_cycle_id
+        LEFT JOIN container_geometry_profiles p
+          ON p.iso_code=gc.observed_iso_code AND p.active=1
+        WHERE f.id=?`
+      ).bind(findingId).first<{
+        isoCode:string;equipmentType:string;lengthFt:number;heightDescription:string;
+        lengthMm:number|null;widthMm:number|null;heightMm:number|null;
+        geometrySource:string|null;geometryVersion:string|null;
+      }>();
+    }catch(error){
+      if(error instanceof Error && /no such table.*container_geometry_profiles/i.test(error.message)) return null;
+      throw error;
+    }
+  }
+
   async saveComponentPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"SUGGESTED"|"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
     const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
     await this.db.batch([
