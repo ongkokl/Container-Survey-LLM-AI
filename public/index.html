@@ -196,6 +196,16 @@
         <span id="repairSuggestion"></span>
         <span id="repairCandidates"></span>
         <div id="repairDecision" hidden>
+          <label for="repairLengthCm">Damage length (cm)</label>
+          <input id="repairLengthCm" type="number" min="0" step="0.1" inputmode="decimal" placeholder="Optional">
+          <label for="repairWidthCm">Damage width (cm)</label>
+          <input id="repairWidthCm" type="number" min="0" step="0.1" inputmode="decimal" placeholder="Optional">
+          <label for="repairDepthCm">Damage depth (cm)</label>
+          <input id="repairDepthCm" type="number" min="0" step="0.1" inputmode="decimal" placeholder="Optional">
+          <label for="repairCorrugations">Corrugations affected</label>
+          <input id="repairCorrugations" type="number" min="0" step="1" inputmode="numeric" placeholder="Optional">
+          <label for="repairNotes">Measurement / inspection notes</label>
+          <input id="repairNotes" type="text" maxlength="300" placeholder="Optional">
           <label for="repairSelect">Surveyor repair method</label>
           <select id="repairSelect"></select>
           <button id="confirmRepairBtn" class="primary" type="button">Confirm repair method</button>
