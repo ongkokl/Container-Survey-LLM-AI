@@ -1,4 +1,4 @@
-import { CedexRepository } from "../infrastructure/d1/cedexRepository";
+import { CedexRepository, ComponentVisualRule } from "../infrastructure/d1/cedexRepository";
 
 const MODEL = "@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS = 2000;
@@ -22,23 +22,23 @@ function overviewZone(point: Point | null): OverviewZone {
   return edges[0][1] <= 0.2 ? edges[0][0] : "CENTRAL_FIELD";
 }
 
-function componentVisualGuidance(equipment: "GP" | "RF", face: string, zone: OverviewZone) {
-  if (equipment === "GP" && (face === "LEFT" || face === "RIGHT")) {
-    return `GP side-wall component guidance:
-- PAA (Panel Assembly): the corrugated side-wall sheet/panel field. Dents, scuffs, gouges or deformation that remain in the corrugated wall sheet are PAA.
-- RLA (Rail Assembly): a distinct structural rail at a container edge/perimeter. Do NOT call a horizontal dent line, shadow, corrugation ridge/valley, pressed panel profile or repeated corrugation pattern an RLA.
-- RDP/RLG: use only when a distinct rail doubling plate or rail gusset is visibly present.
-- CPA/CPO/CFG: corner/end structural components, not the ordinary central side-wall sheet.
-- VRA: use only when the damaged object is the ventilator itself.
-Overview-position prior: ${zone}.${zone === "CENTRAL_FIELD" ? " A central side-wall point strongly favours PAA unless the images clearly show a separate non-panel component at the target." : ""}
-The overview-position prior is advisory because camera framing can be oblique or cropped. If the close-up conflicts with it, rely on visible physical structure and set needs_review true when uncertain.`;
+function formatVisualGuidance(rules: ComponentVisualRule[], zone: OverviewZone) {
+  if (!rules.length) {
+    return `Overview-position prior: ${zone}. No additional D1 visual rule is loaded for these candidates. Treat position as supporting context only; camera framing can be oblique or cropped.`;
   }
-  return `Overview-position prior: ${zone}. Treat this as supporting context only; camera framing can be oblique or cropped. Identify the actual physical component visible at the target and set needs_review true if position and visual evidence conflict.`;
+  const lines = rules.map(rule => {
+    const parts = [`- ${rule.component_code}: ${rule.visual_definition}`];
+    if (rule.positive_cues) parts.push(`Positive cues: ${rule.positive_cues}`);
+    if (rule.negative_cues) parts.push(`Do not confuse with: ${rule.negative_cues}`);
+    if (rule.confusable_with) parts.push(`Common alternatives: ${rule.confusable_with}`);
+    if (rule.overview_zone !== "ANY") parts.push(`Position rule: ${rule.container_face}/${rule.overview_zone}`);
+    return parts.join(" ");
+  });
+  return `D1 component visual knowledge (use as guidance, not as a substitute for visible evidence):\n${lines.join("\n")}\nOverview-position prior: ${zone}. If image evidence conflicts with position guidance, set needs_review true.`;
 }
 
-function hasPositionalConflict(equipment: "GP" | "RF", face: string, zone: OverviewZone, code: string | null) {
-  if (!code || equipment !== "GP" || (face !== "LEFT" && face !== "RIGHT") || zone !== "CENTRAL_FIELD") return false;
-  return new Set(["RLA", "RDP", "RLG", "CFG", "CPA", "CPO"]).has(code);
+function visualRuleForcesReview(rules: ComponentVisualRule[], code: string | null) {
+  return Boolean(code && rules.some(rule => rule.component_code === code && rule.force_review === 1));
 }
 
 function dataUri(bytes: ArrayBuffer, type: string) {
@@ -106,7 +106,9 @@ export class CedexClassificationService {
     const allowedCodes = [...new Set(allowed.map(x => x.component_code))];
     const allowedSet = new Set(allowedCodes);
     const allowedText = allowed.map(x => `${x.component_code} = ${x.component_name}`).join("\n");
-    const guidance = componentVisualGuidance(equipment, context.container_face, zone);
+    const visualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
+      .filter(rule => allowedSet.has(rule.component_code));
+    const guidance = formatVisualGuidance(visualRules, zone);
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
@@ -193,7 +195,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       if (code === null || allowedSet.has(code)) {
         selectedCode = code;
         selectedConfidence = confidence(parsed.confidence);
-        const positionalConflict = hasPositionalConflict(equipment, context.container_face, zone, code);
+        const positionalConflict = visualRuleForcesReview(visualRules, code);
         needsReview =
           parsed.needs_review ||
           !code ||
@@ -213,7 +215,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         candidates = candidates.slice(0, 3);
       }
     }
-    const positionalConflict = hasPositionalConflict(equipment, context.container_face, zone, selectedCode);
+    const positionalConflict = visualRuleForcesReview(visualRules, selectedCode);
     const result = {
       equipment,
       analysisStatus,
@@ -228,7 +230,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       roiUsed: Boolean(roi),
       overviewUsed: Boolean(overviewImage && overviewPoint),
       overviewZone: zone,
-      positionalConflict
+      positionalConflict,
+      visualKnowledgeUsed: visualRules.length > 0,
+      visualRuleCount: visualRules.length
     };
     await this.repo.saveComponentPrediction({
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
@@ -242,6 +246,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         overviewUsed: Boolean(overviewImage && overviewPoint),
         overviewZone: zone,
         positionalConflict,
+        visualKnowledgeUsed: visualRules.length > 0,
+        visualRuleCount: visualRules.length,
+        visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))],
         containerFace: context.container_face,
         allowedComponentCount: allowed.length,
         componentReviewThreshold: COMPONENT_REVIEW_THRESHOLD,
