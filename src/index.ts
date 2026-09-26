@@ -142,6 +142,17 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (request.method === "POST" && url.pathname === "/api/findings/geometry") {
+    try {
+      const body=await readJson<{findingId?:string}>(request);
+      const result=await new CedexRepository(env.DB).geometryForFinding(body.findingId??"");
+      if(!result) return json({ok:false,error:"GEOMETRY_PROFILE_UNAVAILABLE",message:"Known container geometry is not available for this finding yet."},422);
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"GEOMETRY_LOOKUP_FAILED",message:error instanceof Error?error.message:"Unable to load container geometry."},422);
+    }
+  }
+
   if (request.method === "POST" && url.pathname === "/api/cedex/repair-suggest") {
     try {
       const body=await readJson<{findingId?:string}>(request);
