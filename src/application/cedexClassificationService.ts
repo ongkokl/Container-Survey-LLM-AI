@@ -7,6 +7,39 @@ type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
 type Candidate = { code: string; confidence: number | null; reason: string };
+type Point = { x: number; y: number };
+type OverviewZone = "TOP_EDGE" | "BOTTOM_EDGE" | "LEFT_EDGE" | "RIGHT_EDGE" | "CENTRAL_FIELD" | "UNKNOWN";
+
+function overviewZone(point: Point | null): OverviewZone {
+  if (!point) return "UNKNOWN";
+  const edges: Array<[OverviewZone, number]> = [
+    ["TOP_EDGE", point.y],
+    ["BOTTOM_EDGE", 1 - point.y],
+    ["LEFT_EDGE", point.x],
+    ["RIGHT_EDGE", 1 - point.x]
+  ];
+  edges.sort((a, b) => a[1] - b[1]);
+  return edges[0][1] <= 0.2 ? edges[0][0] : "CENTRAL_FIELD";
+}
+
+function componentVisualGuidance(equipment: "GP" | "RF", face: string, zone: OverviewZone) {
+  if (equipment === "GP" && (face === "LEFT" || face === "RIGHT")) {
+    return `GP side-wall component guidance:
+- PAA (Panel Assembly): the corrugated side-wall sheet/panel field. Dents, scuffs, gouges or deformation that remain in the corrugated wall sheet are PAA.
+- RLA (Rail Assembly): a distinct structural rail at a container edge/perimeter. Do NOT call a horizontal dent line, shadow, corrugation ridge/valley, pressed panel profile or repeated corrugation pattern an RLA.
+- RDP/RLG: use only when a distinct rail doubling plate or rail gusset is visibly present.
+- CPA/CPO/CFG: corner/end structural components, not the ordinary central side-wall sheet.
+- VRA: use only when the damaged object is the ventilator itself.
+Overview-position prior: ${zone}.${zone === "CENTRAL_FIELD" ? " A central side-wall point strongly favours PAA unless the images clearly show a separate non-panel component at the target." : ""}
+The overview-position prior is advisory because camera framing can be oblique or cropped. If the close-up conflicts with it, rely on visible physical structure and set needs_review true when uncertain.`;
+  }
+  return `Overview-position prior: ${zone}. Treat this as supporting context only; camera framing can be oblique or cropped. Identify the actual physical component visible at the target and set needs_review true if position and visual evidence conflict.`;
+}
+
+function hasPositionalConflict(equipment: "GP" | "RF", face: string, zone: OverviewZone, code: string | null) {
+  if (!code || equipment !== "GP" || (face !== "LEFT" && face !== "RIGHT") || zone !== "CENTRAL_FIELD") return false;
+  return new Set(["RLA", "RDP", "RLG", "CFG", "CPA", "CPO"]).has(code);
+}
 
 function dataUri(bytes: ArrayBuffer, type: string) {
   let binary = "";
@@ -61,18 +94,45 @@ export class CedexClassificationService {
     if (!object) throw new Error("Damage close-up photo is unavailable.");
     const roi = await this.repo.surveyorDamageBox(findingId, photo.id);
     const image = dataUri(await object.arrayBuffer(), photo.content_type);
+
+    const overviewPhoto = await this.repo.findingPhoto(findingId, "FACE_OVERVIEW");
+    const overviewPoint = overviewPhoto ? await this.repo.surveyorLocationPoint(findingId, overviewPhoto.id) : null;
+    const zone = overviewZone(overviewPoint);
+    let overviewImage: string | null = null;
+    if (overviewPhoto) {
+      const overviewObject = await this.bucket.get(overviewPhoto.r2_key);
+      if (overviewObject) overviewImage = dataUri(await overviewObject.arrayBuffer(), overviewPhoto.content_type);
+    }
     const allowedCodes = [...new Set(allowed.map(x => x.component_code))];
     const allowedSet = new Set(allowedCodes);
     const allowedText = allowed.map(x => `${x.component_code} = ${x.component_name}`).join("\n");
+    const guidance = componentVisualGuidance(equipment, context.container_face, zone);
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
-${roi ? `The target is the surveyor's damage box on this image, in normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Identify the component inside this region, using surrounding structure as context. These coordinates are metadata; no box is drawn onto the image.` : "No damage box is available. If the target component is ambiguous, abstain."}
+${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
+${roi ? `The target on the close-up image is the surveyor's damage box in normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Identify the physical component inside this region, using surrounding structure as context. These coordinates are metadata; no box is drawn onto the image.` : "No damage box is available. If the target component is ambiguous, abstain."}
+
+${guidance}
+
 If the target cannot be identified reliably or the recorded face conflicts with the image, return selected_code null and needs_review true.
 Allowed codes:
 ${allowedText}
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (one short visual sentence), and candidates (at most 3 objects with code, confidence and reason). Do not explain your reasoning outside the JSON.`;
+
+    const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
+    if (overviewImage) {
+      content.push(
+        { type: "text", text: "Overview image: use this only to understand where the confirmed damage point sits on the recorded container face." },
+        { type: "image_url", image_url: { url: overviewImage } }
+      );
+    }
+    content.push(
+      { type: "text", text: "Close-up image: classify the physical component that actually contains the marked damage." },
+      { type: "image_url", image_url: { url: image } }
+    );
+
     const raw = await this.ai.run(MODEL, {
-      messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: image } }] }],
+      messages: [{ role: "user", content }],
       max_completion_tokens: MAX_COMPLETION_TOKENS,
       reasoning_effort: "low",
       temperature: 0,
@@ -133,11 +193,13 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       if (code === null || allowedSet.has(code)) {
         selectedCode = code;
         selectedConfidence = confidence(parsed.confidence);
+        const positionalConflict = hasPositionalConflict(equipment, context.container_face, zone, code);
         needsReview =
           parsed.needs_review ||
           !code ||
           selectedConfidence === null ||
-          selectedConfidence < COMPONENT_REVIEW_THRESHOLD;
+          selectedConfidence < COMPONENT_REVIEW_THRESHOLD ||
+          positionalConflict;
         analysisStatus = code ? "SUGGESTED" : "ABSTAINED";
         reason = parsed.reason.trim() || (code ? "Surveyor confirmation required." : "AI could not identify the target component reliably. Select manually or retry with a clearer photo.");
         for (const value of parsed.candidates) {
@@ -151,8 +213,23 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         candidates = candidates.slice(0, 3);
       }
     }
-    const result = { equipment, analysisStatus, selectedCode, confidence: selectedConfidence, needsReview, reason, candidates,
-      allowedComponents: allowed, allowedCount: allowed.length, model: MODEL, roiUsed: Boolean(roi) };
+    const positionalConflict = hasPositionalConflict(equipment, context.container_face, zone, selectedCode);
+    const result = {
+      equipment,
+      analysisStatus,
+      selectedCode,
+      confidence: selectedConfidence,
+      needsReview,
+      reason,
+      candidates,
+      allowedComponents: allowed,
+      allowedCount: allowed.length,
+      model: MODEL,
+      roiUsed: Boolean(roi),
+      overviewUsed: Boolean(overviewImage && overviewPoint),
+      overviewZone: zone,
+      positionalConflict
+    };
     await this.repo.saveComponentPrediction({
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
       response: raw,
@@ -160,6 +237,11 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       requestContext: {
         photoId: photo.id,
         roi,
+        overviewPhotoId: overviewPhoto?.id ?? null,
+        overviewPoint,
+        overviewUsed: Boolean(overviewImage && overviewPoint),
+        overviewZone: zone,
+        positionalConflict,
         containerFace: context.container_face,
         allowedComponentCount: allowed.length,
         componentReviewThreshold: COMPONENT_REVIEW_THRESHOLD,
