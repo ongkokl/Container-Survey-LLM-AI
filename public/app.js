@@ -1,3 +1,5 @@
+import { createGuidedCamera } from "./camera-guidance.js";
+
 const input = document.querySelector("#doorPhoto");
 const galleryInput = document.querySelector("#doorGalleryPhoto");
 const previewWrap = document.querySelector("#previewWrap");
@@ -429,12 +431,14 @@ const findingFace=document.querySelector("#findingFace");
 const createFindingBtn=document.querySelector("#createFindingBtn");
 const findingCapture=document.querySelector("#findingCapture");
 const findingLabel=document.querySelector("#findingLabel");
+const overviewCameraBtn=document.querySelector("#overviewCameraBtn");
 const overviewPhoto=document.querySelector("#overviewPhoto");
 const overviewGalleryPhoto=document.querySelector("#overviewGalleryPhoto");
 const overviewStage=document.querySelector("#overviewStage");
 const overviewPreview=document.querySelector("#overviewPreview");
 const overviewCanvas=document.querySelector("#overviewCanvas");
 const tapHelp=document.querySelector("#tapHelp");
+const closeupCameraBtn=document.querySelector("#closeupCameraBtn");
 const closeupPhoto=document.querySelector("#closeupPhoto");
 const closeupGalleryPhoto=document.querySelector("#closeupGalleryPhoto");
 const closeupStage=document.querySelector("#closeupStage");
@@ -445,6 +449,15 @@ const saveFindingBtn=document.querySelector("#saveFindingBtn");
 const findingMessage=document.querySelector("#findingMessage");
 const geometryReference=document.querySelector("#geometryReference");
 const geometryReferenceText=document.querySelector("#geometryReferenceText");
+const cameraGuideModal=document.querySelector("#cameraGuideModal");
+const guidedCameraViewport=document.querySelector("#guidedCameraViewport");
+const guidedCameraVideo=document.querySelector("#guidedCameraVideo");
+const guidedCameraOverlay=document.querySelector("#guidedCameraOverlay");
+const guidedCameraStatus=document.querySelector("#guidedCameraStatus");
+const guidedCameraQuality=document.querySelector("#guidedCameraQuality");
+const guidedCameraCapture=document.querySelector("#guidedCameraCapture");
+const guidedCameraCancel=document.querySelector("#guidedCameraCancel");
+const guidedCameraFallback=document.querySelector("#guidedCameraFallback");
 const analyseComponentBtn=document.querySelector("#analyseComponentBtn");
 const cedexReview=document.querySelector("#cedexReview");
 const cedexSuggestion=document.querySelector("#cedexSuggestion");
@@ -462,6 +475,53 @@ let repairAiCode=null;
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
 let aiLocationPoint=null,aiDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
+let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
+
+const cameraGuidanceV1=new URLSearchParams(window.location.search).get("cameraGuidance")!=="0";
+const guidedCamera=createGuidedCamera({
+  modal:cameraGuideModal,
+  viewport:guidedCameraViewport,
+  video:guidedCameraVideo,
+  overlay:guidedCameraOverlay,
+  statusText:guidedCameraStatus,
+  qualityBadge:guidedCameraQuality,
+  captureButton:guidedCameraCapture,
+  cancelButton:guidedCameraCancel,
+  fallbackButton:guidedCameraFallback
+});
+
+function unscoredCaptureMetadata(source,photoType){
+  return {
+    version:"camera_guidance_v1",
+    source,
+    photoType,
+    containerFace:findingFace.value||null,
+    equipmentType:currentGeometry?.equipmentType||containerType.textContent.trim()||null,
+    identificationQuality:"UNKNOWN",
+    measurementQuality:"UNKNOWN"
+  };
+}
+
+function openGuidedCapture(mode){
+  const isOverview=mode==="overview";
+  const fallbackInput=isOverview?overviewPhoto:closeupPhoto;
+  if(!cameraGuidanceV1){fallbackInput.click();return;}
+  guidedCamera.open({
+    mode,
+    face:findingFace.value,
+    equipmentType:currentGeometry?.equipmentType||containerType.textContent.trim(),
+    fallbackInput,
+    onCapture:async(file,metadata)=>{
+      if(isOverview)selectOverviewPhoto(file,"guided",metadata);
+      else selectCloseupPhoto(file,"guided",metadata);
+    }
+  }).catch((error)=>{
+    findingMessage.textContent=error instanceof Error?error.message:"Unable to start guided camera.";
+  });
+}
+
+overviewCameraBtn.addEventListener("click",()=>openGuidedCapture("overview"));
+closeupCameraBtn.addEventListener("click",()=>openGuidedCapture("closeup"));
 
 addFindingBtn.addEventListener("click",()=>{
   currentSurveyId=startedSurvey.textContent.trim();
@@ -479,8 +539,10 @@ createFindingBtn.addEventListener("click",async()=>{
     findingMessage.textContent="Finding created. Capture the overview / measurement photo.";
     geometryReference.hidden=true;
     geometryReferenceText.textContent="";
+    currentGeometry=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
     try{
       const geometry=await apiJson("/api/findings/geometry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
+      currentGeometry=geometry;
       if(geometry?.lengthMm&&geometry?.heightMm){
         geometryReferenceText.textContent=geometry.isoCode+" · "+geometry.equipmentType+" · "+geometry.lengthMm+" × "+geometry.heightMm+" mm external reference";
         geometryReference.hidden=false;
@@ -497,14 +559,17 @@ function showImage(file,img,stage,canvas,ready){
   img.src=url;
 }
 
-function selectOverviewPhoto(file,source){
+function selectOverviewPhoto(file,source,captureMetadata=null){
   overviewFile=file??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+  overviewCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"overview");
   const requestId=++overviewAiRequest;
   if(!overviewFile)return;
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   findingMessage.textContent=source==="gallery"
     ?"Overview loaded from Gallery. Verify that rails/structural references are visible before using it for measurement."
-    :"Overview captured. Verify damage is centred and known container geometry is visible.";
+    :source==="guided"
+      ?"Guided overview captured. Verify the AI damage position before saving."
+      :"Overview captured. Verify damage is centred and known container geometry is visible.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
     try{
@@ -524,7 +589,7 @@ function selectOverviewPhoto(file,source){
     updateFindingReady();
   });
 }
-overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.files?.[0]??null,"camera"));
+overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.files?.[0]??null,"system_camera"));
 overviewGalleryPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewGalleryPhoto.files?.[0]??null,"gallery"));
 
 function drawTarget(canvas,point,isAi=false){
@@ -568,14 +633,17 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 });
 
 let dragStart=null;
-function selectCloseupPhoto(file,source){
+function selectCloseupPhoto(file,source,captureMetadata=null){
   closeupFile=file??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
+  closeupCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"closeup");
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
   findingMessage.textContent=source==="gallery"
     ?"Close-up loaded from Gallery. It can support classification; measurement will rely on overview geometry."
-    :"Close-up captured. Keep the complete damage and surrounding component detail visible.";
+    :source==="guided"
+      ?"Guided close-up captured. Verify the AI damage box before saving."
+      :"Close-up captured. Keep the complete damage and surrounding component detail visible.";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
     boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
     try{
@@ -595,7 +663,7 @@ function selectCloseupPhoto(file,source){
     updateFindingReady();
   });
 }
-closeupPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupPhoto.files?.[0]??null,"camera"));
+closeupPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupPhoto.files?.[0]??null,"system_camera"));
 closeupGalleryPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupGalleryPhoto.files?.[0]??null,"gallery"));
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
@@ -613,20 +681,21 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
 
 function updateFindingReady(){saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox);}
 
-async function uploadFindingPhoto(file,role,img){
+async function uploadFindingPhoto(file,role,img,captureMetadata){
   const upload=await compressForOcr(file),form=new FormData();
   form.append("surveyId",currentSurveyId);form.append("findingId",currentFinding.id);form.append("role",role);
   form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));form.append("photo",upload,upload.name||"photo.jpg");
+  if(captureMetadata)form.append("captureMetadata",JSON.stringify(captureMetadata));
   return apiJson("/api/findings/photo",{method:"POST",body:form});
 }
 
 saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
-    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview);
+    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewCaptureMeta);
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
-    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview);
+    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
     if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
     findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
