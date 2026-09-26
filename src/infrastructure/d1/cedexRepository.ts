@@ -129,21 +129,19 @@ export class CedexRepository {
     if(!["GP","RF"].includes(row.equipment)) throw new Error("Unable to determine GP/RF equipment type.");
     const equipment=row.equipment as "GP"|"RF";
     const result=await this.db.prepare(`
-      WITH ranked AS (
-        SELECT r.repair_code,r.repair_name,r.description,r.standard_version,
-               ROW_NUMBER() OVER (
-                 PARTITION BY r.repair_code
-                 ORDER BY r.standard_version DESC,r.rowid DESC
-               ) AS rn
-        FROM repair_codes r
-        WHERE r.active=1
-      )
-      SELECT cr.repair_code,r.repair_name,r.description,r.standard_version
-      FROM component_repair_rules cr
-      JOIN ranked r ON r.repair_code=cr.repair_code AND r.rn=1
-      WHERE cr.equipment_type=? AND cr.component_code=? AND cr.active=1
-      ORDER BY cr.repair_code`
-    ).bind(equipment,row.final_component_code).all<{repair_code:string;repair_name:string;description:string|null;standard_version:string}>();
+      SELECT DISTINCT rule.repair_code,r.repair_name,r.description,r.standard_version
+      FROM component_damage_repair_rules rule
+      JOIN repair_codes r
+        ON r.repair_code=rule.repair_code
+       AND r.standard_version=rule.standard_version
+       AND r.active=1
+      WHERE rule.equipment_type=?
+        AND rule.component_code=?
+        AND rule.damage_code=?
+        AND rule.active=1
+      ORDER BY rule.repair_code`
+    ).bind(equipment,row.final_component_code,row.final_damage_code)
+      .all<{repair_code:string;repair_name:string;description:string|null;standard_version:string}>();
     return {
       equipment,
       componentCode:row.final_component_code,
@@ -151,6 +149,7 @@ export class CedexRepository {
       repairs:result.results
     };
   }
+
 
   async findingPhoto(findingId:string,role:"FACE_OVERVIEW"|"DAMAGE_CLOSEUP"){
     return this.db.prepare(`
