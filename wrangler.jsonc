@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-25",
   "workers_dev": true,
+  "vars": {
+    "COMPONENT_REVIEW_THRESHOLD": "0.80"
+  },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"

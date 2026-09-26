@@ -2,6 +2,7 @@ import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 
 const MODEL = "@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS = 2000;
+const DEFAULT_REVIEW_THRESHOLD = 0.8;
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
@@ -46,7 +47,12 @@ function confidence(value: number | null): number | null {
 }
 
 export class CedexClassificationService {
-  constructor(private readonly repo: CedexRepository, private readonly bucket: Bucket, private readonly ai: AiRunner) {}
+  private readonly reviewThreshold: number;
+  constructor(private readonly repo: CedexRepository, private readonly bucket: Bucket, private readonly ai: AiRunner, configuredReviewThreshold?: string | number) {
+    const threshold = Number(configuredReviewThreshold);
+    this.reviewThreshold = Number.isFinite(threshold) && threshold > 0 && threshold <= 1
+      ? threshold : DEFAULT_REVIEW_THRESHOLD;
+  }
 
   async analyseComponent(findingId: string) {
     const context = await this.repo.findingContext(findingId);
@@ -116,6 +122,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
     let needsReview = true;
     let reason = "AI returned an unreadable component answer. Retry analysis or select the component manually.";
     let candidates: Candidate[] = [];
+    const reviewReasons: string[] = [];
 
     if (finishReason === "length") {
       analysisStatus = "INCOMPLETE";
@@ -132,7 +139,14 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       if (code === null || allowedSet.has(code)) {
         selectedCode = code;
         selectedConfidence = confidence(parsed.confidence);
-        needsReview = parsed.needs_review || !code;
+        if (parsed.needs_review) reviewReasons.push("AI requested surveyor review.");
+        if (!code) reviewReasons.push("No component was selected by AI.");
+        if (selectedConfidence === null) {
+          reviewReasons.push("AI confidence is unavailable.");
+        } else if (selectedConfidence < this.reviewThreshold) {
+          reviewReasons.push(`AI confidence is below the ${Math.round(this.reviewThreshold * 100)}% review threshold.`);
+        }
+        needsReview = reviewReasons.length > 0;
         analysisStatus = code ? "SUGGESTED" : "ABSTAINED";
         reason = parsed.reason.trim() || (code ? "Surveyor confirmation required." : "AI could not identify the target component reliably. Select manually or retry with a clearer photo.");
         for (const value of parsed.candidates) {
@@ -147,12 +161,12 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       }
     }
     const result = { equipment, analysisStatus, selectedCode, confidence: selectedConfidence, needsReview, reason, candidates,
-      allowedComponents: allowed, allowedCount: allowed.length, model: MODEL, roiUsed: Boolean(roi) };
+      allowedComponents: allowed, allowedCount: allowed.length, model: MODEL, roiUsed: Boolean(roi), reviewReasons, reviewThreshold: this.reviewThreshold };
     await this.repo.saveComponentPrediction({
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
       response: raw,
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED",
-      requestContext: { photoId: photo.id, roi, max_completion_tokens: MAX_COMPLETION_TOKENS, reasoning_effort: "low", analysisStatus, finishReason }
+      requestContext: { photoId: photo.id, roi, max_completion_tokens: MAX_COMPLETION_TOKENS, reasoning_effort: "low", analysisStatus, finishReason, reviewThreshold: this.reviewThreshold, reviewReasons }
     });
     return result;
   }

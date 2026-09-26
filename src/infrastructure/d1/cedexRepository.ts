@@ -1,5 +1,12 @@
 export interface ComponentCandidate {component_code:string;component_name:string;standard_version:string;}
 
+export class ComponentMasterConflictError extends Error {
+  constructor(equipment:string,codes:string[]){
+    super(`Component reference data has multiple active definitions for ${equipment}: ${codes.join(", ")}. Resolve the master-data conflict before classification or confirmation.`);
+    this.name="ComponentMasterConflictError";
+  }
+}
+
 export class CedexRepository {
   constructor(private readonly db:D1Database){}
 
@@ -19,14 +26,16 @@ export class CedexRepository {
       SELECT component_code,component_name,standard_version
       FROM component_codes c
       WHERE c.equipment_type=? AND c.active=1
-        AND NOT EXISTS (
-          SELECT 1 FROM component_codes newer
-          WHERE newer.equipment_type=c.equipment_type
-            AND newer.component_code=c.component_code
-            AND newer.active=1
-            AND COALESCE(newer.effective_from,'0000-00-00') > COALESCE(c.effective_from,'0000-00-00')
-        )
       ORDER BY component_code`).bind(equipment).all<ComponentCandidate>();
+    const seen=new Set<string>();
+    const conflicts=new Set<string>();
+    for(const component of result.results){
+      if(seen.has(component.component_code))conflicts.add(component.component_code);
+      seen.add(component.component_code);
+    }
+    if(conflicts.size){
+      throw new ComponentMasterConflictError(equipment,[...conflicts]);
+    }
     return result.results;
   }
 

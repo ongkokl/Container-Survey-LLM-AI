@@ -632,7 +632,8 @@ function renderComponentResult(result){
   cedexCandidates.textContent=result.candidates?.length
     ? "Candidates: "+result.candidates.map(x=>x.code+componentConfidence(x.confidence)).join(" · ")
     : failed ? "No completed AI suggestion is available." : result.reason || "Select the component from the verified list below.";
-  componentDecisionMessage.textContent="";
+  componentDecisionMessage.textContent=result.needsReview && result.selectedCode
+    ? (result.reviewReasons?.join(" ") || "Review the component before confirming.") : "";
   componentSelect.innerHTML="";
   const placeholder=document.createElement("option");
   placeholder.value="";placeholder.textContent="Select a component…";

@@ -15,7 +15,7 @@ import { PhotoStore } from "./infrastructure/r2/photoStore";
 import { FindingRepository } from "./infrastructure/d1/findingRepository";
 import { FindingCaptureService } from "./application/findingCaptureService";
 import { MoondreamDamageMarker } from "./infrastructure/ai/moondreamDamageMarker";
-import { CedexRepository } from "./infrastructure/d1/cedexRepository";
+import { CedexRepository, ComponentMasterConflictError } from "./infrastructure/d1/cedexRepository";
 import { CedexClassificationService } from "./application/cedexClassificationService";
 import { DamageClassificationService } from "./application/damageClassificationService";
 
@@ -24,6 +24,7 @@ export interface Env {
   PHOTOS: R2Bucket;
   AI: Ai;
   ASSETS: Fetcher;
+  COMPONENT_REVIEW_THRESHOLD?: string;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -62,7 +63,7 @@ function doorIdentificationService(env: Env): DoorIdentificationService {
 
 function cedexService(env:Env):CedexClassificationService{
   const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
-  return new CedexClassificationService(new CedexRepository(env.DB),env.PHOTOS,ai);
+  return new CedexClassificationService(new CedexRepository(env.DB),env.PHOTOS,ai,env.COMPONENT_REVIEW_THRESHOLD);
 }
 
 function findingService(env: Env): FindingCaptureService {
@@ -103,6 +104,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       }
       return json({ok:true,result});
     } catch(error) {
+      if(error instanceof ComponentMasterConflictError){
+        return json({ok:false,error:"COMPONENT_MASTER_CONFLICT",message:error.message},409);
+      }
       return json({ok:false,error:"CEDEX_COMPONENT_FAILED",message:error instanceof Error?error.message:"Unable to classify component."},422);
     }
   }
@@ -113,6 +117,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       const repo=new CedexRepository(env.DB);
       return json({ok:true,result:await repo.decideComponent({findingId:body.findingId??"",finalCode:body.finalCode??""})});
     } catch(error) {
+      if(error instanceof ComponentMasterConflictError){
+        return json({ok:false,error:"COMPONENT_MASTER_CONFLICT",message:error.message},409);
+      }
       return json({ok:false,error:"CEDEX_COMPONENT_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save component decision."},422);
     }
   }
