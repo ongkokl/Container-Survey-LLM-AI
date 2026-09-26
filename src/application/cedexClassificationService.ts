@@ -2,6 +2,7 @@ import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 
 const MODEL = "@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS = 2000;
+const COMPONENT_REVIEW_THRESHOLD = 0.8;
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
@@ -52,7 +53,7 @@ export class CedexClassificationService {
     const context = await this.repo.findingContext(findingId);
     if (!context) throw new Error("Finding not found.");
     const equipment = await this.repo.equipmentForFinding(findingId);
-    const allowed = await this.repo.components(equipment);
+    const allowed = await this.repo.components(equipment, context.container_face);
     if (!allowed.length) throw new Error("No verified CEDEX component master is loaded for this equipment type.");
     const photo = await this.repo.findingPhoto(findingId, "DAMAGE_CLOSEUP");
     if (!photo) throw new Error("Save the damage close-up photo before AI classification.");
@@ -64,7 +65,7 @@ export class CedexClassificationService {
     const allowedSet = new Set(allowedCodes);
     const allowedText = allowed.map(x => `${x.component_code} = ${x.component_name}`).join("\n");
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
-Classify ONLY the physical component containing the target damage. Choose ONLY from the allowed component codes. Never invent a code.
+Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${roi ? `The target is the surveyor's damage box on this image, in normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Identify the component inside this region, using surrounding structure as context. These coordinates are metadata; no box is drawn onto the image.` : "No damage box is available. If the target component is ambiguous, abstain."}
 If the target cannot be identified reliably or the recorded face conflicts with the image, return selected_code null and needs_review true.
 Allowed codes:
@@ -132,7 +133,11 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       if (code === null || allowedSet.has(code)) {
         selectedCode = code;
         selectedConfidence = confidence(parsed.confidence);
-        needsReview = parsed.needs_review || !code;
+        needsReview =
+          parsed.needs_review ||
+          !code ||
+          selectedConfidence === null ||
+          selectedConfidence < COMPONENT_REVIEW_THRESHOLD;
         analysisStatus = code ? "SUGGESTED" : "ABSTAINED";
         reason = parsed.reason.trim() || (code ? "Surveyor confirmation required." : "AI could not identify the target component reliably. Select manually or retry with a clearer photo.");
         for (const value of parsed.candidates) {
@@ -152,7 +157,17 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
       response: raw,
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED",
-      requestContext: { photoId: photo.id, roi, max_completion_tokens: MAX_COMPLETION_TOKENS, reasoning_effort: "low", analysisStatus, finishReason }
+      requestContext: {
+        photoId: photo.id,
+        roi,
+        containerFace: context.container_face,
+        allowedComponentCount: allowed.length,
+        componentReviewThreshold: COMPONENT_REVIEW_THRESHOLD,
+        max_completion_tokens: MAX_COMPLETION_TOKENS,
+        reasoning_effort: "low",
+        analysisStatus,
+        finishReason
+      }
     });
     return result;
   }
