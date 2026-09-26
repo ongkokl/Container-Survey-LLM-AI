@@ -18,6 +18,7 @@ import { MoondreamDamageMarker } from "./infrastructure/ai/moondreamDamageMarker
 import { CedexRepository } from "./infrastructure/d1/cedexRepository";
 import { CedexClassificationService } from "./application/cedexClassificationService";
 import { DamageClassificationService } from "./application/damageClassificationService";
+import { RepairRecommendationService } from "./application/repairRecommendationService";
 
 export interface Env {
   DB: D1Database;
@@ -74,7 +75,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({
       ok: true,
       service: "Container Survey LLM AI",
-      phase: "POC phase 4 - constrained CEDEX component classification",
+      phase: "POC phase 5 - component, damage and repair recommendation",
       visionModel: "@cf/qwen/qwen3.8-27b",
       time: new Date().toISOString()
     });
@@ -138,6 +139,30 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result:await new CedexRepository(env.DB).decideDamage({findingId:body.findingId??"",finalCode:body.finalCode??""})});
     } catch(error) {
       return json({ok:false,error:"CEDEX_DAMAGE_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save damage decision."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/repair-suggest") {
+    try {
+      const body=await readJson<{findingId?:string}>(request);
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const service=new RepairRecommendationService(new CedexRepository(env.DB),env.PHOTOS,ai);
+      const result=await service.analyse(body.findingId??"");
+      if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
+        return json({ok:false,error:"CEDEX_REPAIR_"+result.analysisStatus,message:result.reason,result},422);
+      }
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"CEDEX_REPAIR_FAILED",message:error instanceof Error?error.message:"Unable to recommend repair method."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/repair-decision") {
+    try {
+      const body=await readJson<{findingId?:string;finalCode?:string}>(request);
+      return json({ok:true,result:await new CedexRepository(env.DB).decideRepair({findingId:body.findingId??"",finalCode:body.finalCode??""})});
+    } catch(error) {
+      return json({ok:false,error:"CEDEX_REPAIR_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save repair decision."},422);
     }
   }
 

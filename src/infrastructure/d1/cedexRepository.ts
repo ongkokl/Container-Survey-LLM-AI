@@ -116,6 +116,41 @@ export class CedexRepository {
     }
   }
 
+  async repairCodesForFinding(findingId:string){
+    const row=await this.db.prepare(`
+      SELECT f.final_component_code,f.final_damage_code,gc.observed_container_type AS equipment
+      FROM findings f
+      JOIN surveys s ON s.id=f.survey_id
+      JOIN gate_cycles gc ON gc.id=s.gate_cycle_id
+      WHERE f.id=?`
+    ).bind(findingId).first<{final_component_code:string|null;final_damage_code:string|null;equipment:string}>();
+    if(!row?.final_component_code) throw new Error("Confirm the component before analysing repair.");
+    if(!row.final_damage_code) throw new Error("Confirm the damage before analysing repair.");
+    if(!["GP","RF"].includes(row.equipment)) throw new Error("Unable to determine GP/RF equipment type.");
+    const equipment=row.equipment as "GP"|"RF";
+    const result=await this.db.prepare(`
+      SELECT DISTINCT rule.repair_code,r.repair_name,r.description,r.standard_version
+      FROM component_damage_repair_rules rule
+      JOIN repair_codes r
+        ON r.repair_code=rule.repair_code
+       AND r.standard_version=rule.standard_version
+       AND r.active=1
+      WHERE rule.equipment_type=?
+        AND rule.component_code=?
+        AND rule.damage_code=?
+        AND rule.active=1
+      ORDER BY rule.repair_code`
+    ).bind(equipment,row.final_component_code,row.final_damage_code)
+      .all<{repair_code:string;repair_name:string;description:string|null;standard_version:string}>();
+    return {
+      equipment,
+      componentCode:row.final_component_code,
+      damageCode:row.final_damage_code,
+      repairs:result.results
+    };
+  }
+
+
   async findingPhoto(findingId:string,role:"FACE_OVERVIEW"|"DAMAGE_CLOSEUP"){
     return this.db.prepare(`
       SELECT id,r2_key,content_type FROM survey_photos
@@ -238,6 +273,63 @@ export class CedexRepository {
         .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId)
     ]);
     return {decisionId,aiCode:prediction.selected_code,finalCode,decision,componentCode:allowed.componentCode};
+  }
+
+
+  async saveRepairPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
+    const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
+    const predictionStatus=input.status??"REVIEW_REQUIRED";
+    await this.db.batch([
+      this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(runId,input.surveyId,input.findingId,"REPAIR_RECOMMENDATION",JSON.stringify({model:input.modelName,...input.requestContext}),JSON.stringify(input.response),now,now),
+      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'REPAIR',?,?,?,?)")
+        .bind(predictionId,runId,input.selectedCode,input.confidence,predictionStatus,now),
+      this.db.prepare("UPDATE findings SET status='REVIEW_REQUIRED',updated_at=? WHERE id=?")
+        .bind(now,input.findingId)
+    ]);
+    for(let i=0;i<input.candidates.length;i++){
+      const x=input.candidates[i];
+      await this.db.prepare("INSERT INTO prediction_candidates (id,prediction_id,candidate_code,rank,confidence,evidence_json) VALUES (?,?,?,?,?,?)")
+        .bind(crypto.randomUUID(),predictionId,x.code,i+1,x.confidence,JSON.stringify({reason:x.reason??null})).run();
+    }
+    return {predictionId};
+  }
+
+  async latestRepairPrediction(findingId:string){
+    return this.db.prepare(`
+      SELECT ap.id AS prediction_id,ap.selected_code
+      FROM ai_predictions ap
+      JOIN ai_runs ar ON ar.id=ap.ai_run_id
+      WHERE ar.finding_id=? AND ap.prediction_type='REPAIR'
+      ORDER BY ap.created_at DESC LIMIT 1`
+    ).bind(findingId).first<{prediction_id:string;selected_code:string|null}>();
+  }
+
+  async decideRepair(input:{findingId:string;finalCode:string;}){
+    const allowed=await this.repairCodesForFinding(input.findingId);
+    const finalCode=input.finalCode.trim().toUpperCase();
+    if(!allowed.repairs.some(x=>x.repair_code===finalCode)) throw new Error("Select a verified repair method for the confirmed component.");
+    const prediction=await this.latestRepairPrediction(input.findingId);
+    if(!prediction) throw new Error("Analyse the repair method before confirming it.");
+    const decision=prediction.selected_code===finalCode?"APPROVED":"CORRECTED";
+    const now=new Date().toISOString(),decisionId=crypto.randomUUID();
+    await this.db.batch([
+      this.db.prepare("INSERT INTO surveyor_decisions (id,finding_id,prediction_id,field_type,ai_value,final_value,decision,created_at) VALUES (?,?,?,'REPAIR',?,?,?,?)")
+        .bind(decisionId,input.findingId,prediction.prediction_id,prediction.selected_code,finalCode,decision,now),
+      this.db.prepare("UPDATE ai_predictions SET status=? WHERE id=?").bind(decision,prediction.prediction_id),
+      this.db.prepare("UPDATE findings SET final_repair_code=?,status=?,updated_at=? WHERE id=?")
+        .bind(finalCode,decision==="APPROVED"?"APPROVED":"CORRECTED",now,input.findingId)
+    ]);
+    return {
+      decisionId,
+      predictionId:prediction.prediction_id,
+      aiCode:prediction.selected_code,
+      finalCode,
+      decision,
+      equipment:allowed.equipment,
+      componentCode:allowed.componentCode,
+      damageCode:allowed.damageCode
+    };
   }
 
 
