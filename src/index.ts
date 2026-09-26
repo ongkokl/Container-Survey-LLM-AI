@@ -174,6 +174,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
           damageWidthCm?:number|null;
           damageDepthCm?:number|null;
           corrugationsAffected?:number|null;
+          deformationDirection?:"INWARD"|"OUTWARD"|"UNKNOWN"|null;
           notes?:string|null;
         };
       }>(request);
