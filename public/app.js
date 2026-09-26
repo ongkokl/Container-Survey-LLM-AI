@@ -130,6 +130,20 @@ async function compressForOcr(file) {
   }
 }
 
+async function imageDimensions(file, fallbackImage) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const dimensions = { width: bitmap.width, height: bitmap.height };
+    bitmap.close();
+    return dimensions;
+  } catch {
+    return {
+      width: fallbackImage?.naturalWidth || 0,
+      height: fallbackImage?.naturalHeight || 0
+    };
+  }
+}
+
 async function apiJson(url, options) {
   const response = await fetch(url, options);
   let payload;
@@ -682,10 +696,13 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
 function updateFindingReady(){saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox);}
 
 async function uploadFindingPhoto(file,role,img,captureMetadata){
-  const upload=await compressForOcr(file),form=new FormData();
+  const upload=await compressForOcr(file),dimensions=await imageDimensions(upload,img),form=new FormData();
   form.append("surveyId",currentSurveyId);form.append("findingId",currentFinding.id);form.append("role",role);
-  form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));form.append("photo",upload,upload.name||"photo.jpg");
-  if(captureMetadata)form.append("captureMetadata",JSON.stringify(captureMetadata));
+  form.append("width",String(dimensions.width));form.append("height",String(dimensions.height));form.append("photo",upload,upload.name||"photo.jpg");
+  if(captureMetadata){
+    captureMetadata.storedImage={width:dimensions.width,height:dimensions.height};
+    form.append("captureMetadata",JSON.stringify(captureMetadata));
+  }
   return apiJson("/api/findings/photo",{method:"POST",body:form});
 }
 
