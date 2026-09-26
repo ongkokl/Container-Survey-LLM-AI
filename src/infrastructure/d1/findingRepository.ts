@@ -46,12 +46,19 @@ export class FindingRepository {
     return Boolean(await this.db.prepare("SELECT id FROM findings WHERE id=? AND survey_id=?").bind(findingId,surveyId).first());
   }
 
-  async addPhoto(input:{photoId:string;surveyId:string;findingId:string;role:"FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP";r2Key:string;contentType:string;width?:number|null;height?:number|null;}):Promise<string>{
+  async addPhoto(input:{photoId:string;surveyId:string;findingId:string;role:"FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP";r2Key:string;contentType:string;width?:number|null;height?:number|null;captureMetadataJson?:string|null;}):Promise<string>{
     if(!(await this.belongsToSurvey(input.findingId,input.surveyId))) throw new Error("Finding does not belong to this survey.");
     const id=input.photoId,now=new Date().toISOString();
-    await this.db.prepare(
-      "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-    ).bind(id,input.surveyId,input.findingId,input.role,input.r2Key,input.width??null,input.height??null,input.contentType,now,now).run();
+    try{
+      await this.db.prepare(
+        "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,capture_metadata_json,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+      ).bind(id,input.surveyId,input.findingId,input.role,input.r2Key,input.width??null,input.height??null,input.contentType,input.captureMetadataJson??null,now,now).run();
+    }catch(error){
+      if(!(error instanceof Error)||!/(no such column.*capture_metadata_json|no column named capture_metadata_json)/i.test(error.message))throw error;
+      await this.db.prepare(
+        "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
+      ).bind(id,input.surveyId,input.findingId,input.role,input.r2Key,input.width??null,input.height??null,input.contentType,now,now).run();
+    }
     return id;
   }
 

@@ -211,13 +211,20 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       const form=await request.formData();
       const file=form.get("photo");
       if(!(file instanceof File)) throw new Error("A photo is required.");
+      const captureMetadataRaw=String(form.get("captureMetadata")??"").trim();
+      let captureMetadata:unknown=null;
+      if(captureMetadataRaw){
+        try{captureMetadata=JSON.parse(captureMetadataRaw);}
+        catch{throw new Error("Invalid capture metadata.");}
+      }
       const result=await findingService(env).upload({
         surveyId:String(form.get("surveyId")??""),
         findingId:String(form.get("findingId")??""),
         role:String(form.get("role")??""),
         file,
         width:Number(form.get("width"))||null,
-        height:Number(form.get("height"))||null
+        height:Number(form.get("height"))||null,
+        captureMetadata
       });
       return json({ok:true,result},201);
     } catch(error) {
