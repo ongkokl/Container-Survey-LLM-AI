@@ -171,13 +171,16 @@ export class CedexRepository {
     return null;
   }
 
-  async saveDamagePrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;}){
+  async saveDamagePrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"SUGGESTED"|"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
     const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
+    const predictionStatus=input.status??"SUGGESTED";
     await this.db.batch([
       this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
-        .bind(runId,input.surveyId,input.findingId,"DAMAGE_CLASSIFICATION",JSON.stringify({model:input.modelName}),JSON.stringify(input.response),now,now),
-      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'DAMAGE',?,?, 'SUGGESTED',?)")
-        .bind(predictionId,runId,input.selectedCode,input.confidence,now)
+        .bind(runId,input.surveyId,input.findingId,"DAMAGE_CLASSIFICATION",JSON.stringify({model:input.modelName,...input.requestContext}),JSON.stringify(input.response),now,now),
+      this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'DAMAGE',?,?,?,?)")
+        .bind(predictionId,runId,input.selectedCode,input.confidence,predictionStatus,now),
+      this.db.prepare("UPDATE findings SET status=?,updated_at=? WHERE id=?")
+        .bind(predictionStatus==="SUGGESTED"?"AI_SUGGESTED":"REVIEW_REQUIRED",now,input.findingId)
     ]);
     for(let i=0;i<input.candidates.length;i++){
       const x=input.candidates[i];

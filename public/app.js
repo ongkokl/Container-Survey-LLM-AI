@@ -690,18 +690,59 @@ confirmComponentBtn.addEventListener("click",async()=>{
 });
 
 
+function renderDamageResult(result){
+  const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result.analysisStatus);
+  damageAiCode=result.selectedCode??null;
+  damageSuggestion.textContent=failed
+    ? result.reason
+    : result.selectedCode
+      ? result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":"")
+      : "No reliable damage selected · surveyor review required";
+  damageCandidates.textContent=result.candidates?.length
+    ? "Candidates: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"%":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
+    : failed ? "No completed AI damage suggestion is available." : result.reason || "Select the damage manually from the verified list below.";
+
+  damageSelect.innerHTML="";
+  const placeholder=document.createElement("option");
+  placeholder.value="";placeholder.textContent="Select a damage code…";
+  damageSelect.appendChild(placeholder);
+  for(const x of (result.allowedDamages??[])){
+    const o=document.createElement("option");
+    o.value=x.damage_code;o.textContent=x.damage_code+" — "+x.damage_name;
+    damageSelect.appendChild(o);
+  }
+  damageSelect.value=result.selectedCode??"";
+  damageSelect.disabled=false;
+  damageDecision.hidden=damageSelect.options.length<=1;
+  damageDecisionMessage.textContent="";
+  confirmDamageBtn.disabled=!damageSelect.value;
+  confirmDamageBtn.textContent=damageAiCode&&damageSelect.value===damageAiCode
+    ?"Accept "+damageAiCode
+    :damageAiCode?"Confirm correction":"Confirm damage";
+}
+
 analyseDamageBtn.addEventListener("click",async()=>{
-  if(!currentFinding)return;setBusy(analyseDamageBtn,true,"Analysing damage…","Analyse IICL damage");
-  damageReview.hidden=false;damageSuggestion.textContent="Checking visible damage against valid IICL codes for the confirmed component…";damageCandidates.textContent="";
+  if(!currentFinding)return;
+  setBusy(analyseDamageBtn,true,"Analysing damage…","Analyse IICL damage");
+  damageReview.hidden=false;
+  damageDecision.hidden=true;
+  damageSelect.disabled=true;
+  confirmDamageBtn.disabled=true;
+  damageAiCode=null;
+  damageSuggestion.textContent="Checking visible damage against valid IICL codes for the confirmed component…";
+  damageCandidates.textContent="";
   try{
     const result=await apiJson("/api/cedex/damage-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
-    damageSuggestion.textContent=result.selectedCode?result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":""):"No reliable damage selected · surveyor review required";
-    damageCandidates.textContent=result.candidates?.length?"Candidates: "+result.candidates.map(x=>x.code+" "+Math.round((x.confidence??0)*100)+"%").join(" · "):"No valid damage candidates returned.";
-    damageAiCode=result.selectedCode??null;damageSelect.innerHTML="";
-    for(const x of result.allowedDamages??[]){const o=document.createElement("option");o.value=x.damage_code;o.textContent=x.damage_code+" — "+x.damage_name;if(x.damage_code===result.selectedCode)o.selected=true;damageSelect.appendChild(o);}
-    damageDecision.hidden=!result.selectedCode;damageDecisionMessage.textContent="";confirmDamageBtn.textContent="Accept "+(result.selectedCode??"damage");
-  }catch(e){damageSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse damage.";}
-  finally{setBusy(analyseDamageBtn,false,"Analysing damage…","Analyse IICL damage");}
+    renderDamageResult(result);
+  }catch(e){
+    if(["CEDEX_DAMAGE_INCOMPLETE","CEDEX_DAMAGE_INVALID_RESPONSE"].includes(e?.code)&&e.result){
+      renderDamageResult(e.result);
+    }else{
+      damageSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse damage.";
+    }
+  }finally{
+    setBusy(analyseDamageBtn,false,"Analysing damage…","Analyse IICL damage");
+  }
 });
 damageSelect.addEventListener("change",()=>{confirmDamageBtn.textContent=damageSelect.value===damageAiCode?"Accept "+damageAiCode:"Confirm correction";});
 confirmDamageBtn.addEventListener("click",async()=>{

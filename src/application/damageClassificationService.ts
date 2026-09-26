@@ -1,42 +1,196 @@
 import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 
 const MODEL="@cf/qwen/qwen3.8-27b";
+const MAX_COMPLETION_TOKENS=600;
+const DAMAGE_REVIEW_THRESHOLD=0.8;
 type AiRunner={run(model:string,input:unknown):Promise<unknown>};
 type Bucket={get(key:string):Promise<{arrayBuffer():Promise<ArrayBuffer>}|null>};
+type AnalysisStatus="SUGGESTED"|"ABSTAINED"|"INCOMPLETE"|"INVALID_RESPONSE";
+type Candidate={code:string;confidence:number|null;reason:string};
 
-function dataUri(bytes:ArrayBuffer,type:string){let binary="";const data=new Uint8Array(bytes);for(let i=0;i<data.length;i+=0x8000)binary+=String.fromCharCode(...data.subarray(i,i+0x8000));return `data:${type||"image/jpeg"};base64,${btoa(binary)}`;}
-function parseJson(raw:unknown):Record<string,unknown>{
-  if(!raw||typeof raw!=="object")return {};const o=raw as Record<string,unknown>,choices=Array.isArray(o.choices)?o.choices:[],first=choices[0]&&typeof choices[0]==="object"?choices[0] as Record<string,unknown>:null,message=first?.message&&typeof first.message==="object"?first.message as Record<string,unknown>:null;
-  for(const v of [message?.content,o.response,o.result,o.output_text]){if(typeof v!=="string")continue;const m=v.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"").match(/\{[\s\S]*\}/);if(m)try{return JSON.parse(m[0]);}catch{}}
-  return o;
+function dataUri(bytes:ArrayBuffer,type:string){
+  let binary="";const data=new Uint8Array(bytes);
+  for(let i=0;i<data.length;i+=0x8000)binary+=String.fromCharCode(...data.subarray(i,i+0x8000));
+  return `data:${type||"image/jpeg"};base64,${btoa(binary)}`;
 }
-function confidence(v:unknown){const n=Number(v);return Number.isFinite(n)?Math.max(0,Math.min(1,n>1?n/100:n)):null;}
+function record(value:unknown):Record<string,unknown>|null{
+  return value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;
+}
+function parseJson(raw:unknown):Record<string,unknown>|null{
+  const envelope=record(raw);
+  const first=Array.isArray(envelope?.choices)?record(envelope.choices[0]):null;
+  const message=record(first?.message);
+  const values=first?[message?.content]:[raw,envelope?.response,envelope?.result,envelope?.output_text];
+  for(const value of values){
+    const object=record(value);
+    if(object&&Object.hasOwn(object,"selected_code"))return object;
+    if(typeof value!=="string")continue;
+    const text=value.trim().replace(/^\`\`\`(?:json)?\s*/i,"").replace(/\s*\`\`\`$/,"");
+    try{
+      const parsed=record(JSON.parse(text));
+      if(parsed)return parsed;
+    }catch{}
+  }
+  return null;
+}
+function validConfidence(value:unknown):value is number|null{
+  return value===null||(typeof value==="number"&&Number.isFinite(value)&&value>=0&&value<=1);
+}
+function confidence(value:number|null):number|null{
+  return value===null?null:value;
+}
 
 export class DamageClassificationService{
   constructor(private readonly repo:CedexRepository,private readonly bucket:Bucket,private readonly ai:AiRunner){}
+
   async analyse(findingId:string){
-    const context=await this.repo.findingContext(findingId);if(!context)throw new Error("Finding not found.");
+    const context=await this.repo.findingContext(findingId);
+    if(!context)throw new Error("Finding not found.");
+
     const allowed=await this.repo.damageCodesForFinding(findingId);
-    const roi=await this.repo.surveyorDamageBox(findingId);
     if(!allowed.damages.length)throw new Error("No verified IICL damage rules are loaded for the confirmed component.");
-    const photo=await this.repo.findingPhoto(findingId,"DAMAGE_CLOSEUP");if(!photo)throw new Error("Damage close-up photo is required.");
-    const object=await this.bucket.get(photo.r2_key);if(!object)throw new Error("Damage close-up photo is unavailable.");
-    const image=dataUri(await object.arrayBuffer(),photo.content_type),allowedText=allowed.damages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
-    const prompt=`You are assisting a shipping-container surveyor using the IICL ECS coding system.
-Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.\n${roi?`The surveyor marked the intended damage region using normalized image coordinates: x=${roi.x.toFixed(3)}, y=${roi.y.toFixed(3)}, width=${roi.width.toFixed(3)}, height=${roi.height.toFixed(3)}. Treat that marked region as the PRIMARY target. Ignore unrelated stains, dirt, marks, corrosion, or defects outside that region. The coordinates are metadata only; no artificial box is drawn into the image.`:"No surveyor damage region is available; classify cautiously."}
-Classify ONLY the visible physical damage to the confirmed component. Choose ONLY from the allowed damage codes below. Never invent a code.
-If the image is insufficient or the damage cannot be distinguished, return selected_code null and needs_review true.
+
+    const photo=await this.repo.findingPhoto(findingId,"DAMAGE_CLOSEUP");
+    if(!photo)throw new Error("Damage close-up photo is required.");
+
+    const object=await this.bucket.get(photo.r2_key);
+    if(!object)throw new Error("Damage close-up photo is unavailable.");
+
+    const roi=await this.repo.surveyorDamageBox(findingId,photo.id);
+    const image=dataUri(await object.arrayBuffer(),photo.content_type);
+    const allowedCodes=[...new Set(allowed.damages.map(x=>x.damage_code))];
+    const allowedSet=new Set(allowedCodes);
+    const allowedText=allowed.damages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
+
+    const prompt=`You are assisting a shipping-container surveyor using the verified IICL damage-code list supplied by the application.
+Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.
+${roi?`The surveyor marked the intended damage region on the close-up image using normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Treat this region as the PRIMARY target. The coordinates are metadata only; no artificial box is drawn on the pixels.`:"No surveyor damage region is available; classify cautiously."}
+
+Classify ONLY the visible physical damage affecting the confirmed component. Choose ONLY from the allowed codes below. Never invent a code.
+Use the physical morphology in the marked region. Do not classify unrelated dirt, stains, corrosion, marks or defects outside the marked region.
+Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
 Allowed damage codes for ${allowed.componentCode}:
 ${allowedText}
-Return JSON only:
-{"selected_code":"XX","confidence":0.0,"needs_review":true,"candidates":[{"code":"XX","confidence":0.0}]}
-If uncertain, selected_code must be null. Do not include explanations or reasons. Do not explain your reasoning outside the JSON. Return at most 2 candidates, all from the allowed list.`;
-    const raw=await this.ai.run(MODEL,{messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:image}}]}],max_completion_tokens:400,reasoning_effort:"low",temperature:0,response_format:{type:"json_schema",json_schema:{type:"object",properties:{selected_code:{type:["string","null"]},confidence:{type:["number","null"]},needs_review:{type:"boolean"},candidates:{type:"array",maxItems:2,items:{type:"object",properties:{code:{type:"string"},confidence:{type:["number","null"]}},required:["code","confidence"],additionalProperties:false}}},required:["selected_code","confidence","needs_review","candidates"],additionalProperties:false}}});
-    const parsed=parseJson(raw),allowedSet=new Set(allowed.damages.map(x=>x.damage_code)),selected=typeof parsed.selected_code==="string"&&allowedSet.has(parsed.selected_code.toUpperCase())?parsed.selected_code.toUpperCase():null;
-    const candidates=(Array.isArray(parsed.candidates)?parsed.candidates:[]).map((v:any)=>({code:String(v?.code??"").toUpperCase(),confidence:confidence(v?.confidence),reason:""})).filter(x=>allowedSet.has(x.code)).slice(0,2);
-    if(selected&&!candidates.some(x=>x.code===selected))candidates.unshift({code:selected,confidence:confidence(parsed.confidence),reason:""});
-    const result={componentCode:allowed.componentCode,roiUsed:Boolean(roi),selectedCode:selected,confidence:confidence(parsed.confidence),needsReview:Boolean(parsed.needs_review)||!selected,reason:"",candidates:candidates.slice(0,2),allowedDamages:allowed.damages,model:MODEL};
-    await this.repo.saveDamagePrediction({findingId,surveyId:context.survey_id,modelName:MODEL,selectedCode:selected,confidence:result.confidence,candidates:result.candidates,response:{roi,modelResponse:raw}});
+
+Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (one short visual sentence), and candidates (at most 3 objects with code, confidence and reason). Do not explain your reasoning outside the JSON.`;
+
+    const raw=await this.ai.run(MODEL,{
+      messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:image}}]}],
+      max_completion_tokens:MAX_COMPLETION_TOKENS,
+      reasoning_effort:"low",
+      temperature:0,
+      response_format:{
+        type:"json_schema",
+        json_schema:{
+          name:"damage_classification",
+          strict:true,
+          schema:{
+            type:"object",
+            properties:{
+              selected_code:{type:["string","null"],enum:[...allowedCodes,null]},
+              confidence:{type:["number","null"],minimum:0,maximum:1},
+              needs_review:{type:"boolean"},
+              reason:{type:"string"},
+              candidates:{
+                type:"array",maxItems:3,
+                items:{
+                  type:"object",
+                  properties:{
+                    code:{type:"string",enum:allowedCodes},
+                    confidence:{type:["number","null"],minimum:0,maximum:1},
+                    reason:{type:"string"}
+                  },
+                  required:["code","confidence","reason"],
+                  additionalProperties:false
+                }
+              }
+            },
+            required:["selected_code","confidence","needs_review","reason","candidates"],
+            additionalProperties:false
+          }
+        }
+      }
+    });
+
+    const envelope=record(raw);
+    const choice=Array.isArray(envelope?.choices)?record(envelope.choices[0]):null;
+    const finishReason=typeof choice?.finish_reason==="string"?choice.finish_reason:null;
+    const parsed=parseJson(raw);
+
+    let analysisStatus:AnalysisStatus="INVALID_RESPONSE";
+    let selectedCode:string|null=null;
+    let selectedConfidence:number|null=null;
+    let needsReview=true;
+    let reason="AI returned an unreadable damage answer. Retry analysis or select the damage manually.";
+    let candidates:Candidate[]=[];
+
+    if(finishReason==="length"){
+      analysisStatus="INCOMPLETE";
+      reason="AI response incomplete. Retry analysis or select the damage manually.";
+    }else if((!finishReason||finishReason==="stop")&&!record(choice?.message)?.refusal&&parsed&&
+      (parsed.selected_code===null||typeof parsed.selected_code==="string")&&
+      validConfidence(parsed.confidence)&&typeof parsed.needs_review==="boolean"&&
+      typeof parsed.reason==="string"&&Array.isArray(parsed.candidates)&&parsed.candidates.length<=3&&
+      parsed.candidates.every(value=>{
+        const candidate=record(value);
+        return candidate&&typeof candidate.code==="string"&&validConfidence(candidate.confidence)&&typeof candidate.reason==="string";
+      })){
+      const code=typeof parsed.selected_code==="string"?parsed.selected_code.trim().toUpperCase():null;
+      if(code===null||allowedSet.has(code)){
+        selectedCode=code;
+        selectedConfidence=confidence(parsed.confidence);
+        needsReview=
+          parsed.needs_review||
+          !code||
+          selectedConfidence===null||
+          selectedConfidence<DAMAGE_REVIEW_THRESHOLD;
+        analysisStatus=code?"SUGGESTED":"ABSTAINED";
+        reason=parsed.reason.trim()||(code?"Surveyor confirmation required.":"AI could not distinguish the visible damage type reliably.");
+        for(const value of parsed.candidates){
+          const candidate=value as {code:string;confidence:number|null;reason:string};
+          const candidateCode=candidate.code.trim().toUpperCase();
+          if(allowedSet.has(candidateCode)&&!candidates.some(x=>x.code===candidateCode)){
+            candidates.push({code:candidateCode,confidence:confidence(candidate.confidence),reason:candidate.reason.trim()});
+          }
+        }
+        if(code&&!candidates.some(x=>x.code===code))candidates.unshift({code,confidence:selectedConfidence,reason});
+        candidates=candidates.slice(0,3);
+      }
+    }
+
+    const result={
+      componentCode:allowed.componentCode,
+      analysisStatus,
+      roiUsed:Boolean(roi),
+      selectedCode,
+      confidence:selectedConfidence,
+      needsReview,
+      reason,
+      candidates,
+      allowedDamages:allowed.damages,
+      model:MODEL
+    };
+
+    await this.repo.saveDamagePrediction({
+      findingId,
+      surveyId:context.survey_id,
+      modelName:MODEL,
+      selectedCode,
+      confidence:selectedConfidence,
+      candidates,
+      response:raw,
+      status:analysisStatus==="INCOMPLETE"||analysisStatus==="INVALID_RESPONSE"?"FAILED":needsReview?"REVIEW_REQUIRED":"SUGGESTED",
+      requestContext:{
+        photoId:photo.id,
+        roi,
+        damageReviewThreshold:DAMAGE_REVIEW_THRESHOLD,
+        max_completion_tokens:MAX_COMPLETION_TOKENS,
+        reasoning_effort:"low",
+        analysisStatus,
+        finishReason
+      }
+    });
+
     return result;
   }
 }
