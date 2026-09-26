@@ -1,7 +1,7 @@
 import { CedexRepository, DamageVisualRule } from "../infrastructure/d1/cedexRepository";
 
 const MODEL="@cf/qwen/qwen3.8-27b";
-const MAX_COMPLETION_TOKENS=600;
+const MAX_COMPLETION_TOKENS=1200;
 const DAMAGE_REVIEW_THRESHOLD=0.8;
 type AiRunner={run(model:string,input:unknown):Promise<unknown>};
 type Bucket={get(key:string):Promise<{arrayBuffer():Promise<ArrayBuffer>}|null>};
@@ -44,15 +44,15 @@ function formatDamageVisualGuidance(rules:DamageVisualRule[]){
     return "No additional D1 damage visual guidance is loaded. Use only the verified allowed-code names and visible evidence.";
   }
   const lines=rules.map(rule=>{
-    const parts=[`- ${rule.damage_code}: ${rule.visual_definition}`];
-    if(rule.positive_cues)parts.push(`Positive cues: ${rule.positive_cues}`);
-    if(rule.negative_cues)parts.push(`Do not use when: ${rule.negative_cues}`);
-    if(rule.confusable_with)parts.push(`Common alternatives: ${rule.confusable_with}`);
-    parts.push(`Evidence requirement: ${rule.evidence_requirement}`);
-    if(rule.force_review===1)parts.push("If selected, surveyor review is mandatory.");
-    return parts.join(" ");
+    const parts=[`${rule.damage_code}: ${rule.visual_definition}`];
+    if(rule.positive_cues)parts.push(`Cues=${rule.positive_cues}`);
+    if(rule.negative_cues)parts.push(`Avoid=${rule.negative_cues}`);
+    if(rule.confusable_with)parts.push(`Vs=${rule.confusable_with}`);
+    parts.push(`Evidence=${rule.evidence_requirement}`);
+    if(rule.force_review===1)parts.push("Review=required");
+    return parts.join(" | ");
   });
-  return `D1 damage visual knowledge (operational QA guidance; the allowed code master remains authoritative):\n${lines.join("\n")}`;
+  return `Damage visual QA rules:\n${lines.join("\n")}`;
 }
 
 function selectedDamageRule(rules:DamageVisualRule[],code:string|null){
@@ -102,7 +102,7 @@ ${visualGuidance}
 Allowed damage codes for ${allowed.componentCode}:
 ${allowedText}
 
-Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (one short visual sentence), and candidates (at most 3 objects with code, confidence and reason). Do not explain your reasoning outside the JSON.`;
+Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (maximum 20 words), and candidates (at most 3 objects with code, confidence and a maximum 15-word reason). Keep the answer concise. Do not explain your reasoning outside the JSON.`;
 
     const raw=await this.ai.run(MODEL,{
       messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:image}}]}],
@@ -205,7 +205,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       damageVisualKnowledgeUsed:visualRules.length>0,
       damageVisualRuleCount:visualRules.length,
       evidenceRequirement:selectedRule?.evidence_requirement??null,
-      evidenceReviewRequired:selectedRule?.force_review===1
+      evidenceReviewRequired:selectedRule?.force_review===1,
+      finishReason,
+      completionTokenLimit:MAX_COMPLETION_TOKENS
     };
 
     await this.repo.saveDamagePrediction({
