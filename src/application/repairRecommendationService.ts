@@ -44,7 +44,7 @@ export class RepairRecommendationService{
     if(!context)throw new Error("Finding not found.");
 
     const allowed=await this.repo.repairCodesForFinding(findingId);
-    if(!allowed.repairs.length)throw new Error("No verified repair methods are loaded for the confirmed component.");
+    if(!allowed.repairs.length)throw new Error(`No verified GP.xlsx repair methods are loaded for ${allowed.equipment} ${allowed.componentCode} + ${allowed.damageCode}.`);
 
     const photo=await this.repo.findingPhoto(findingId,"DAMAGE_CLOSEUP");
     if(!photo)throw new Error("Damage close-up photo is required.");
@@ -167,6 +167,8 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       reason,
       candidates,
       allowedRepairs:allowed.repairs,
+      allowedRepairCount:allowed.repairs.length,
+      repairRuleSource:allowed.repairs.every(x=>x.standard_version==="GP.xlsx")?"GP.xlsx":"MIXED",
       model:MODEL,
       finishReason,
       completionTokenLimit:MAX_COMPLETION_TOKENS
