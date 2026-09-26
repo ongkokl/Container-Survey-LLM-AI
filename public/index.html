@@ -190,6 +190,19 @@
         </div>
       </div>
       <button id="analyseDamageBtn" class="secondary" type="button" hidden>Analyse IICL damage</button>
+      <div id="repairReview" class="info" hidden>
+        <strong>AI repair recommendation</strong>
+        <span class="message">Advisory only · surveyor confirmation required</span>
+        <span id="repairSuggestion"></span>
+        <span id="repairCandidates"></span>
+        <div id="repairDecision" hidden>
+          <label for="repairSelect">Surveyor repair method</label>
+          <select id="repairSelect"></select>
+          <button id="confirmRepairBtn" class="primary" type="button">Confirm repair method</button>
+          <span id="repairDecisionMessage" class="message" aria-live="polite"></span>
+        </div>
+      </div>
+      <button id="analyseRepairBtn" class="secondary" type="button" hidden>Analyse repair method</button>
     </section>
   </main>
 
