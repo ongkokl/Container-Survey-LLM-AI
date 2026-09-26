@@ -443,6 +443,8 @@ const closeupCanvas=document.querySelector("#closeupCanvas");
 const boxHelp=document.querySelector("#boxHelp");
 const saveFindingBtn=document.querySelector("#saveFindingBtn");
 const findingMessage=document.querySelector("#findingMessage");
+const geometryReference=document.querySelector("#geometryReference");
+const geometryReferenceText=document.querySelector("#geometryReferenceText");
 const analyseComponentBtn=document.querySelector("#analyseComponentBtn");
 const cedexReview=document.querySelector("#cedexReview");
 const cedexSuggestion=document.querySelector("#cedexSuggestion");
@@ -474,7 +476,16 @@ createFindingBtn.addEventListener("click",async()=>{
     currentFinding=await apiJson("/api/findings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({surveyId:currentSurveyId,containerFace:findingFace.value})});
     findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
     findingCapture.hidden=false; createFindingBtn.hidden=true; findingFace.disabled=true;
-    findingMessage.textContent="Finding created. Capture the overview photo.";
+    findingMessage.textContent="Finding created. Capture the overview / measurement photo.";
+    geometryReference.hidden=true;
+    geometryReferenceText.textContent="";
+    try{
+      const geometry=await apiJson("/api/findings/geometry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
+      if(geometry?.lengthMm&&geometry?.heightMm){
+        geometryReferenceText.textContent=geometry.isoCode+" · "+geometry.equipmentType+" · "+geometry.lengthMm+" × "+geometry.heightMm+" mm external reference";
+        geometryReference.hidden=false;
+      }
+    }catch{}
     repairReview.hidden=true;analyseRepairBtn.hidden=true;repairAiCode=null;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
   finally{setBusy(createFindingBtn,false,"Creating…","Create finding");}
@@ -491,6 +502,9 @@ function selectOverviewPhoto(file,source){
   const requestId=++overviewAiRequest;
   if(!overviewFile)return;
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
+  findingMessage.textContent=source==="gallery"
+    ?"Overview loaded from Gallery. Verify that rails/structural references are visible before using it for measurement."
+    :"Overview captured. Verify damage is centred and known container geometry is visible.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
     try{
@@ -559,6 +573,9 @@ function selectCloseupPhoto(file,source){
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
+  findingMessage.textContent=source==="gallery"
+    ?"Close-up loaded from Gallery. It can support classification; measurement will rely on overview geometry."
+    :"Close-up captured. Keep the complete damage and surrounding component detail visible.";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
     boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
     try{
