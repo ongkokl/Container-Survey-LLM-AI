@@ -139,7 +139,10 @@ async function apiJson(url, options) {
   }
 
   if (!response.ok || !payload.ok) {
-    throw new Error(payload.message || "Request failed.");
+    const error = new Error(payload.message || "Request failed.");
+    error.code = payload.error;
+    error.result = payload.result;
+    throw error;
   }
 
   return payload.result;
@@ -614,37 +617,60 @@ saveFindingBtn.addEventListener("click",async()=>{
 });
 
 
+function componentConfidence(value){
+  return typeof value==="number" && Number.isFinite(value) ? " · "+Math.round(value*100)+"% confidence" : "";
+}
+
+function renderComponentResult(result){
+  componentAiCode=result.selectedCode??null;
+  const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result.analysisStatus);
+  cedexSuggestion.textContent=failed
+    ? result.reason
+    : result.selectedCode
+      ? result.selectedCode+componentConfidence(result.confidence)+(result.needsReview?" · review required":"")
+      : "No reliable component selected · select manually or retry";
+  cedexCandidates.textContent=result.candidates?.length
+    ? "Candidates: "+result.candidates.map(x=>x.code+componentConfidence(x.confidence)).join(" · ")
+    : failed ? "No completed AI suggestion is available." : result.reason || "Select the component from the verified list below.";
+  componentDecisionMessage.textContent="";
+  componentSelect.innerHTML="";
+  const placeholder=document.createElement("option");
+  placeholder.value="";placeholder.textContent="Select a component…";
+  componentSelect.appendChild(placeholder);
+  for(const candidate of (result.allowedComponents??[])){
+    const code=candidate.component_code;
+    if(!code)continue;
+    const option=document.createElement("option");option.value=code;option.textContent=code+" — "+(candidate.component_name??code);
+    componentSelect.appendChild(option);
+  }
+  componentSelect.value=result.selectedCode??"";
+  componentSelect.disabled=false;
+  componentDecision.hidden=componentSelect.options.length<=1;
+  confirmComponentBtn.disabled=!componentSelect.value;
+  confirmComponentBtn.textContent=componentAiCode?"Accept "+componentAiCode:"Confirm component";
+}
+
 analyseComponentBtn.addEventListener("click",async()=>{
   if(!currentFinding)return;
   setBusy(analyseComponentBtn,true,"Analysing component…","Analyse CEDEX component");
-  cedexReview.hidden=false;cedexSuggestion.textContent="Checking the close-up against the verified GP/RF component master…";cedexCandidates.textContent="";
+  componentDecision.hidden=true;componentSelect.disabled=true;confirmComponentBtn.disabled=true;componentAiCode=null;
+  cedexReview.hidden=false;cedexSuggestion.textContent="Checking the marked region against the verified GP/RF component master…";cedexCandidates.textContent="";
   try{
     const result=await apiJson("/api/cedex/component-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
-    cedexSuggestion.textContent=result.selectedCode
-      ? result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":"")
-      : "No reliable component selected · surveyor review required";
-    cedexCandidates.textContent=result.candidates?.length
-      ? "Candidates: "+result.candidates.map(x=>x.code+" "+Math.round((x.confidence??0)*100)+"%").join(" · ")
-      : "No valid CEDEX candidates returned.";
-    componentAiCode=result.selectedCode??null;
-    componentDecision.hidden=!result.selectedCode;
-    componentDecisionMessage.textContent="";
-    componentSelect.innerHTML="";
-    for(const candidate of (result.allowedComponents??result.candidates??[])){
-      const code=candidate.component_code??candidate.code,name=candidate.component_name??code;
-      if(!code)continue;
-      const option=document.createElement("option");option.value=code;option.textContent=code+" — "+name;
-      if(code===result.selectedCode)option.selected=true;componentSelect.appendChild(option);
-    }
-    confirmComponentBtn.textContent="Accept "+(result.selectedCode??"component");
+    renderComponentResult(result);
   }catch(e){
-    cedexSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse CEDEX component.";
+    if(["CEDEX_COMPONENT_INCOMPLETE","CEDEX_COMPONENT_INVALID_RESPONSE"].includes(e?.code) && e.result){
+      renderComponentResult(e.result);
+    }else{
+      cedexSuggestion.textContent=e instanceof Error?e.message:"Unable to analyse CEDEX component.";
+    }
   }finally{setBusy(analyseComponentBtn,false,"Analysing component…","Analyse CEDEX component");}
 });
 
-
 componentSelect.addEventListener("change",()=>{
-  confirmComponentBtn.textContent=componentSelect.value===componentAiCode?"Accept "+componentAiCode:"Confirm correction";
+  confirmComponentBtn.disabled=!componentSelect.value;
+  confirmComponentBtn.textContent=componentAiCode && componentSelect.value===componentAiCode
+    ? "Accept "+componentAiCode : componentAiCode ? "Confirm correction" : "Confirm component";
 });
 confirmComponentBtn.addEventListener("click",async()=>{
   if(!currentFinding||!componentSelect.value)return;
@@ -653,8 +679,9 @@ confirmComponentBtn.addEventListener("click",async()=>{
     const result=await apiJson("/api/cedex/component-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:componentSelect.value})});
     componentDecisionMessage.textContent=result.decision==="APPROVED"
       ?"Component accepted: "+result.finalCode
-      :"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
+      :result.aiCode?"AI corrected from "+result.aiCode+" to "+result.finalCode:"Component selected manually: "+result.finalCode;
     componentSelect.disabled=true;confirmComponentBtn.disabled=true;confirmComponentBtn.textContent="Component confirmed ✓";
+    analyseComponentBtn.disabled=true;
     analyseDamageBtn.hidden=false;
   }catch(e){
     componentDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save component decision.";
