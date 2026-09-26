@@ -152,15 +152,21 @@
       <button id="createFindingBtn" class="primary" type="button">Create finding</button>
       <div id="findingCapture" hidden>
         <p class="findingLabel" id="findingLabel"></p>
-        <label class="camera compact" for="overviewPhoto"><span class="cameraIcon">▣</span><strong>Take overview photo</strong><span>Show enough of the container face to establish location.</span></label>
+        <div id="geometryReference" class="info" hidden>
+          <strong>Known-geometry measurement POC</strong>
+          <span id="geometryReferenceText" class="message"></span>
+          <span class="message">Overview = scale/perspective reference. Dent depth remains manual.</span>
+        </div>
+        <label class="camera compact" for="overviewPhoto"><span class="cameraIcon">▣</span><strong>Take overview / measurement photo</strong><span>Use 1× main camera. Face the container squarely, keep the damage near centre, and include top/bottom rails plus structural references.</span></label>
         <input id="overviewPhoto" type="file" accept="image/*" capture="environment" hidden>
-        <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose overview from Gallery</strong><span>Use an existing overview photo from this phone.</span></label>
+        <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose overview from Gallery</strong><span>Allowed for testing; measurement quality depends on visible geometry and perspective.</span></label>
         <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
-        <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview photo"><canvas id="overviewCanvas"></canvas></div>
+        <p class="message"><strong>Measurement photo:</strong> no digital zoom · avoid strong angle/glare · keep full damage visible · include known container geometry.</p>
+        <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview measurement photo"><canvas id="overviewCanvas"></canvas></div>
         <p id="tapHelp" class="message" hidden>AI will propose a damage position. Tap anywhere to correct it.</p>
-        <label class="camera compact" for="closeupPhoto"><span class="cameraIcon">▣</span><strong>Take close-up photo</strong><span>Keep the damaged component clear and in focus.</span></label>
+        <label class="camera compact" for="closeupPhoto"><span class="cameraIcon">▣</span><strong>Take damage close-up</strong><span>Fill more of the frame with the damage, keep it sharp, and retain enough surrounding component detail for YOLO segmentation/classification.</span></label>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
-        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose close-up from Gallery</strong><span>Use an existing close-up photo from this phone.</span></label>
+        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose close-up from Gallery</strong><span>Suitable for classification; absolute size will come from the overview geometry when registration is available.</span></label>
         <input id="closeupGalleryPhoto" type="file" accept="image/*" hidden>
         <div id="closeupStage" class="annotationStage" hidden><img id="closeupPreview" alt="Close-up photo"><canvas id="closeupCanvas"></canvas></div>
         <p id="boxHelp" class="message" hidden>AI will propose a damage box. Drag to redraw it if needed.</p>
