@@ -34,18 +34,19 @@ export class FindingCaptureService {
     if(!TYPES.has(contentType)) throw new Error("Unsupported image type.");
     if(!(await this.repo.belongsToSurvey(input.findingId,input.surveyId))) throw new Error("Finding does not belong to this survey.");
 
-    const photoId=crypto.randomUUID(), bytes=await input.file.arrayBuffer();
-    const stored=await this.photos.saveFindingPhoto({
-      surveyId:input.surveyId,findingId:input.findingId,photoId,
-      role:input.role as "FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP",
-      bytes,contentType
-    });
     const captureSource=input.captureSource?.trim().toUpperCase()||null;
     const measurementRole=input.measurementRole?.trim().toUpperCase()||null;
     if(captureSource&&!["CAMERA","GALLERY"].includes(captureSource)) throw new Error("Invalid capture source.");
     if(measurementRole&&!["REFERENCE_GEOMETRY","DETAIL_SEGMENTATION"].includes(measurementRole)) throw new Error("Invalid measurement role.");
     if(input.role==="FACE_OVERVIEW"&&measurementRole&&measurementRole!=="REFERENCE_GEOMETRY") throw new Error("Overview photo must use reference geometry role.");
     if(input.role==="DAMAGE_CLOSEUP"&&measurementRole&&measurementRole!=="DETAIL_SEGMENTATION") throw new Error("Damage close-up must use detail segmentation role.");
+
+    const photoId=crypto.randomUUID(), bytes=await input.file.arrayBuffer();
+    const stored=await this.photos.saveFindingPhoto({
+      surveyId:input.surveyId,findingId:input.findingId,photoId,
+      role:input.role as "FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP",
+      bytes,contentType
+    });
 
     await this.repo.addPhoto({
       photoId,
@@ -55,7 +56,7 @@ export class FindingCaptureService {
       captureSource:captureSource as "CAMERA"|"GALLERY"|null,
       measurementRole:measurementRole as "REFERENCE_GEOMETRY"|"DETAIL_SEGMENTATION"|null
     });
-    return {photoId,r2Key:stored.key,role:input.role};
+    return {photoId,r2Key:stored.key,role:input.role,captureSource,measurementRole};
   }
 
   async annotate(input:{photoId:string;annotationType:string;geometryType:string;geometry:unknown;createdBy?:"AI"|"SURVEYOR";}){
