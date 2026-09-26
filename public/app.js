@@ -435,6 +435,9 @@ const overviewStage=document.querySelector("#overviewStage");
 const overviewPreview=document.querySelector("#overviewPreview");
 const overviewCanvas=document.querySelector("#overviewCanvas");
 const tapHelp=document.querySelector("#tapHelp");
+const measurementGeometry=document.querySelector("#measurementGeometry");
+const measurementGeometryProfile=document.querySelector("#measurementGeometryProfile");
+const measurementGeometryFace=document.querySelector("#measurementGeometryFace");
 const closeupPhoto=document.querySelector("#closeupPhoto");
 const closeupGalleryPhoto=document.querySelector("#closeupGalleryPhoto");
 const closeupStage=document.querySelector("#closeupStage");
@@ -452,12 +455,13 @@ const componentSelect=document.querySelector("#componentSelect");
 const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
 const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
 const analyseDamageBtn=document.querySelector("#analyseDamageBtn"),damageReview=document.querySelector("#damageReview"),damageSuggestion=document.querySelector("#damageSuggestion"),damageCandidates=document.querySelector("#damageCandidates"),damageDecision=document.querySelector("#damageDecision"),damageSelect=document.querySelector("#damageSelect"),confirmDamageBtn=document.querySelector("#confirmDamageBtn"),damageDecisionMessage=document.querySelector("#damageDecisionMessage");
-const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage"),repairLengthCm=document.querySelector("#repairLengthCm"),repairWidthCm=document.querySelector("#repairWidthCm"),repairDepthCm=document.querySelector("#repairDepthCm"),repairCorrugations=document.querySelector("#repairCorrugations"),repairNotes=document.querySelector("#repairNotes");
+const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage"),repairLengthCm=document.querySelector("#repairLengthCm"),repairWidthCm=document.querySelector("#repairWidthCm"),repairDepthCm=document.querySelector("#repairDepthCm"),repairDentDirectionWrap=document.querySelector("#repairDentDirectionWrap"),repairDirection=document.querySelector("#repairDirection"),repairDepthCriterion=document.querySelector("#repairDepthCriterion"),repairCorrugations=document.querySelector("#repairCorrugations"),repairNotes=document.querySelector("#repairNotes");
 let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
+let overviewSource=null,closeupSource=null,currentGeometry=null;
 let aiLocationPoint=null,aiDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 
@@ -474,8 +478,30 @@ createFindingBtn.addEventListener("click",async()=>{
     currentFinding=await apiJson("/api/findings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({surveyId:currentSurveyId,containerFace:findingFace.value})});
     findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
     findingCapture.hidden=false; createFindingBtn.hidden=true; findingFace.disabled=true;
-    findingMessage.textContent="Finding created. Capture the overview photo.";
+    findingMessage.textContent="Finding created. Capture the measurement overview first.";
     repairReview.hidden=true;analyseRepairBtn.hidden=true;repairAiCode=null;
+    currentGeometry=null;
+    measurementGeometry.hidden=true;
+    try{
+      currentGeometry=await apiJson("/api/measurement/geometry?findingId="+encodeURIComponent(currentFinding.id));
+      measurementGeometry.hidden=false;
+      if(currentGeometry.profileAvailable){
+        measurementGeometryProfile.textContent=
+          currentGeometry.isoSizeType+" · "+currentGeometry.equipmentType+
+          " · "+currentGeometry.lengthMm+" × "+currentGeometry.widthMm+" × "+currentGeometry.heightMm+" mm";
+        measurementGeometryFace.textContent=
+          currentGeometry.containerFace+" reference plane: "+
+          currentGeometry.referenceWidthMm+" × "+currentGeometry.referenceHeightMm+" mm"+
+          " · "+currentGeometry.geometryVersion;
+      }else{
+        measurementGeometryProfile.textContent=currentGeometry.isoSizeType+" · no known geometry profile loaded.";
+        measurementGeometryFace.textContent="The finding can still be captured, but automatic size measurement must remain disabled.";
+      }
+    }catch{
+      measurementGeometry.hidden=false;
+      measurementGeometryProfile.textContent="Known geometry profile unavailable.";
+      measurementGeometryFace.textContent="Capture can continue; measurements must remain manual.";
+    }
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
   finally{setBusy(createFindingBtn,false,"Creating…","Create finding");}
 });
@@ -487,12 +513,12 @@ function showImage(file,img,stage,canvas,ready){
 }
 
 function selectOverviewPhoto(file,source){
-  overviewFile=file??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+  overviewFile=file??null;overviewSource=overviewFile?source:null;locationPoint=null;aiLocationPoint=null;overviewEdited=false;
   const requestId=++overviewAiRequest;
   if(!overviewFile)return;
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
-    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
+    tapHelp.hidden=false;tapHelp.textContent="Measurement overview loaded. Checking the visible damage position…";
     try{
       const upload=await compressForOcr(overviewFile),form=new FormData();
       form.append("photo",upload,upload.name||"overview.jpg");form.append("mode","point");
@@ -500,7 +526,7 @@ function selectOverviewPhoto(file,source){
       if(requestId!==overviewAiRequest||overviewEdited)return;
       if(result.found&&result.geometry){
         aiLocationPoint={...result.geometry};locationPoint={...result.geometry};drawTarget(overviewCanvas,locationPoint,true);
-        tapHelp.textContent="AI proposed this position. Tap the photo to correct it if needed.";
+        tapHelp.textContent="AI proposed this position. Confirm the full damage and container references are visible; tap to correct the position.";
       }else{
         tapHelp.textContent="AI could not locate damage confidently. Tap the damaged position.";
       }
@@ -555,12 +581,12 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 
 let dragStart=null;
 function selectCloseupPhoto(file,source){
-  closeupFile=file??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
+  closeupFile=file??null;closeupSource=closeupFile?source:null;damageBox=null;aiDamageBox=null;closeupEdited=false;
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
-    boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
+    boxHelp.hidden=false;boxHelp.textContent="Damage close-up loaded. Checking the detailed damage boundary…";
     try{
       const upload=await compressForOcr(closeupFile),form=new FormData();
       form.append("photo",upload,upload.name||"closeup.jpg");form.append("mode","box");
@@ -568,7 +594,7 @@ function selectCloseupPhoto(file,source){
       if(requestId!==closeupAiRequest||closeupEdited)return;
       if(result.found&&result.geometry){
         aiDamageBox={...result.geometry};damageBox={...result.geometry};drawBox(closeupCanvas,damageBox,true);
-        boxHelp.textContent="AI proposed this damage box. Drag to redraw it if needed.";
+        boxHelp.textContent="AI proposed this damage box. Ensure the entire damaged boundary is inside it; drag to redraw if needed.";
       }else{
         boxHelp.textContent="AI could not locate damage confidently. Drag a box around the damage.";
       }
@@ -596,20 +622,23 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
 
 function updateFindingReady(){saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox);}
 
-async function uploadFindingPhoto(file,role,img){
+async function uploadFindingPhoto(file,role,img,source,measurementRole){
   const upload=await compressForOcr(file),form=new FormData();
   form.append("surveyId",currentSurveyId);form.append("findingId",currentFinding.id);form.append("role",role);
-  form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));form.append("photo",upload,upload.name||"photo.jpg");
+  form.append("width",String(img.naturalWidth));form.append("height",String(img.naturalHeight));
+  form.append("captureSource",(source??"camera").toUpperCase());
+  form.append("measurementRole",measurementRole);
+  form.append("photo",upload,upload.name||"photo.jpg");
   return apiJson("/api/findings/photo",{method:"POST",body:form});
 }
 
 saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
-    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview);
+    const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewSource,"REFERENCE_GEOMETRY");
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
-    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview);
+    const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupSource,"DETAIL_SEGMENTATION");
     if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
     findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
@@ -759,6 +788,39 @@ confirmDamageBtn.addEventListener("click",async()=>{
 });
 
 
+function dentDepthLimitMm(direction){
+  if(!currentGeometry||direction==="UNKNOWN")return null;
+  const face=currentGeometry.containerFace;
+  if(direction==="INWARD"&&["LEFT","RIGHT","FRONT"].includes(face))return 35;
+  if(direction==="OUTWARD"&&["LEFT","RIGHT"].includes(face))return 30;
+  if(direction==="OUTWARD"&&face==="FRONT")return 15;
+  return null;
+}
+
+function updateDentCriterionHint(){
+  if(repairDentDirectionWrap.hidden)return;
+  const direction=repairDirection.value;
+  const limit=dentDepthLimitMm(direction);
+  const depth=repairDepthCm.value===""?null:Number(repairDepthCm.value);
+  if(limit===null){
+    repairDepthCriterion.textContent=direction==="UNKNOWN"
+      ?"Select inward or outward if a dent depth is being assessed."
+      :"No POC IICL panel-depth rule is mapped for this face/direction.";
+    return;
+  }
+  if(depth===null||!Number.isFinite(depth)){
+    repairDepthCriterion.textContent="IICL dimensional reference: "+limit+" mm. Enter the manually measured depth to assess this criterion.";
+    return;
+  }
+  const depthMm=depth*10;
+  repairDepthCriterion.textContent=depthMm<=limit
+    ?"Depth "+depthMm.toFixed(1)+" mm ≤ "+limit+" mm: within this dimensional criterion only; other damage criteria still apply."
+    :"Depth "+depthMm.toFixed(1)+" mm > "+limit+" mm: exceeds this dimensional criterion.";
+}
+
+repairDirection.addEventListener("change",updateDentCriterionHint);
+repairDepthCm.addEventListener("input",updateDentCriterionHint);
+
 function renderRepairResult(result){
   const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result.analysisStatus);
   repairAiCode=result.selectedCode??null;
@@ -789,6 +851,10 @@ function renderRepairResult(result){
   repairLengthCm.value="";
   repairWidthCm.value="";
   repairDepthCm.value="";
+  repairDirection.value="UNKNOWN";
+  repairDentDirectionWrap.hidden=!(result.equipment==="GP"&&result.componentCode==="PAA"&&result.damageCode==="DT");
+  repairDepthCriterion.textContent="";
+  if(!repairDentDirectionWrap.hidden) updateDentCriterionHint();
   repairCorrugations.value="";
   repairNotes.value="";
   repairSelect.disabled=false;
@@ -844,10 +910,19 @@ confirmRepairBtn.addEventListener("click",async()=>{
         damageWidthCm:numberOrNull(repairWidthCm.value),
         damageDepthCm:numberOrNull(repairDepthCm.value),
         corrugationsAffected:repairCorrugations.value===""?null:Number(repairCorrugations.value),
+        deformationDirection:repairDirection.value||"UNKNOWN",
         notes:repairNotes.value.trim()||null
       }
     })});
     repairDecisionMessage.textContent="Repair method confirmed: "+result.finalCode+(result.measurementCaptured?" · measurements saved":"");
+    if(result.iiclDepthAssessment?.applicable){
+      const assessment=result.iiclDepthAssessment;
+      if(assessment.status==="WITHIN_DIMENSIONAL_CRITERION"){
+        repairDepthCriterion.textContent="IICL depth assessment: within this dimensional criterion only. Other inspection criteria still apply.";
+      }else if(assessment.status==="EXCEEDS_DIMENSIONAL_CRITERION"){
+        repairDepthCriterion.textContent="IICL depth assessment: measured deformation exceeds the applicable dimensional criterion.";
+      }
+    }
     repairSelect.disabled=true;
     confirmRepairBtn.disabled=true;
     confirmRepairBtn.textContent="Repair method confirmed ✓";

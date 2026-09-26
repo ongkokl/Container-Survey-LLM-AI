@@ -46,12 +46,27 @@ export class FindingRepository {
     return Boolean(await this.db.prepare("SELECT id FROM findings WHERE id=? AND survey_id=?").bind(findingId,surveyId).first());
   }
 
-  async addPhoto(input:{photoId:string;surveyId:string;findingId:string;role:"FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP";r2Key:string;contentType:string;width?:number|null;height?:number|null;}):Promise<string>{
+  async addPhoto(input:{
+    photoId:string;
+    surveyId:string;
+    findingId:string;
+    role:"FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP";
+    r2Key:string;
+    contentType:string;
+    width?:number|null;
+    height?:number|null;
+    captureSource?:"CAMERA"|"GALLERY"|null;
+    measurementRole?:"REFERENCE_GEOMETRY"|"DETAIL_SEGMENTATION"|null;
+  }):Promise<string>{
     if(!(await this.belongsToSurvey(input.findingId,input.surveyId))) throw new Error("Finding does not belong to this survey.");
     const id=input.photoId,now=new Date().toISOString();
     await this.db.prepare(
-      "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)"
-    ).bind(id,input.surveyId,input.findingId,input.role,input.r2Key,input.width??null,input.height??null,input.contentType,now,now).run();
+      "INSERT INTO survey_photos (id,survey_id,finding_id,photo_role,r2_key,width,height,content_type,capture_source,measurement_role,captured_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+    ).bind(
+      id,input.surveyId,input.findingId,input.role,input.r2Key,
+      input.width??null,input.height??null,input.contentType,
+      input.captureSource??null,input.measurementRole??null,now,now
+    ).run();
     return id;
   }
 
