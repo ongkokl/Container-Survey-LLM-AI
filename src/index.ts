@@ -206,7 +206,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         role:String(form.get("role")??""),
         file,
         width:Number(form.get("width"))||null,
-        height:Number(form.get("height"))||null
+        height:Number(form.get("height"))||null,
+        captureSource:String(form.get("captureSource")??"")||null,
+        measurementIntent:String(form.get("measurementIntent")??"false")==="true"
       });
       return json({ok:true,result},201);
     } catch(error) {
