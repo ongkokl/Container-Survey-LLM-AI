@@ -82,7 +82,8 @@ export class DamageClassificationService{
     const allowedCodes=[...new Set(allowed.damages.map(x=>x.damage_code))];
     const allowedSet=new Set(allowedCodes);
     const allowedText=allowed.damages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
-    const equipment=context.equipment_type==="RF"?"RF":"GP";
+    if(!["GP","RF"].includes(context.equipment_type))throw new Error("Unable to determine GP/RF equipment type.");
+    const equipment=context.equipment_type as "GP"|"RF";
     const visualRules=(await this.repo.damageVisualRules(equipment,allowed.componentCode))
       .filter(rule=>allowedSet.has(rule.damage_code));
     const visualGuidance=formatDamageVisualGuidance(visualRules);
