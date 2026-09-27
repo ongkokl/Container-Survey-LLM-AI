@@ -555,7 +555,7 @@ function fixedCameraMetadata(base,photoType){
     fixedCameraMode:true,
     fixedCameraId:camera?.id??null,
     fixedCameraLabel:camera?.label??null,
-    fixedCameraFace:camera?.face??findingFace.value||null,
+    fixedCameraFace:camera?.face??(findingFace.value||null),
     fixedDoorEndInImage:camera?.doorEnd??null,
     zoomMode:photoType==="closeup"?"OPTICAL":"NONE",
     overviewDamageRoi:photoType==="closeup"?overviewRoi:null
