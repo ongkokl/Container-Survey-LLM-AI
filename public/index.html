@@ -163,7 +163,11 @@
         <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
         <p class="message"><strong>Measurement photo:</strong> no digital zoom · avoid strong angle/glare · keep full damage visible · include known container geometry.</p>
         <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview measurement photo"><canvas id="overviewCanvas"></canvas></div>
-        <p id="tapHelp" class="message" hidden>AI will propose a damage position. Tap anywhere to correct it.</p>
+        <div id="overviewMarkTools" class="markTools" hidden role="group" aria-label="Overview damage marking mode">
+          <button id="markAreaBtn" class="markTool active" type="button" aria-pressed="true">Draw damage area</button>
+          <button id="markPointBtn" class="markTool" type="button" aria-pressed="false">Pinpoint damage</button>
+        </div>
+        <p id="tapHelp" class="message" hidden>AI will propose a damage area. Drag to correct it, or switch to pinpoint for a small local defect.</p>
         <div id="locationReview" class="info locationReview" hidden>
           <strong>CEDEX damage location</strong>
           <span id="locationSuggestion" class="message">Waiting for overview analysis…</span>
