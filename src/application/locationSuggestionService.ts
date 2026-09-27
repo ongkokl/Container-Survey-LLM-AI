@@ -1,10 +1,18 @@
 import {
   suggestCedexLocation,
   suggestCedexLocationFromPoint,
+  suggestCedexLocationOnNormalizedSide,
   type NormalizedBox,
   type NormalizedPoint,
   type SurveyFace
 } from "../domain/container/locationCode";
+import {
+  isValidFaceQuad,
+  mapBoxToFace,
+  mapPointToFace,
+  type DoorEndSide,
+  type FaceQuad
+} from "../domain/container/faceHomography";
 import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 import { MoondreamDamageMarker } from "../infrastructure/ai/moondreamDamageMarker";
 
@@ -215,6 +223,68 @@ export class LocationSuggestionService{
         reviewRequired,
         reason
       }:null
+    };
+  }
+
+  async fromFaceQuad(input:{
+    findingId:string;
+    corners:FaceQuad;
+    doorEnd:DoorEndSide;
+    damagePoint?:NormalizedPoint|null;
+    damageBox?:NormalizedBox|null;
+  }){
+    const context=await this.repo.findingContext(input.findingId);
+    if(!context)throw new Error("Finding not found.");
+    if(context.container_face!=="LEFT"&&context.container_face!=="RIGHT"){
+      throw new Error("Manual four-corner face mapping is currently supported for LEFT/RIGHT side findings.");
+    }
+    if(input.doorEnd!=="LEFT"&&input.doorEnd!=="RIGHT")throw new Error("Select which side of the photo contains the door end.");
+    if(!Array.isArray(input.corners)||input.corners.length!==4||!isValidFaceQuad(input.corners)){
+      throw new Error("Mark the four container-face corners in order: top-left, top-right, bottom-right, bottom-left.");
+    }
+
+    let normalizedDamage:NormalizedBox;
+    let normalizedPoint:NormalizedPoint|null=null;
+    let markType:"BOX"|"POINT";
+    if(input.damageBox){
+      const damage=normalizedBox(input.damageBox);
+      if(!damage)throw new Error("Invalid damage area.");
+      normalizedDamage=mapBoxToFace(damage,input.corners,input.doorEnd);
+      normalizedPoint={
+        x:normalizedDamage.x+normalizedDamage.width/2,
+        y:normalizedDamage.y+normalizedDamage.height/2
+      };
+      markType="BOX";
+    }else if(input.damagePoint){
+      if(![input.damagePoint.x,input.damagePoint.y].every(Number.isFinite)||input.damagePoint.x<0||input.damagePoint.x>1||input.damagePoint.y<0||input.damagePoint.y>1){
+        throw new Error("Invalid damage point.");
+      }
+      normalizedPoint=mapPointToFace(input.damagePoint,input.corners,input.doorEnd);
+      const tiny=1e-6;
+      normalizedDamage={
+        x:Math.max(0,normalizedPoint.x-tiny/2),
+        y:Math.max(0,normalizedPoint.y-tiny/2),
+        width:tiny,
+        height:tiny
+      };
+      markType="POINT";
+    }else{
+      throw new Error("Mark the damage area or damage point first.");
+    }
+
+    const result=suggestCedexLocationOnNormalizedSide({
+      face:context.container_face,
+      lengthFt:Number(context.length_ft)||40,
+      damageBox:normalizedDamage
+    });
+
+    return {
+      ...result,
+      referenceSource:"SURVEYOR_FACE_QUAD",
+      markType,
+      doorEnd:input.doorEnd,
+      normalizedDamageBox:normalizedDamage,
+      normalizedPoint
     };
   }
 
