@@ -224,6 +224,61 @@ export class CedexRepository {
     }
   }
 
+  async fixedCameraCalibration(cameraId:string,lengthFt:number,heightMm:number){
+    try{
+      const row=await this.db.prepare(`
+        SELECT camera_id AS cameraId,
+               container_face AS containerFace,
+               length_ft AS lengthFt,
+               height_mm AS heightMm,
+               door_end_in_image AS doorEndInImage,
+               corners_json AS cornersJson,
+               calibration_version AS calibrationVersion,
+               updated_at AS updatedAt
+        FROM fixed_camera_calibrations
+        WHERE camera_id=? AND length_ft=? AND height_mm=? AND active=1
+        LIMIT 1`
+      ).bind(cameraId,lengthFt,heightMm).first<{
+        cameraId:string;containerFace:string;lengthFt:number;heightMm:number;
+        doorEndInImage:"LEFT"|"RIGHT"|null;cornersJson:string;calibrationVersion:number;updatedAt:string;
+      }>();
+      if(!row)return null;
+      let corners:unknown=null;
+      try{corners=JSON.parse(row.cornersJson);}catch{return null;}
+      return {...row,corners};
+    }catch(error){
+      if(error instanceof Error&&/no such table.*fixed_camera_calibrations/i.test(error.message))return null;
+      throw error;
+    }
+  }
+
+  async upsertFixedCameraCalibration(input:{
+    cameraId:string;
+    containerFace:string;
+    lengthFt:number;
+    heightMm:number;
+    doorEndInImage:"LEFT"|"RIGHT"|null;
+    corners:Array<{x:number;y:number}>;
+  }){
+    const now=new Date().toISOString();
+    await this.db.prepare(`
+      INSERT INTO fixed_camera_calibrations
+        (camera_id,container_face,length_ft,height_mm,door_end_in_image,corners_json,calibration_version,active,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,1,1,?,?)
+      ON CONFLICT(camera_id,length_ft,height_mm) DO UPDATE SET
+        container_face=excluded.container_face,
+        door_end_in_image=excluded.door_end_in_image,
+        corners_json=excluded.corners_json,
+        calibration_version=fixed_camera_calibrations.calibration_version+1,
+        active=1,
+        updated_at=excluded.updated_at`
+    ).bind(
+      input.cameraId,input.containerFace,input.lengthFt,input.heightMm,input.doorEndInImage,
+      JSON.stringify(input.corners),now,now
+    ).run();
+    return this.fixedCameraCalibration(input.cameraId,input.lengthFt,input.heightMm);
+  }
+
   async saveComponentPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"SUGGESTED"|"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
     const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
     await this.db.batch([
