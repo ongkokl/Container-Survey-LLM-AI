@@ -459,7 +459,9 @@ const locationReview=document.querySelector("#locationReview");
 const locationSuggestion=document.querySelector("#locationSuggestion");
 const locationGeometryMessage=document.querySelector("#locationGeometryMessage");
 const faceReferenceTools=document.querySelector("#faceReferenceTools");
+const doorDetectionStatus=document.querySelector("#doorDetectionStatus");
 const doorEndSide=document.querySelector("#doorEndSide");
+const confirmDoorOrientationBtn=document.querySelector("#confirmDoorOrientationBtn");
 const markFaceBtn=document.querySelector("#markFaceBtn");
 const faceMarkHelp=document.querySelector("#faceMarkHelp");
 const locationCodeInput=document.querySelector("#locationCodeInput");
@@ -504,6 +506,7 @@ let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
+let aiDoorEndBox=null,detectedDoorSide=null,doorOrientationConfirmed=false;
 
 const cameraGuidanceV1=new URLSearchParams(window.location.search).get("cameraGuidance")!=="0";
 const guidedCamera=createGuidedCamera({
@@ -576,6 +579,9 @@ createFindingBtn.addEventListener("click",async()=>{
     markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
     markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
     faceReferenceTools.hidden=true;faceMarkHelp.textContent="Use when the container face is not detected automatically.";
+    aiDoorEndBox=null;detectedDoorSide=null;doorOrientationConfirmed=false;
+    doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
+    confirmDoorOrientationBtn.disabled=false;confirmDoorOrientationBtn.textContent="Confirm door orientation";
     doorEndSide.value=findingFace.value==="LEFT"?"RIGHT":"LEFT";
     locationReview.hidden=true;locationCodeInput.value="";locationCodeInput.removeAttribute("aria-invalid");
     locationSuggestion.textContent="Waiting for overview analysis…";locationGeometryMessage.textContent="";
@@ -666,6 +672,12 @@ function resetOverviewLocation(){
   locationReferenceBox=null;
   locationReferenceQuad=null;
   faceReferenceTools.hidden=true;
+  aiDoorEndBox=null;
+  detectedDoorSide=null;
+  doorOrientationConfirmed=false;
+  doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
+  confirmDoorOrientationBtn.disabled=false;
+  confirmDoorOrientationBtn.textContent="Confirm door orientation";
   faceMarkMode=false;
   faceMarkPoints=[];
   locationAutoUsable=false;
@@ -692,12 +704,39 @@ function resetOverviewLocation(){
 function renderLocationResult(result){
   locationReferenceBox=result?.referenceBox??null;
   locationAutoUsable=Boolean(result?.autoUsable);
+  aiDoorEndBox=validNormalizedBox(result?.doorBox)?{...result.doorBox}:null;
   const sideFinding=["LEFT","RIGHT"].includes(findingFace.value);
+  const door=result?.doorEndDetection??null;
+  detectedDoorSide=door?.side??null;
+  doorOrientationConfirmed=false;
+  confirmDoorOrientationBtn.disabled=false;
+  confirmDoorOrientationBtn.textContent="Confirm door orientation";
   faceReferenceTools.hidden=!sideFinding;
-  if(sideFinding&&!locationReferenceBox){
-    faceMarkHelp.textContent="Automatic face detection failed. Mark the 4 corners to continue automatic CEDEX location calculation.";
+
+  if(sideFinding&&door?.visible&&door.side){
+    doorEndSide.value=door.side;
+    const confidence=Math.round((Number(door.confidence)||0)*100);
+    if(result?.orientationConflict){
+      doorDetectionStatus.textContent=
+        "AI detected door end on image "+door.side.toLowerCase()+" · "+confidence+
+        "% · this conflicts with selected "+findingFace.value+" side"+
+        (door.suggestedFace?" · photo likely shows "+door.suggestedFace+" side":"")+".";
+    }else{
+      doorDetectionStatus.textContent=
+        "AI detected door end on image "+door.side.toLowerCase()+" · "+confidence+
+        "%. Confirm or correct the orientation.";
+    }
   }else if(sideFinding){
-    faceMarkHelp.textContent="Automatic reference found. You can mark 4 corners manually if you want to override it.";
+    doorDetectionStatus.textContent=
+      "AI did not detect the door end confidently. Select its image side manually if using the 4-corner reference.";
+  }
+
+  if(sideFinding&&!locationReferenceBox){
+    faceMarkHelp.textContent=door?.doorDominant
+      ?"Door end detected but side-panel geometry was not established. Use a side overview with more side panel visible, or mark the 4 side-face corners."
+      :"Automatic face detection failed. Mark the 4 corners to continue automatic CEDEX location calculation.";
+  }else if(sideFinding){
+    faceMarkHelp.textContent="Automatic side reference found. The 4-corner tool remains available as a perspective override.";
   }
   const location=result?.location??null;
   aiLocationCode=location?.code??null;
@@ -822,11 +861,32 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
   ctx.restore();
 }
 
+function drawDoorEndBox(canvas,box){
+  if(!validNormalizedBox(box))return;
+  const ctx=canvas.getContext("2d");
+  const x=box.x*canvas.width,y=box.y*canvas.height,w=box.width*canvas.width,h=box.height*canvas.height;
+  ctx.save();
+  ctx.setLineDash([10,7]);
+  ctx.lineWidth=4;
+  ctx.strokeStyle="#ff8bd8";
+  ctx.fillStyle="#ff8bd8";
+  ctx.shadowColor="rgba(0,0,0,.8)";
+  ctx.shadowBlur=4;
+  ctx.strokeRect(x,y,w,h);
+  ctx.setLineDash([]);
+  ctx.font="700 12px system-ui,sans-serif";
+  ctx.textAlign="left";
+  ctx.textBaseline="bottom";
+  ctx.fillText("DOOR",x+5,Math.max(14,y-4));
+  ctx.restore();
+}
+
 function drawOverviewComposite(){
   if(overviewStage.hidden||!overviewPreview.complete)return;
   syncAnnotationCanvas(overviewPreview,overviewCanvas);
   const ctx=overviewCanvas.getContext("2d");
   ctx.clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+  if(aiDoorEndBox)drawDoorEndBox(overviewCanvas,aiDoorEndBox);
   const quad=faceMarkMode?faceMarkPoints:locationReferenceQuad;
   if(quad?.length)drawFaceReference(overviewCanvas,quad,quad.length===4,false);
   if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited,false);
@@ -854,7 +914,20 @@ function beginFaceMarking(){
 
 markFaceBtn.addEventListener("click",beginFaceMarking);
 
+confirmDoorOrientationBtn.addEventListener("click",()=>{
+  doorOrientationConfirmed=true;
+  confirmDoorOrientationBtn.disabled=true;
+  confirmDoorOrientationBtn.textContent="Door orientation confirmed ✓";
+  doorDetectionStatus.textContent="Surveyor confirmed door end at image "+doorEndSide.value.toLowerCase()+
+    (detectedDoorSide&&detectedDoorSide!==doorEndSide.value?" · corrected from AI "+detectedDoorSide.toLowerCase():"")+".";
+  if(locationReferenceQuad?.length===4)recalculateLocationFromMark();
+});
+
 doorEndSide.addEventListener("change",()=>{
+  doorOrientationConfirmed=false;
+  confirmDoorOrientationBtn.disabled=false;
+  confirmDoorOrientationBtn.textContent="Confirm door orientation";
+  doorDetectionStatus.textContent="Door end set to image "+doorEndSide.value.toLowerCase()+". Confirm the orientation before final review.";
   if(locationReferenceQuad?.length===4){
     faceMarkHelp.textContent="Door-end orientation changed. Recalculating location from the marked face.";
     recalculateLocationFromMark();
@@ -898,6 +971,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
       renderLocationResult(result);
       aiLocationArea=validNormalizedBox(result?.damageBox)?{...result.damageBox}:null;
       aiLocationPoint=result?.point?{...result.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
+      drawOverviewComposite();
 
       if(!overviewEdited&&aiLocationArea){
         locationArea={...aiLocationArea};
@@ -906,7 +980,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
         markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
         overviewStage.dataset.markMode="AREA";
-        drawBox(overviewCanvas,locationArea,true);
+        drawOverviewComposite();
         tapHelp.textContent="AI proposed this damage area. Drag on the photo to redraw it, or switch to Pinpoint damage for a small defect.";
       }else if(!overviewEdited&&aiLocationPoint){
         locationPoint={...aiLocationPoint};
@@ -914,11 +988,12 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         markPointBtn.classList.add("active");markPointBtn.setAttribute("aria-pressed","true");
         markAreaBtn.classList.remove("active");markAreaBtn.setAttribute("aria-pressed","false");
         overviewStage.dataset.markMode="POINT";
-        drawTarget(overviewCanvas,locationPoint,true);
+        drawOverviewComposite();
         tapHelp.textContent="AI proposed this damage point. Tap the photo to correct it, or switch to Draw damage area.";
       }else if(overviewEdited){
         await recalculateLocationFromMark();
       }else{
+        drawOverviewComposite();
         tapHelp.textContent="AI could not identify the damage area. Drag a box around the damage, or switch to Pinpoint damage for a small defect.";
       }
     }catch(e){
