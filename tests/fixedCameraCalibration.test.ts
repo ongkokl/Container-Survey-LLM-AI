@@ -89,6 +89,47 @@ describe("fixed camera calibration service",()=>{
     });
     expect(result.referenceSource).toBe("FIXED_CAMERA_CALIBRATION");
     expect(result.code?.startsWith("R")).toBe(true);
+    expect(result.physicalMeasurement).toMatchObject({
+      method:"FIXED_CAMERA_HOMOGRAPHY",
+      planeProjected:true,
+      xAxis:"LONGITUDINAL",
+      yAxis:"VERTICAL",
+      majorCm:121.9,
+      minorCm:65.2,
+      requiresSurveyorVerification:true
+    });
+    expect(result.physicalMeasurement?.spanXmm).toBeCloseTo(1219.2,1);
+    expect(result.physicalMeasurement?.spanYmm).toBeCloseTo(651.6,1);
+  });
+
+  it("uses container width and height for Door physical size measurement",async()=>{
+    const repo=repoWithCalibration(stored("D","DOOR",null),"DOOR") as any;
+    repo.fixedCameraEndStructureCalibration=vi.fn(async()=>({
+      cameraId:"D",containerFace:"DOOR",equipmentType:"GP",heightMm:2896,
+      positionBoundariesX:[0.10,0.50,0.90],verticalBoundariesY:[0.10,0.50,0.90],
+      calibrationVersion:1,updatedAt:"2026-09-27T00:00:00.000Z"
+    }));
+    const service=new FixedCameraCalibrationService(repo);
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"D",
+      damageBox:{x:0.26,y:0.26,width:0.16,height:0.16}
+    });
+    expect(result.physicalMeasurement).toMatchObject({
+      xAxis:"HORIZONTAL",yAxis:"VERTICAL",
+      spanXmm:487.6,spanYmm:579.2,
+      majorCm:57.9,minorCm:48.8
+    });
+  });
+
+  it("does not report physical size for pinpoint-only damage",async()=>{
+    const service=new FixedCameraCalibrationService(
+      repoWithCalibration(stored("R","RIGHT","LEFT"),"RIGHT")
+    );
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"R",
+      damagePoint:{x:0.50,y:0.50}
+    });
+    expect(result.physicalMeasurement).toBeNull();
   });
 
   it("requires physical structure calibration before Door automatic location",async()=>{
