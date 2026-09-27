@@ -174,11 +174,13 @@
           <span id="locationGeometryMessage" class="message"></span>
           <div id="faceReferenceTools" class="faceReferenceTools" hidden>
             <strong>Container face reference</strong>
+            <span id="doorDetectionStatus" class="message">Checking whether the cargo door end is visible…</span>
             <label for="doorEndSide">Door end in this photo</label>
             <select id="doorEndSide">
               <option value="LEFT">Left side of photo</option>
               <option value="RIGHT">Right side of photo</option>
             </select>
+            <button id="confirmDoorOrientationBtn" class="secondary" type="button">Confirm door orientation</button>
             <button id="markFaceBtn" class="secondary" type="button">Mark 4 container-face corners</button>
             <span id="faceMarkHelp" class="message">Use when the container face is not detected automatically.</span>
           </div>

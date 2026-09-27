@@ -83,22 +83,42 @@ export class MoondreamDamageMarker {
     const damageTarget=
       "dent, buckle, deformation, crease, puncture, tear, crack or other visible structural damage on the shipping container "+
       faceName+" face; ignore logos, paint, dirt, stains, shadows, timestamps and normal corrugations";
-    const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
-    const damageBox=largestBox(damageRaw);
+    const doorTarget=
+      "shipping container cargo door end as one complete door-end plane, identified by paired doors, locking rods, hinges and rear frame; "+
+      "do not select an isolated hinge, locking bar, side panel or another background container";
 
     if(knownReferenceBox){
-      return {found:Boolean(damageBox),model:MODEL,damageBox,referenceBox:knownReferenceBox,raw:{damage:damageRaw,reference:null}};
+      const [damageRaw,doorRaw]=await Promise.all([
+        this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3}),
+        this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2})
+      ]);
+      const damageBox=largestBox(damageRaw),doorBox=largestBox(doorRaw);
+      return {
+        found:Boolean(damageBox),
+        model:MODEL,
+        damageBox,
+        referenceBox:knownReferenceBox,
+        doorBox,
+        raw:{damage:damageRaw,reference:null,door:doorRaw}
+      };
     }
 
-    const referenceTarget="entire visible "+faceName+" face of the shipping container including its outer structural frame";
-    const referenceRaw=await this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3});
+    const referenceTarget="entire visible "+faceName+" side face of the shipping container including its outer structural frame; exclude the door-end plane, front-end plane and background containers";
+    const [damageRaw,referenceRaw,doorRaw]=await Promise.all([
+      this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3}),
+      this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3}),
+      this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2})
+    ]);
+    const damageBox=largestBox(damageRaw);
     const referenceBox=largestBox(referenceRaw);
+    const doorBox=largestBox(doorRaw);
     return {
       found:Boolean(damageBox),
       model:MODEL,
       damageBox,
       referenceBox,
-      raw:{damage:damageRaw,reference:referenceRaw}
+      doorBox,
+      raw:{damage:damageRaw,reference:referenceRaw,door:doorRaw}
     };
   }
 }
