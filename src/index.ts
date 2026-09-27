@@ -20,6 +20,7 @@ import { CedexClassificationService } from "./application/cedexClassificationSer
 import { DamageClassificationService } from "./application/damageClassificationService";
 import { RepairRecommendationService } from "./application/repairRecommendationService";
 import { LocationSuggestionService } from "./application/locationSuggestionService";
+import { FixedCameraCalibrationService } from "./application/fixedCameraCalibrationService";
 import { fixedCameraProfile } from "./domain/container/fixedCameraProfile";
 
 export interface Env {
@@ -122,6 +123,51 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"LOCATION_SUGGEST_FAILED",message:error instanceof Error?error.message:"Unable to suggest damage location."},422);
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/fixed-camera/calibration") {
+    try {
+      const findingId=url.searchParams.get("findingId")??"";
+      const cameraId=url.searchParams.get("cameraId")??"";
+      const service=new FixedCameraCalibrationService(new CedexRepository(env.DB));
+      return json({ok:true,result:await service.get(findingId,cameraId)});
+    } catch(error) {
+      return json({ok:false,error:"FIXED_CAMERA_CALIBRATION_LOOKUP_FAILED",message:error instanceof Error?error.message:"Unable to load fixed camera calibration."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/fixed-camera/calibration") {
+    try {
+      const body=await readJson<{findingId?:string;cameraId?:string;corners?:unknown}>(request);
+      const service=new FixedCameraCalibrationService(new CedexRepository(env.DB));
+      return json({ok:true,result:await service.save({
+        findingId:body.findingId??"",
+        cameraId:body.cameraId??"",
+        corners:body.corners
+      })});
+    } catch(error) {
+      return json({ok:false,error:"FIXED_CAMERA_CALIBRATION_SAVE_FAILED",message:error instanceof Error?error.message:"Unable to save fixed camera calibration."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/location-from-fixed-camera") {
+    try {
+      const body=await readJson<{
+        findingId?:string;
+        cameraId?:string;
+        damagePoint?:{x:number;y:number}|null;
+        damageBox?:{x:number;y:number;width:number;height:number}|null;
+      }>(request);
+      const service=new FixedCameraCalibrationService(new CedexRepository(env.DB));
+      return json({ok:true,result:await service.calculate({
+        findingId:body.findingId??"",
+        cameraId:body.cameraId??"",
+        damagePoint:body.damagePoint??null,
+        damageBox:body.damageBox??null
+      })});
+    } catch(error) {
+      return json({ok:false,error:"FIXED_CAMERA_LOCATION_FAILED",message:error instanceof Error?error.message:"Unable to calculate location from fixed camera calibration."},422);
     }
   }
 
