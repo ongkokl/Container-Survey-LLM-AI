@@ -85,3 +85,73 @@ export function inferDoorEndDetection(input:{
     reason
   };
 }
+
+
+export type FaceVerificationStatus = "MATCH" | "MISMATCH" | "UNVERIFIED";
+
+export interface FaceVerification {
+  selectedFace: string;
+  detectedFace: "LEFT" | "RIGHT" | null;
+  confidence: number;
+  status: FaceVerificationStatus;
+  evidence: "DOOR_PLUS_SIDE_REFERENCE" | null;
+  reason: string;
+}
+
+export function inferFaceVerification(input:{
+  selectedFace:string;
+  door:DoorEndDetection;
+  hasSideReference:boolean;
+  geometryScore:number|null;
+  guidedReference:boolean;
+}):FaceVerification{
+  const selected=input.selectedFace;
+  if(!["LEFT","RIGHT"].includes(selected)){
+    return {
+      selectedFace:selected,
+      detectedFace:null,
+      confidence:0,
+      status:"UNVERIFIED",
+      evidence:null,
+      reason:"AI face verification is currently enabled for LEFT/RIGHT side findings only."
+    };
+  }
+
+  if(!input.hasSideReference||!input.door.visible||!input.door.suggestedFace){
+    return {
+      selectedFace:selected,
+      detectedFace:null,
+      confidence:0,
+      status:"UNVERIFIED",
+      evidence:null,
+      reason:"AI could not verify the surveyed side from both a usable side reference and the cargo door orientation."
+    };
+  }
+
+  const referenceConfidence=input.guidedReference
+    ? 0.9
+    : Math.max(0,Math.min(1,input.geometryScore??0));
+  const confidence=Number(Math.min(input.door.confidence,referenceConfidence).toFixed(2));
+  if(confidence<0.64){
+    return {
+      selectedFace:selected,
+      detectedFace:input.door.suggestedFace,
+      confidence,
+      status:"UNVERIFIED",
+      evidence:"DOOR_PLUS_SIDE_REFERENCE",
+      reason:"AI found side/door cues, but confidence is below the POC verification threshold."
+    };
+  }
+
+  const status:FaceVerificationStatus=input.door.suggestedFace===selected?"MATCH":"MISMATCH";
+  return {
+    selectedFace:selected,
+    detectedFace:input.door.suggestedFace,
+    confidence,
+    status,
+    evidence:"DOOR_PLUS_SIDE_REFERENCE",
+    reason:status==="MATCH"
+      ?"AI side/door geometry is consistent with the surveyor-selected face."
+      :"AI side/door geometry conflicts with the surveyor-selected face."
+  };
+}
