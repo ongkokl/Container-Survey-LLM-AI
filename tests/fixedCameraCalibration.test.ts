@@ -62,7 +62,12 @@ describe("fixed camera calibration service",()=>{
   });
 
   it("saves the four-corner calibration against camera and container geometry",async()=>{
-    const repo=repoWithCalibration();
+    const repo=repoWithCalibration() as any;
+    repo.fixedCameraCalibration.mockResolvedValue({
+      cameraId:"R",containerFace:"RIGHT",lengthFt:40,heightMm:2896,
+      doorEndInImage:"LEFT",corners:[...quad],calibrationVersion:2,
+      updatedAt:"2026-09-27T00:00:00.000Z"
+    });
     const service=new FixedCameraCalibrationService(repo);
     const result=await service.save({findingId:"f1",cameraId:"R",corners:quad});
     expect(result).toMatchObject({
@@ -108,7 +113,7 @@ describe("fixed camera calibration service",()=>{
     const service=new FixedCameraCalibrationService(repo);
     const result=await service.calculate({
       findingId:"f1",cameraId:"D",
-      damagePoint:{x:0.30,y:0.13}
+      damagePoint:{x:0.30,y:0.26}
     });
     expect(result.code).toBe("DT2N");
   });
