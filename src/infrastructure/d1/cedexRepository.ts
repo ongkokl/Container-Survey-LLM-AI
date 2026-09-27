@@ -252,6 +252,100 @@ export class CedexRepository {
     }
   }
 
+  async fixedCameraCalibrationByHeight(cameraId:string,heightMm:number){
+    try{
+      const row=await this.db.prepare(`
+        SELECT camera_id AS cameraId,
+               container_face AS containerFace,
+               length_ft AS lengthFt,
+               height_mm AS heightMm,
+               door_end_in_image AS doorEndInImage,
+               corners_json AS cornersJson,
+               calibration_version AS calibrationVersion,
+               updated_at AS updatedAt
+        FROM fixed_camera_calibrations
+        WHERE camera_id=? AND height_mm=? AND active=1
+        ORDER BY updated_at DESC
+        LIMIT 1`
+      ).bind(cameraId,heightMm).first<{
+        cameraId:string;containerFace:string;lengthFt:number;heightMm:number;
+        doorEndInImage:"LEFT"|"RIGHT"|null;cornersJson:string;calibrationVersion:number;updatedAt:string;
+      }>();
+      if(!row)return null;
+      let corners:unknown=null;
+      try{corners=JSON.parse(row.cornersJson);}catch{return null;}
+      return {...row,corners};
+    }catch(error){
+      if(error instanceof Error&&/no such table.*fixed_camera_calibrations/i.test(error.message))return null;
+      throw error;
+    }
+  }
+
+  async fixedCameraEndStructureCalibration(cameraId:string,equipmentType:string,heightMm:number){
+    try{
+      const row=await this.db.prepare(`
+        SELECT camera_id AS cameraId,
+               container_face AS containerFace,
+               equipment_type AS equipmentType,
+               height_mm AS heightMm,
+               position_boundaries_json AS positionBoundariesJson,
+               vertical_boundaries_json AS verticalBoundariesJson,
+               calibration_version AS calibrationVersion,
+               updated_at AS updatedAt
+        FROM fixed_camera_end_structure_calibrations
+        WHERE camera_id=? AND equipment_type=? AND height_mm=? AND active=1
+        LIMIT 1`
+      ).bind(cameraId,equipmentType,heightMm).first<{
+        cameraId:string;containerFace:string;equipmentType:string;heightMm:number;
+        positionBoundariesJson:string;verticalBoundariesJson:string;
+        calibrationVersion:number;updatedAt:string;
+      }>();
+      if(!row)return null;
+      try{
+        return {
+          ...row,
+          positionBoundariesX:JSON.parse(row.positionBoundariesJson) as number[],
+          verticalBoundariesY:JSON.parse(row.verticalBoundariesJson) as number[]
+        };
+      }catch{return null;}
+    }catch(error){
+      if(error instanceof Error&&/no such table.*fixed_camera_end_structure_calibrations/i.test(error.message))return null;
+      throw error;
+    }
+  }
+
+  async upsertFixedCameraEndStructureCalibration(input:{
+    cameraId:"D"|"F";
+    containerFace:"DOOR"|"FRONT";
+    equipmentType:"GP"|"RF";
+    heightMm:number;
+    positionBoundariesX:[number,number,number];
+    verticalBoundariesY:[number,number,number];
+  }){
+    const now=new Date().toISOString();
+    await this.db.prepare(`
+      INSERT INTO fixed_camera_end_structure_calibrations
+        (
+          camera_id,container_face,equipment_type,height_mm,
+          position_boundaries_json,vertical_boundaries_json,
+          calibration_version,active,created_at,updated_at
+        )
+      VALUES (?,?,?,?,?,?,1,1,?,?)
+      ON CONFLICT(camera_id,equipment_type,height_mm) DO UPDATE SET
+        container_face=excluded.container_face,
+        position_boundaries_json=excluded.position_boundaries_json,
+        vertical_boundaries_json=excluded.vertical_boundaries_json,
+        calibration_version=fixed_camera_end_structure_calibrations.calibration_version+1,
+        active=1,
+        updated_at=excluded.updated_at`
+    ).bind(
+      input.cameraId,input.containerFace,input.equipmentType,input.heightMm,
+      JSON.stringify(input.positionBoundariesX),JSON.stringify(input.verticalBoundariesY),
+      now,now
+    ).run();
+    return this.fixedCameraEndStructureCalibration(input.cameraId,input.equipmentType,input.heightMm);
+  }
+
   async upsertFixedCameraCalibration(input:{
     cameraId:string;
     containerFace:string;
