@@ -47,6 +47,72 @@ function pointTriplet(value:unknown,label:string):[NormalizedPoint,NormalizedPoi
   return points as [NormalizedPoint,NormalizedPoint,NormalizedPoint];
 }
 
+function facePhysicalAxes(face:SurveyFace,geometry:{
+  lengthMm:number|null;
+  widthMm:number|null;
+  heightMm:number|null;
+}):{xMm:number;yMm:number;xLabel:string;yLabel:string}|null{
+  const lengthMm=Number(geometry.lengthMm);
+  const widthMm=Number(geometry.widthMm);
+  const heightMm=Number(geometry.heightMm);
+  if(face==="LEFT"||face==="RIGHT"){
+    if(lengthMm>0&&heightMm>0)return {xMm:lengthMm,yMm:heightMm,xLabel:"LONGITUDINAL",yLabel:"VERTICAL"};
+  }
+  if(face==="DOOR"||face==="FRONT"){
+    if(widthMm>0&&heightMm>0)return {xMm:widthMm,yMm:heightMm,xLabel:"HORIZONTAL",yLabel:"VERTICAL"};
+  }
+  if(face==="ROOF"||face==="FLOOR"){
+    if(lengthMm>0&&widthMm>0)return {xMm:lengthMm,yMm:widthMm,xLabel:"LONGITUDINAL",yLabel:"TRANSVERSE"};
+  }
+  return null;
+}
+
+function distanceMm(a:NormalizedPoint,b:NormalizedPoint,xMm:number,yMm:number):number{
+  const dx=(b.x-a.x)*xMm,dy=(b.y-a.y)*yMm;
+  return Math.hypot(dx,dy);
+}
+
+function measurePhysicalDamage(input:{
+  box:NormalizedBox;
+  corners:FaceQuad;
+  orientation:{flipX:boolean;flipY:boolean};
+  face:SurveyFace;
+  geometry:{lengthMm:number|null;widthMm:number|null;heightMm:number|null};
+}){
+  const axes=facePhysicalAxes(input.face,input.geometry);
+  if(!axes)return null;
+  const sourceCorners=[
+    {x:input.box.x,y:input.box.y},
+    {x:input.box.x+input.box.width,y:input.box.y},
+    {x:input.box.x+input.box.width,y:input.box.y+input.box.height},
+    {x:input.box.x,y:input.box.y+input.box.height}
+  ] as const;
+  const mapped=sourceCorners.map(p=>mapPointToCalibratedFace(p,input.corners,input.orientation));
+  const top=distanceMm(mapped[0],mapped[1],axes.xMm,axes.yMm);
+  const bottom=distanceMm(mapped[3],mapped[2],axes.xMm,axes.yMm);
+  const left=distanceMm(mapped[0],mapped[3],axes.xMm,axes.yMm);
+  const right=distanceMm(mapped[1],mapped[2],axes.xMm,axes.yMm);
+  const spanXmm=(top+bottom)/2;
+  const spanYmm=(left+right)/2;
+  const majorMm=Math.max(spanXmm,spanYmm);
+  const minorMm=Math.min(spanXmm,spanYmm);
+  const round1=(v:number)=>Math.round(v*10)/10;
+  return {
+    method:"FIXED_CAMERA_HOMOGRAPHY",
+    planeProjected:true,
+    xAxis:axes.xLabel,
+    yAxis:axes.yLabel,
+    spanXmm:round1(spanXmm),
+    spanYmm:round1(spanYmm),
+    majorMm:round1(majorMm),
+    minorMm:round1(minorMm),
+    majorCm:round1(majorMm/10),
+    minorCm:round1(minorMm/10),
+    source:"OVERVIEW_DAMAGE_BOX",
+    requiresSurveyorVerification:true
+  };
+}
+
 export class FixedCameraCalibrationService {
   constructor(private readonly repo:CedexRepository){}
 
@@ -227,12 +293,25 @@ export class FixedCameraCalibrationService {
     let markType:"BOX"|"POINT";
 
     const box=validBox(input.damageBox);
+    let physicalMeasurement:null|ReturnType<typeof measurePhysicalDamage>=null;
     if(box){
       normalizedDamage=mapBoxToCalibratedFace(box,calibration.corners,orientation);
       normalizedPoint={
         x:normalizedDamage.x+normalizedDamage.width/2,
         y:normalizedDamage.y+normalizedDamage.height/2
       };
+      const ctx=await this.context(input.findingId,input.cameraId);
+      physicalMeasurement=ctx.geometry?measurePhysicalDamage({
+        box,
+        corners:calibration.corners,
+        orientation,
+        face:calibration.face,
+        geometry:{
+          lengthMm:ctx.geometry.lengthMm??null,
+          widthMm:ctx.geometry.widthMm??null,
+          heightMm:ctx.geometry.heightMm??null
+        }
+      }):null;
       markType="BOX";
     }else{
       const point=validPoint(input.damagePoint);
@@ -266,7 +345,8 @@ export class FixedCameraCalibrationService {
       markType,
       calibration,
       normalizedDamageBox:normalizedDamage,
-      normalizedPoint
+      normalizedPoint,
+      physicalMeasurement
     };
   }
 }
