@@ -150,11 +150,14 @@
         <option value="R">Camera R — Right side</option>
         <option value="L">Camera L — Left side</option>
         <option value="D">Camera D — Door end</option>
+        <option value="F">Camera F — Front end</option>
         <option value="T">Camera T — Roof / top</option>
+        <option value="B">Camera B — Floor / bottom</option>
       </select><small>POC assumption: each camera has a fixed position, known face/orientation and optical zoom for damage close-up.</small></label>
       <select id="findingFace" hidden aria-hidden="true">
         <option value=""></option><option value="LEFT">Left side</option><option value="RIGHT">Right side</option>
-        <option value="DOOR">Door end</option><option value="ROOF">Roof</option>
+        <option value="DOOR">Door end</option><option value="FRONT">Front end</option>
+        <option value="ROOF">Roof</option><option value="FLOOR">Floor / bottom</option>
       </select>
       <button id="createFindingBtn" class="primary" type="button">Create finding</button>
       <div id="findingCapture" hidden>
@@ -164,7 +167,7 @@
           <span id="geometryReferenceText" class="message"></span>
           <span class="message">Overview = scale/perspective reference. Dent depth remains manual.</span>
         </div>
-        <button id="overviewCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture fixed-camera overview</strong><span>POC: use the selected R/L/D/T camera overview as the geometry and damage-location reference.</span></button>
+        <button id="overviewCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture fixed-camera overview</strong><span>POC: use the selected R/L/D/F/T/B camera overview as the geometry and damage-location reference.</span></button>
         <input id="overviewPhoto" type="file" accept="image/*" capture="environment" hidden>
         <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Load fixed-camera overview for POC test</strong><span>Use a photo representing the selected fixed camera position.</span></label>
         <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
@@ -193,11 +196,11 @@
             </select>
             <button id="confirmDoorOrientationBtn" class="secondary" type="button" hidden disabled>Fixed by camera profile</button>
             <button id="markFaceBtn" class="secondary" type="button">Calibrate fixed camera with 4 corners</button>
-            <span id="faceMarkHelp" class="message">Admin only: mark the complete side face once for this camera and container size profile.</span>
+            <span id="faceMarkHelp" class="message">Admin only: mark the complete visible container face once for this camera and container size profile.</span>
           </div>
           <label for="locationCodeInput">Surveyor-confirmed location code</label>
           <input id="locationCodeInput" type="text" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. RT5N">
-          <span class="message">Camera R/L uses stored fixed-camera calibration to map the confirmed damage position to CEDEX location. Camera D/T uses manual location entry in this POC.</span>
+          <span class="message">All six fixed cameras use stored calibration to map the confirmed damage position to CEDEX location. Surveyor confirmation remains required.</span>
         </div>
         <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture optical-zoom damage close-up</strong><span>POC assumption: the same fixed camera optically zooms to the confirmed overview damage region.</span></button>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
