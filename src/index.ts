@@ -124,6 +124,37 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (request.method === "POST" && url.pathname === "/api/cedex/location-from-face-quad") {
+    try {
+      const body=await readJson<{
+        findingId?:string;
+        corners?:Array<{x:number;y:number}>;
+        doorEnd?:"LEFT"|"RIGHT";
+        damagePoint?:{x:number;y:number}|null;
+        damageBox?:{x:number;y:number;width:number;height:number}|null;
+      }>(request);
+      const repo=new CedexRepository(env.DB);
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const service=new LocationSuggestionService(repo,new MoondreamDamageMarker(ai));
+      const corners=(body.corners??[]) as [
+        {x:number;y:number},
+        {x:number;y:number},
+        {x:number;y:number},
+        {x:number;y:number}
+      ];
+      const result=await service.fromFaceQuad({
+        findingId:body.findingId??"",
+        corners,
+        doorEnd:body.doorEnd??"LEFT",
+        damagePoint:body.damagePoint??null,
+        damageBox:body.damageBox??null
+      });
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"LOCATION_FACE_QUAD_FAILED",message:error instanceof Error?error.message:"Unable to calculate location from marked container face."},422);
+    }
+  }
+
   if (request.method === "POST" && url.pathname === "/api/cedex/location-from-box") {
     try {
       const body=await readJson<{

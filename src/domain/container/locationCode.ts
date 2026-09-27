@@ -69,12 +69,11 @@ function closeTo(value:number,target:number,tolerance=0.025):boolean{
   return Math.abs(value-target)<=tolerance;
 }
 
-function sideSuggestion(face:"LEFT"|"RIGHT",lengthFt:number,box:NormalizedBox):LocationSuggestion{
+function sideSuggestionFromRearRange(face:"LEFT"|"RIGHT",lengthFt:number,box:NormalizedBox,rearStart:number,rearEnd:number):LocationSuggestion{
   const count=lengthFt<=20?5:10;
-  const x1=box.x;
-  const x2=box.x+box.width;
-  const rearStart=face==="RIGHT"?x1:1-x2;
-  const rearEnd=face==="RIGHT"?x2:1-x1;
+  rearStart=clamp01(rearStart);
+  rearEnd=clamp01(rearEnd);
+  if(rearEnd<rearStart)[rearStart,rearEnd]=[rearEnd,rearStart];
   const first=sectionAt(rearStart,count);
   const last=sectionAt(Math.max(rearStart,rearEnd-1e-6),count);
   const segment=verticalSegment(box);
@@ -111,6 +110,36 @@ function sideSuggestion(face:"LEFT"|"RIGHT",lengthFt:number,box:NormalizedBox):L
     lastSection:spansWholeLength?"X":sectionCode(last),
     relativeDamageBox:box
   };
+}
+
+function sideSuggestion(face:"LEFT"|"RIGHT",lengthFt:number,box:NormalizedBox):LocationSuggestion{
+  const x1=box.x;
+  const x2=box.x+box.width;
+  const rearStart=face==="RIGHT"?x1:1-x2;
+  const rearEnd=face==="RIGHT"?x2:1-x1;
+  return sideSuggestionFromRearRange(face,lengthFt,box,rearStart,rearEnd);
+}
+
+export function suggestCedexLocationOnNormalizedSide(input:{
+  face:"LEFT"|"RIGHT";
+  lengthFt:number;
+  damageBox:NormalizedBox;
+}):LocationSuggestion{
+  const box=input.damageBox;
+  if(!finiteBox(box)||box.x<0||box.y<0||box.x+box.width>1.000001||box.y+box.height>1.000001){
+    return {
+      supported:true,
+      code:null,
+      reviewRequired:true,
+      reason:"Damage area is outside the normalized container face.",
+      face:input.face,
+      verticalSegment:null,
+      firstSection:null,
+      lastSection:null,
+      relativeDamageBox:null
+    };
+  }
+  return sideSuggestionFromRearRange(input.face,input.lengthFt,box,box.x,box.x+box.width);
 }
 
 export function suggestCedexLocation(input:{

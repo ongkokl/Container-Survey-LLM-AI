@@ -510,3 +510,36 @@ button.camera {
 .annotationStage[data-mark-mode="POINT"] canvas {
   cursor:crosshair;
 }
+
+
+.faceReferenceTools {
+  display:grid;
+  gap:8px;
+  padding:10px;
+  border:1px solid #2f4662;
+  border-radius:12px;
+  background:#0b1625;
+}
+
+.faceReferenceTools[hidden] {
+  display:none;
+}
+
+.faceReferenceTools select {
+  width:100%;
+  min-height:44px;
+  border:1px solid #38506e;
+  border-radius:10px;
+  background:#0f1d2e;
+  color:#f4f7fb;
+  padding:0 10px;
+  font:inherit;
+}
+
+.faceReferenceTools .secondary {
+  min-height:44px;
+}
+
+.annotationStage[data-mark-mode="FACE"] canvas {
+  cursor:crosshair;
+}
