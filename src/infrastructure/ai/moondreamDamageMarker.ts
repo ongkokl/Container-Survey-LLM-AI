@@ -81,7 +81,7 @@ export class MoondreamDamageMarker {
     file:File,
     face:string,
     knownReferenceBox?:{x:number;y:number;width:number;height:number}|null,
-    options?:{skipDoorDetection?:boolean}
+    options?:{skipDoorDetection?:boolean;skipReferenceDetection?:boolean}
   ){
     const image=await this.imageData(file);
     const faceName=String(face||"container").toLowerCase();
@@ -91,6 +91,19 @@ export class MoondreamDamageMarker {
     const doorTarget=
       "shipping container cargo door end as one complete door-end plane, identified by paired doors, locking rods, hinges and rear frame; "+
       "do not select an isolated hinge, locking bar, side panel or another background container";
+
+    if(options?.skipReferenceDetection&&!knownReferenceBox){
+      const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
+      const damageBox=largestBox(damageRaw);
+      return {
+        found:Boolean(damageBox),
+        model:MODEL,
+        damageBox,
+        referenceBox:null,
+        doorBox:null,
+        raw:{damage:damageRaw,reference:null,door:null}
+      };
+    }
 
     if(knownReferenceBox){
       const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
