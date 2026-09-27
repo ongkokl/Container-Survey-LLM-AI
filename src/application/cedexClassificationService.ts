@@ -1,8 +1,9 @@
-import { CedexRepository, ComponentVisualRule } from "../infrastructure/d1/cedexRepository";
+import { CedexRepository, ComponentReferenceImage, ComponentVisualRule } from "../infrastructure/d1/cedexRepository";
 
 const MODEL = "@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS = 2000;
 const COMPONENT_REVIEW_THRESHOLD = 0.8;
+const MAX_REFERENCE_IMAGES = 3;
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
@@ -109,14 +110,29 @@ export class CedexClassificationService {
     const visualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
       .filter(rule => allowedSet.has(rule.component_code));
     const guidance = formatVisualGuidance(visualRules, zone);
+
+    const referenceCandidates = (await this.repo.componentReferenceImages(
+      equipment,
+      context.container_face,
+      zone,
+      12
+    )).filter(reference => allowedSet.has(reference.component_code));
+    const referenceImages:Array<ComponentReferenceImage & {image:string}> = [];
+    for (const reference of referenceCandidates) {
+      if (referenceImages.length >= MAX_REFERENCE_IMAGES) break;
+      const referenceObject = await this.bucket.get(reference.r2_key);
+      if (!referenceObject) continue;
+      referenceImages.push({
+        ...reference,
+        image:dataUri(await referenceObject.arrayBuffer(),reference.content_type)
+      });
+    }
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
 ${roi ? `The target on the close-up image is the surveyor's damage box in normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Identify the physical component inside this region, using surrounding structure as context. These coordinates are metadata; no box is drawn onto the image.` : "No damage box is available. If the target component is ambiguous, abstain."}
 
-${guidance}
-
-If the target cannot be identified reliably or the recorded face conflicts with the image, return selected_code null and needs_review true.
+${guidance}\n\n${referenceImages.length ? `Verified reference component images are attached after the target close-up. Use them only as comparative visual examples. They do not override the target image, face restrictions, or D1 rules. The absence of a reference image for a code is not evidence against that code.` : "No verified component reference images are attached for this classification."}\n\nIf the target cannot be identified reliably or the recorded face conflicts with the image, return selected_code null and needs_review true.
 Allowed codes:
 ${allowedText}
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (one short visual sentence), and candidates (at most 3 objects with code, confidence and reason). Do not explain your reasoning outside the JSON.`;
@@ -129,9 +145,20 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       );
     }
     content.push(
-      { type: "text", text: "Close-up image: classify the physical component that actually contains the marked damage." },
+      { type: "text", text: "TARGET close-up image: classify the physical component that actually contains the marked damage." },
       { type: "image_url", image_url: { url: image } }
     );
+    for (const reference of referenceImages) {
+      content.push(
+        {
+          type:"text",
+          text:"VERIFIED REFERENCE EXAMPLE — "+reference.component_code+
+            (reference.caption?": "+reference.caption:"")+
+            ". Use for comparison only; do not assume the target has this code."
+        },
+        { type:"image_url", image_url:{url:reference.image} }
+      );
+    }
 
     const raw = await this.ai.run(MODEL, {
       messages: [{ role: "user", content }],
@@ -232,7 +259,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       overviewZone: zone,
       positionalConflict,
       visualKnowledgeUsed: visualRules.length > 0,
-      visualRuleCount: visualRules.length
+      visualRuleCount: visualRules.length,
+      referenceImagesUsed: referenceImages.length,
+      referenceImageCodes: [...new Set(referenceImages.map(reference=>reference.component_code))]
     };
     await this.repo.saveComponentPrediction({
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
@@ -249,6 +278,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         visualKnowledgeUsed: visualRules.length > 0,
         visualRuleCount: visualRules.length,
         visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))],
+        referenceImagesUsed: referenceImages.length,
+        referenceImageIds: referenceImages.map(reference=>reference.id),
+        referenceImageCodes: [...new Set(referenceImages.map(reference=>reference.component_code))],
         containerFace: context.container_face,
         allowedComponentCount: allowed.length,
         componentReviewThreshold: COMPONENT_REVIEW_THRESHOLD,
