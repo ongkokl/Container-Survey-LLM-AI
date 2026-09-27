@@ -135,13 +135,15 @@ export class LocationSuggestionService{
 
     if(!located.found||!located.damageBox){
       const noDamageReason=!sideSupported
-        ?"Automatic CEDEX location is enabled for LEFT/RIGHT side overviews in this POC. Enter the location manually for this face."
+        ?"Automatic CEDEX location is enabled for fixed Cameras R/L in this POC. Enter the location manually for Camera "+(fixedCamera?.id??"—")+" / "+context.container_face+"."
         :orientationConflict
-          ?doorEndDetection.reason+" Verify the selected LEFT/RIGHT face before calculating the location."
+          ?faceVerification.reason+" Verify the camera/finding setup before calculating the location."
           :!referenceBox
-            ?doorEndDetection.doorDominant
-              ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
-              :"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
+            ?fixedCameraMatches
+              ?"Fixed Camera "+fixedCamera!.id+" supplies face/orientation, but usable container geometry was not established from this overview."
+              :doorEndDetection.doorDominant
+                ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with more side panel visible."
+                :"Container face reference could not be established automatically."
             :!knownGeometryAvailable
               ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
               :!guidedQualityOk
@@ -166,9 +168,7 @@ export class LocationSuggestionService{
           faceVerification,
           fixedCameraId:fixedCamera?.id??null,
           fixedCameraFace:fixedCamera?.face??null,
-          fixedCameraId:fixedCamera?.id??null,
-        fixedCameraFace:fixedCamera?.face??null,
-        orientationConflict,
+          orientationConflict,
           autoUsable,
           reason:noDamageReason
         },
@@ -186,9 +186,7 @@ export class LocationSuggestionService{
           aiFaceVerificationStatus:faceVerification.status,
           fixedCameraId:fixedCamera?.id??null,
           fixedCameraFace:fixedCamera?.face??null,
-          fixedCameraId:fixedCamera?.id??null,
-        fixedCameraFace:fixedCamera?.face??null,
-        orientationConflict
+          orientationConflict
         }
       });
       return {
@@ -232,9 +230,11 @@ export class LocationSuggestionService{
       (!guided&&score!==null&&score<0.82);
 
     const reason=orientationConflict
-      ?faceVerification.reason+" Verify or correct the surveyed face before accepting the CEDEX location."
+      ?faceVerification.reason+" Verify the camera/finding setup before accepting the CEDEX location."
+      :fixedCameraMatches&&referenceBox
+        ?calculated?.reason??"Calculated from fixed camera face/orientation and overview geometry."
       :faceVerification.status==="UNVERIFIED"&&referenceBox&&galleryGeometryOk
-        ?"AI could not independently verify the surveyed face. CEDEX location is calculated from the surveyor-selected face and usable geometry; surveyor confirmation is required."
+        ?"AI could not independently verify the surveyed face. CEDEX location is calculated from the selected face and usable geometry; surveyor confirmation is required."
       :!referenceBox
         ?doorEndDetection.doorDominant
           ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
