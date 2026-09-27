@@ -28,6 +28,7 @@ export interface Env {
   PHOTOS: R2Bucket;
   AI: Ai;
   ASSETS: Fetcher;
+  COMPONENT_REFERENCE_ADMIN_TOKEN?: string;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -281,6 +282,84 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"LOCATION_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save location code."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/admin/component-reference-image") {
+    const expected=env.COMPONENT_REFERENCE_ADMIN_TOKEN?.trim();
+    if(!expected){
+      return json({
+        ok:false,
+        error:"COMPONENT_REFERENCE_ADMIN_NOT_CONFIGURED",
+        message:"Component reference-image administration is disabled until COMPONENT_REFERENCE_ADMIN_TOKEN is configured."
+      },503);
+    }
+    if(request.headers.get("authorization")!=="Bearer "+expected){
+      return json({ok:false,error:"UNAUTHORIZED",message:"Valid component-reference admin authorization is required."},401);
+    }
+    let storedKey:string|null=null;
+    try{
+      const form=await request.formData();
+      const file=form.get("photo");
+      if(!(file instanceof File))throw new Error("A reference photo is required.");
+      if(file.size>5*1024*1024)throw new Error("Reference photo must be below 5 MB.");
+      const allowedTypes=new Set(["image/jpeg","image/png","image/webp","image/heic","image/heif"]);
+      if(!allowedTypes.has(file.type.toLowerCase()))throw new Error("Reference photo must be JPEG, PNG, WebP or HEIC.");
+
+      const equipmentType=String(form.get("equipmentType")??"").trim().toUpperCase();
+      if(equipmentType!=="GP"&&equipmentType!=="RF")throw new Error("equipmentType must be GP or RF.");
+      const componentCode=String(form.get("componentCode")??"").trim().toUpperCase();
+      if(!componentCode)throw new Error("componentCode is required.");
+      const containerFace=String(form.get("containerFace")??"").trim().toUpperCase();
+      if(!["LEFT","RIGHT","FRONT","DOOR","ROOF","FLOOR"].includes(containerFace)){
+        throw new Error("containerFace must be LEFT, RIGHT, FRONT, DOOR, ROOF or FLOOR.");
+      }
+      const overviewZone=String(form.get("overviewZone")??"ANY").trim().toUpperCase();
+      if(!["TOP_EDGE","BOTTOM_EDGE","LEFT_EDGE","RIGHT_EDGE","CENTRAL_FIELD","UNKNOWN","ANY"].includes(overviewZone)){
+        throw new Error("Invalid overviewZone.");
+      }
+      const sourceReference=String(form.get("sourceReference")??"").trim();
+      if(!sourceReference)throw new Error("sourceReference is required for a verified reference image.");
+      const caption=String(form.get("caption")??"").trim()||null;
+      const visualDescriptor=String(form.get("visualDescriptor")??"").trim()||null;
+      const priorityRaw=Number(form.get("priority")??100);
+      const priority=Number.isFinite(priorityRaw)?Math.max(0,Math.min(1000,Math.trunc(priorityRaw))):100;
+
+      const referenceId=crypto.randomUUID();
+      const bytes=await file.arrayBuffer();
+      const photoStore=new PhotoStore(env.PHOTOS);
+      const stored=await photoStore.saveComponentReferencePhoto({
+        referenceId,
+        equipmentType,
+        componentCode,
+        containerFace,
+        bytes,
+        contentType:file.type
+      });
+      storedKey=stored.key;
+
+      const repo=new CedexRepository(env.DB);
+      const result=await repo.registerComponentReferenceImage({
+        id:referenceId,
+        equipmentType,
+        componentCode,
+        containerFace:containerFace as "LEFT"|"RIGHT"|"FRONT"|"DOOR"|"ROOF"|"FLOOR",
+        overviewZone:overviewZone as "TOP_EDGE"|"BOTTOM_EDGE"|"LEFT_EDGE"|"RIGHT_EDGE"|"CENTRAL_FIELD"|"UNKNOWN"|"ANY",
+        r2Key:stored.key,
+        contentType:file.type,
+        caption,
+        visualDescriptor,
+        sourceReference,
+        priority
+      });
+      return json({ok:true,result},201);
+    }catch(error){
+      if(storedKey)await env.PHOTOS.delete(storedKey);
+      return json({
+        ok:false,
+        error:"COMPONENT_REFERENCE_UPLOAD_FAILED",
+        message:error instanceof Error?error.message:"Unable to save component reference image."
+      },422);
     }
   }
 
