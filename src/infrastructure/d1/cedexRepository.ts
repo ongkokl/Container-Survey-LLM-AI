@@ -25,6 +25,19 @@ export interface DamageVisualRule {
   source_reference:string;
 }
 
+export interface ComponentReferenceImage {
+  id:string;
+  component_code:string;
+  container_face:string;
+  overview_zone:string;
+  r2_key:string;
+  content_type:string;
+  caption:string|null;
+  visual_descriptor:string|null;
+  source_reference:string;
+  priority:number;
+}
+
 export class CedexRepository {
   constructor(private readonly db:D1Database){}
 
@@ -95,6 +108,42 @@ export class CedexRepository {
       // Keep component classification available during a staged deploy before
       // migration 0009 is applied. Other query failures still surface.
       if(error instanceof Error && /no such table.*component_visual_rules/i.test(error.message)) return [];
+      throw error;
+    }
+  }
+
+  async componentReferenceImages(
+    equipment:"GP"|"RF",
+    containerFace:string,
+    overviewZone:string,
+    limit=6
+  ):Promise<ComponentReferenceImage[]>{
+    const face=containerFace.trim().toUpperCase(),zone=overviewZone.trim().toUpperCase();
+    const safeLimit=Math.max(1,Math.min(12,Math.trunc(limit)||6));
+    try{
+      const result=await this.db.prepare(`
+        WITH matching AS (
+          SELECT id,component_code,container_face,overview_zone,r2_key,content_type,
+                 caption,visual_descriptor,source_reference,priority,
+                 CASE WHEN container_face=? THEN 0 ELSE 1 END AS face_rank,
+                 CASE WHEN overview_zone=? THEN 0 ELSE 1 END AS zone_rank
+          FROM component_reference_images
+          WHERE equipment_type=?
+            AND verification_status='VERIFIED'
+            AND active=1
+            AND container_face IN (?,'ANY')
+            AND overview_zone IN (?,'ANY')
+        )
+        SELECT id,component_code,container_face,overview_zone,r2_key,content_type,
+               caption,visual_descriptor,source_reference,priority
+        FROM matching
+        ORDER BY face_rank,zone_rank,priority DESC,component_code,id
+        LIMIT ?`
+      ).bind(face,zone,equipment,face,zone,safeLimit).all<ComponentReferenceImage>();
+      return result.results;
+    }catch(error){
+      // Keep classification available during staged deployment before 0021.
+      if(error instanceof Error && /no such table.*component_reference_images/i.test(error.message)) return [];
       throw error;
     }
   }
