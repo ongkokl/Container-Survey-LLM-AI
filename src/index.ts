@@ -142,10 +142,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         {x:number;y:number},
         {x:number;y:number}
       ];
+      if(body.doorEnd!=="LEFT"&&body.doorEnd!=="RIGHT"){
+        throw new Error("Select the door-end position before calculating location from the four-corner reference.");
+      }
       const result=await service.fromFaceQuad({
         findingId:body.findingId??"",
         corners,
-        doorEnd:body.doorEnd??"LEFT",
+        doorEnd:body.doorEnd,
         damagePoint:body.damagePoint??null,
         damageBox:body.damageBox??null
       });
