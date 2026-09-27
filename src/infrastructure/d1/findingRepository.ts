@@ -35,6 +35,28 @@ export class FindingRepository {
     return {id,survey_id:surveyId,finding_sequence:sequence,status:"CAPTURED",container_face:containerFace,created_at:now};
   }
 
+  async updateFace(findingId:string,containerFace:ContainerFace):Promise<FindingSummary>{
+    const row=await this.db.prepare(
+      `SELECT f.id,f.survey_id,f.finding_sequence,f.status,f.container_face,f.created_at,
+              EXISTS(SELECT 1 FROM survey_photos p WHERE p.finding_id=f.id) AS has_photos
+       FROM findings f WHERE f.id=?`
+    ).bind(findingId).first<FindingSummary & {has_photos:number}>();
+    if(!row)throw new Error("Finding not found.");
+    if(Number(row.has_photos))throw new Error("Container face cannot be changed after finding evidence has been saved.");
+    const now=new Date().toISOString();
+    await this.db.prepare(
+      "UPDATE findings SET container_face=?,final_location_code=NULL,status='CAPTURED',updated_at=? WHERE id=?"
+    ).bind(containerFace,now,findingId).run();
+    return {
+      id:row.id,
+      survey_id:row.survey_id,
+      finding_sequence:row.finding_sequence,
+      status:"CAPTURED",
+      container_face:containerFace,
+      created_at:row.created_at
+    };
+  }
+
   async list(surveyId: string): Promise<FindingSummary[]> {
     const result=await this.db.prepare(
       "SELECT id,survey_id,finding_sequence,status,container_face,created_at FROM findings WHERE survey_id=? AND status<>'CANCELLED' ORDER BY finding_sequence"
