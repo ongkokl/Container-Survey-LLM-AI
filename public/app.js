@@ -459,6 +459,7 @@ const tapHelp=document.querySelector("#tapHelp");
 const locationReview=document.querySelector("#locationReview");
 const locationSuggestion=document.querySelector("#locationSuggestion");
 const locationGeometryMessage=document.querySelector("#locationGeometryMessage");
+const damageMeasurementText=document.querySelector("#damageMeasurementText");
 const faceReferenceTools=document.querySelector("#faceReferenceTools");
 const faceVerificationStatus=document.querySelector("#faceVerificationStatus");
 const correctFaceBtn=document.querySelector("#correctFaceBtn");
@@ -509,6 +510,7 @@ let aiLocationPoint=null,aiLocationArea=null,aiDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
+let currentAutoDamageMeasurement=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
 let currentFixedCalibration=null,endStructureMarkMode=false,endStructurePoints=[];
@@ -689,6 +691,21 @@ function centreOfBox(box){
   return {x:box.x+box.width/2,y:box.y+box.height/2};
 }
 
+function applyPhysicalMeasurement(measurement){
+  currentAutoDamageMeasurement=measurement??null;
+  if(!measurement){
+    damageMeasurementText.textContent="";
+    return;
+  }
+  const x=(measurement.spanXmm/10).toFixed(1);
+  const y=(measurement.spanYmm/10).toFixed(1);
+  damageMeasurementText.textContent=
+    "Estimated planar damage size: "+x+" × "+y+" cm · "+
+    String(measurement.xAxis||"X").toLowerCase()+" × "+
+    String(measurement.yAxis||"Y").toLowerCase()+
+    " · fixed-camera geometry · verify before repair decision.";
+}
+
 function validNormalizedBox(box){
   return Boolean(box)&&[box.x,box.y,box.width,box.height].every(Number.isFinite)&&
     box.x>=0&&box.y>=0&&box.width>0&&box.height>0&&box.x+box.width<=1.000001&&box.y+box.height<=1.000001;
@@ -764,6 +781,8 @@ function resetOverviewLocation(){
   endStructureHelp.hidden=true;
   locationAutoUsable=false;
   aiLocationCode=null;
+  currentAutoDamageMeasurement=null;
+  damageMeasurementText.textContent="";
   locationPoint=null;
   locationArea=null;
   aiLocationPoint=null;
@@ -838,6 +857,7 @@ function renderLocationResult(result){
 
   const location=result?.location??null;
   aiLocationCode=location?.code??null;
+  applyPhysicalMeasurement(location?.physicalMeasurement??null);
 
   if(aiLocationCode){
     locationCodeInput.value=aiLocationCode;
@@ -945,6 +965,7 @@ async function recalculateLocationFromMark(){
           })
         });
     if(requestId!==locationRecalcRequest)return;
+    applyPhysicalMeasurement(result?.physicalMeasurement??null);
     if(result?.code){
       locationCodeInput.value=result.code;
       locationSuggestion.textContent=(usingArea?"Marked area":"Marked point")+" location: "+result.code+
@@ -960,6 +981,7 @@ async function recalculateLocationFromMark(){
     }
   }catch(e){
     if(requestId!==locationRecalcRequest)return;
+    applyPhysicalMeasurement(null);
     locationCodeInput.value="";
     locationSuggestion.textContent=e instanceof Error?e.message:"Unable to recalculate location. Enter it manually.";
   }
@@ -1687,8 +1709,8 @@ function renderRepairResult(result){
     repairSelect.appendChild(option);
   }
   repairSelect.value=result.selectedCode??"";
-  repairLengthCm.value="";
-  repairWidthCm.value="";
+  repairLengthCm.value=currentAutoDamageMeasurement?.majorCm??"";
+  repairWidthCm.value=currentAutoDamageMeasurement?.minorCm??"";
   repairDepthCm.value="";
   repairDirection.value="UNKNOWN";
   const mappedDent=result.equipment==="GP"&&result.componentCode==="PAA"&&result.damageCode==="DT"&&["LEFT","RIGHT","FRONT"].includes(findingFace.value);
@@ -1696,7 +1718,9 @@ function renderRepairResult(result){
   repairDepthCriterion.textContent="";
   if(mappedDent)updateDentCriterionHint();
   repairCorrugations.value="";
-  repairNotes.value="";
+  repairNotes.value=currentAutoDamageMeasurement
+    ?"Length/width prefilled from fixed-camera plane-projected measurement; surveyor verified/adjusted before save."
+    :"";
   repairSelect.disabled=false;
   repairDecision.hidden=repairSelect.options.length<=1;
   repairDecisionMessage.textContent="";
