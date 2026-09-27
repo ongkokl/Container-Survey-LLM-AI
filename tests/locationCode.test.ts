@@ -64,13 +64,39 @@ describe("CEDEX side location calculation",()=>{
     }).code).toBe("LX56");
   });
 
-  it("abstains for unsupported faces instead of guessing",()=>{
-    const result=suggestCedexLocationFromPoint({
-      face:"FRONT",lengthFt:40,point:{x:0.25,y:0.25},referenceBox:full
-    });
-    expect(result.supported).toBe(false);
-    expect(result.code).toBeNull();
-    expect(result.reviewRequired).toBe(true);
+  it("maps IICL door-end examples DH2N and DB1N",()=>{
+    expect(suggestCedexLocationFromPoint({
+      face:"DOOR",lengthFt:40,point:{x:0.25,y:0.05},referenceBox:full
+    }).code).toBe("DH2N");
+    expect(suggestCedexLocationFromPoint({
+      face:"DOOR",lengthFt:40,point:{x:0.05,y:0.70},referenceBox:full
+    }).code).toBe("DB1N");
+  });
+
+  it("maps the canonical front plane to FB3N",()=>{
+    expect(suggestCedexLocationFromPoint({
+      face:"FRONT",lengthFt:40,point:{x:0.62,y:0.70},referenceBox:full
+    }).code).toBe("FB3N");
+  });
+
+  it("maps roof left-half section 3 to TL3N",()=>{
+    expect(suggestCedexLocationFromPoint({
+      face:"ROOF",lengthFt:40,point:{x:0.25,y:0.25},referenceBox:full
+    }).code).toBe("TL3N");
+  });
+
+  it("uses X when roof damage crosses the left/right half boundary",()=>{
+    expect(suggestCedexLocation({
+      face:"ROOF",lengthFt:40,
+      damageBox:{x:0.82,y:0.45,width:0.04,height:0.12},
+      referenceBox:full
+    }).code).toBe("TX9N");
+  });
+
+  it("maps floor left-half section 1 to BL1N",()=>{
+    expect(suggestCedexLocationFromPoint({
+      face:"FLOOR",lengthFt:40,point:{x:0.05,y:0.25},referenceBox:full
+    }).code).toBe("BL1N");
   });
 
   it("validates four-character container location codes",()=>{

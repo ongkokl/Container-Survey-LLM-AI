@@ -18,7 +18,7 @@ export interface LocationSuggestion {
   reviewRequired: boolean;
   reason: string;
   face: SurveyFace;
-  verticalSegment: "T" | "B" | "X" | null;
+  verticalSegment: "H" | "T" | "B" | "G" | "L" | "R" | "X" | null;
   firstSection: string | null;
   lastSection: string | null;
   relativeDamageBox: NormalizedBox | null;
@@ -120,8 +120,104 @@ function sideSuggestion(face:"LEFT"|"RIGHT",lengthFt:number,box:NormalizedBox):L
   return sideSuggestionFromRearRange(face,lengthFt,box,rearStart,rearEnd);
 }
 
-export function suggestCedexLocationOnNormalizedSide(input:{
-  face:"LEFT"|"RIGHT";
+
+function longitudinalRange(lengthFt:number,box:NormalizedBox):{
+  thirdFourth:string;
+  first:string;
+  last:string;
+  boundaryNear:boolean;
+}{
+  const count=lengthFt<=20?5:10;
+  const start=clamp01(box.x),end=clamp01(box.x+box.width);
+  const spansWhole=start<=0.01&&end>=0.99;
+  const firstIndex=sectionAt(start,count);
+  const lastIndex=sectionAt(Math.max(start,end-1e-6),count);
+  const first=spansWhole?"X":sectionCode(firstIndex);
+  const last=spansWhole?"X":sectionCode(lastIndex);
+  const thirdFourth=spansWhole
+    ?"XX"
+    :firstIndex===lastIndex
+      ?sectionCode(firstIndex)+"N"
+      :sectionCode(firstIndex)+sectionCode(lastIndex);
+  const boundaryNear=[start,end].some(v=>{
+    for(let i=1;i<count;i++)if(closeTo(v,i/count))return true;
+    return false;
+  });
+  return {thirdFourth,first,last,boundaryNear};
+}
+
+function roofFloorSuggestion(face:"ROOF"|"FLOOR",lengthFt:number,box:NormalizedBox):LocationSuggestion{
+  const lateral=box.y+box.height<=0.5?"L":box.y>=0.5?"R":"X";
+  const range=longitudinalRange(lengthFt,box);
+  const lateralBoundaryNear=closeTo(box.y,0.5)||closeTo(box.y+box.height,0.5);
+  const reviewRequired=range.boundaryNear||lateralBoundaryNear;
+  return {
+    supported:true,
+    code:(face==="ROOF"?"T":"B")+lateral+range.thirdFourth,
+    reviewRequired,
+    reason:reviewRequired
+      ?"Location is close to a CEDEX roof/floor zone boundary; surveyor confirmation is required."
+      :"Calculated deterministically from the calibrated fixed-camera plane.",
+    face,
+    verticalSegment:lateral,
+    firstSection:range.first,
+    lastSection:range.last,
+    relativeDamageBox:box
+  };
+}
+
+const END_EDGE_BAND=0.10;
+
+function endHorizontalPosition(value:number):number{
+  const safe=clamp01(value);
+  if(safe<END_EDGE_BAND)return 1;
+  if(safe<0.5)return 2;
+  if(safe<1-END_EDGE_BAND)return 3;
+  return 4;
+}
+
+function endVerticalZoneAt(value:number):"H"|"T"|"B"|"G"{
+  const safe=clamp01(value);
+  if(safe<END_EDGE_BAND)return "H";
+  if(safe<0.5)return "T";
+  if(safe<1-END_EDGE_BAND)return "B";
+  return "G";
+}
+
+function endFaceSuggestion(face:"DOOR"|"FRONT",box:NormalizedBox):LocationSuggestion{
+  const x1=clamp01(box.x),x2=clamp01(box.x+box.width);
+  const y1=clamp01(box.y),y2=clamp01(box.y+box.height);
+  const fullWidth=x1<=0.01&&x2>=0.99;
+  const firstPos=endHorizontalPosition(x1);
+  const lastPos=endHorizontalPosition(Math.max(x1,x2-1e-6));
+  const thirdFourth=fullWidth
+    ?"XX"
+    :firstPos===lastPos
+      ?String(firstPos)+"N"
+      :String(firstPos)+String(lastPos);
+
+  const verticalStart=endVerticalZoneAt(y1);
+  const verticalEnd=endVerticalZoneAt(Math.max(y1,y2-1e-6));
+  const vertical=verticalStart===verticalEnd?verticalStart:"X";
+  const thresholds=[END_EDGE_BAND,0.5,1-END_EDGE_BAND];
+  const boundaryNear=[x1,x2,y1,y2].some(v=>thresholds.some(t=>closeTo(v,t)));
+  return {
+    supported:true,
+    code:(face==="DOOR"?"D":"F")+vertical+thirdFourth,
+    reviewRequired:boundaryNear,
+    reason:boundaryNear
+      ?"Location is close to a CEDEX door/front zone boundary; surveyor confirmation is required."
+      :"Calculated from the calibrated fixed-camera end-face plane. End-frame H/G and 1/4 edge bands use the POC normalized calibration zones.",
+    face,
+    verticalSegment:vertical,
+    firstSection:fullWidth?"X":String(firstPos),
+    lastSection:fullWidth?"X":String(lastPos),
+    relativeDamageBox:box
+  };
+}
+
+export function suggestCedexLocationOnNormalizedFace(input:{
+  face:SurveyFace;
   lengthFt:number;
   damageBox:NormalizedBox;
 }):LocationSuggestion{
@@ -139,7 +235,34 @@ export function suggestCedexLocationOnNormalizedSide(input:{
       relativeDamageBox:null
     };
   }
-  return sideSuggestionFromRearRange(input.face,input.lengthFt,box,box.x,box.x+box.width);
+  if(input.face==="LEFT"||input.face==="RIGHT"){
+    return sideSuggestionFromRearRange(input.face,input.lengthFt,box,box.x,box.x+box.width);
+  }
+  if(input.face==="ROOF"||input.face==="FLOOR"){
+    return roofFloorSuggestion(input.face,input.lengthFt,box);
+  }
+  if(input.face==="DOOR"||input.face==="FRONT"){
+    return endFaceSuggestion(input.face,box);
+  }
+  return {
+    supported:false,
+    code:null,
+    reviewRequired:true,
+    reason:"Automatic normalized-face location is not configured for this container face.",
+    face:input.face,
+    verticalSegment:null,
+    firstSection:null,
+    lastSection:null,
+    relativeDamageBox:box
+  };
+}
+
+export function suggestCedexLocationOnNormalizedSide(input:{
+  face:"LEFT"|"RIGHT";
+  lengthFt:number;
+  damageBox:NormalizedBox;
+}):LocationSuggestion{
+  return suggestCedexLocationOnNormalizedFace(input);
 }
 
 export function suggestCedexLocation(input:{
@@ -163,21 +286,14 @@ export function suggestCedexLocation(input:{
     };
   }
 
-  if(input.face!=="LEFT"&&input.face!=="RIGHT"){
-    return {
-      supported:false,
-      code:null,
-      reviewRequired:true,
-      reason:"Automatic CEDEX location is enabled for LEFT/RIGHT side overviews in this POC. Select the location manually for this face.",
-      face:input.face,
-      verticalSegment:null,
-      firstSection:null,
-      lastSection:null,
-      relativeDamageBox:relative
-    };
+  if(input.face==="LEFT"||input.face==="RIGHT"){
+    return sideSuggestion(input.face,input.lengthFt,relative);
   }
-
-  return sideSuggestion(input.face,input.lengthFt,relative);
+  return suggestCedexLocationOnNormalizedFace({
+    face:input.face,
+    lengthFt:input.lengthFt,
+    damageBox:relative
+  });
 }
 
 export function suggestCedexLocationFromPoint(input:{

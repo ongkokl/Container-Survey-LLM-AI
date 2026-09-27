@@ -62,11 +62,8 @@ function solveLinear(matrix:number[][]):number[]{
   return matrix.map(row=>row[n]);
 }
 
-function homography(points:FaceQuad,doorEnd:DoorEndSide):number[]{
+function homographyToTarget(points:FaceQuad,target:FaceQuad):number[]{
   if(!isValidFaceQuad(points))throw new Error("Mark the four container-face corners in order: top-left, top-right, bottom-right, bottom-left.");
-  const target:FaceQuad=doorEnd==="LEFT"
-    ? [{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}]
-    : [{x:1,y:0},{x:0,y:0},{x:0,y:1},{x:1,y:1}];
   const m:number[][]=[];
   for(let i=0;i<4;i++){
     const {x,y}=points[i],{x:u,y:v}=target[i];
@@ -74,6 +71,16 @@ function homography(points:FaceQuad,doorEnd:DoorEndSide):number[]{
     m.push([0,0,0,x,y,1,-v*x,-v*y,v]);
   }
   return solveLinear(m);
+}
+
+function targetForOrientation(flipX:boolean,flipY:boolean):FaceQuad{
+  const left=flipX?1:0,right=flipX?0:1;
+  const top=flipY?1:0,bottom=flipY?0:1;
+  return [{x:left,y:top},{x:right,y:top},{x:right,y:bottom},{x:left,y:bottom}];
+}
+
+function homography(points:FaceQuad,doorEnd:DoorEndSide):number[]{
+  return homographyToTarget(points,targetForOrientation(doorEnd==="RIGHT",false));
 }
 
 function clamp01(v:number):number{
@@ -101,6 +108,41 @@ export function mapBoxToFace(box:NormalizedBox,points:FaceQuad,doorEnd:DoorEndSi
     {x:box.x+box.width,y:box.y+box.height},
     {x:box.x,y:box.y+box.height}
   ].map(p=>mapPointToFace(p,points,doorEnd));
+  const xs=corners.map(p=>p.x),ys=corners.map(p=>p.y);
+  const left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
+  return {x:left,y:top,width:right-left,height:bottom-top};
+}
+
+
+export function mapPointToCalibratedFace(
+  point:NormalizedPoint,
+  points:FaceQuad,
+  orientation:{flipX?:boolean;flipY?:boolean}={}
+):NormalizedPoint{
+  if(!finitePoint(point))throw new Error("Invalid damage point.");
+  const h=homographyToTarget(points,targetForOrientation(Boolean(orientation.flipX),Boolean(orientation.flipY)));
+  const den=h[6]*point.x+h[7]*point.y+1;
+  if(Math.abs(den)<1e-10)throw new Error("Unable to map this point through the camera calibration.");
+  return {
+    x:clamp01((h[0]*point.x+h[1]*point.y+h[2])/den),
+    y:clamp01((h[3]*point.x+h[4]*point.y+h[5])/den)
+  };
+}
+
+export function mapBoxToCalibratedFace(
+  box:NormalizedBox,
+  points:FaceQuad,
+  orientation:{flipX?:boolean;flipY?:boolean}={}
+):NormalizedBox{
+  if(![box.x,box.y,box.width,box.height].every(Number.isFinite)||box.width<=0||box.height<=0){
+    throw new Error("Invalid damage area.");
+  }
+  const corners=[
+    {x:box.x,y:box.y},
+    {x:box.x+box.width,y:box.y},
+    {x:box.x+box.width,y:box.y+box.height},
+    {x:box.x,y:box.y+box.height}
+  ].map(p=>mapPointToCalibratedFace(p,points,orientation));
   const xs=corners.map(p=>p.x),ys=corners.map(p=>p.y);
   const left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
   return {x:left,y:top,width:right-left,height:bottom-top};

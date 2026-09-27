@@ -357,7 +357,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     try {
       const body=await readJson<{surveyId?:string;cameraId?:string;containerFace?:string}>(request);
       const camera=body.cameraId?fixedCameraProfile(body.cameraId):null;
-      if(body.cameraId&&!camera)throw new Error("Select a valid fixed camera: R, L, D or T.");
+      if(body.cameraId&&!camera)throw new Error("Select a valid fixed camera: R, L, D, F, T or B.");
       const face=camera?.face??body.containerFace??"";
       const result=await findingService(env).create(body.surveyId??"",face);
       return json({ok:true,result:{...result,fixed_camera:camera}},201);

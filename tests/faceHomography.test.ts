@@ -3,6 +3,7 @@ import {
   isValidFaceQuad,
   mapBoxToFace,
   mapPointToFace,
+  mapPointToCalibratedFace,
   type FaceQuad
 } from "../src/domain/container/faceHomography";
 import { suggestCedexLocationOnNormalizedSide } from "../src/domain/container/locationCode";
@@ -25,6 +26,15 @@ describe("manual container-face homography",()=>{
   it("reverses longitudinal direction when the door end is at image right",()=>{
     expect(mapPointToFace(rectangle[0],rectangle,"RIGHT")).toEqual({x:1,y:0});
     expect(mapPointToFace(rectangle[1],rectangle,"RIGHT")).toEqual({x:0,y:0});
+  });
+
+  it("supports fixed-camera canonical horizontal and vertical flips",()=>{
+    const flipX=mapPointToCalibratedFace(rectangle[0],rectangle,{flipX:true});
+    expect(flipX.x).toBeCloseTo(1,8);expect(flipX.y).toBeCloseTo(0,8);
+    const flipY=mapPointToCalibratedFace(rectangle[0],rectangle,{flipY:true});
+    expect(flipY.x).toBeCloseTo(0,8);expect(flipY.y).toBeCloseTo(1,8);
+    const both=mapPointToCalibratedFace(rectangle[2],rectangle,{flipX:true,flipY:true});
+    expect(both.x).toBeCloseTo(0,8);expect(both.y).toBeCloseTo(0,8);
   });
 
   it("accepts a perspective trapezoid as a valid four-corner face",()=>{

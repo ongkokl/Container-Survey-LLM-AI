@@ -552,9 +552,12 @@ export class CedexRepository {
     if(!isValidContainerLocationCode(finalCode)) throw new Error("Enter a valid four-character CEDEX location code.");
     const finding=await this.db.prepare("SELECT id,container_face FROM findings WHERE id=?").bind(input.findingId).first<{id:string;container_face:string|null}>();
     if(!finding) throw new Error("Finding not found.");
-    const expectedSidePrefix=finding.container_face==="LEFT"?"L":finding.container_face==="RIGHT"?"R":null;
-    if(expectedSidePrefix&&finalCode[0]!==expectedSidePrefix){
-      throw new Error("Location code face does not match the selected container side.");
+    const expectedFacePrefix:Record<string,string>={
+      LEFT:"L",RIGHT:"R",DOOR:"D",FRONT:"F",ROOF:"T",FLOOR:"B"
+    };
+    const expectedPrefix=finding.container_face?expectedFacePrefix[finding.container_face]??null:null;
+    if(expectedPrefix&&finalCode[0]!==expectedPrefix){
+      throw new Error("Location code face does not match the selected container face.");
     }
     const prediction=await this.latestLocationPrediction(input.findingId);
     const decision=prediction?.selected_code===finalCode?"APPROVED":"CORRECTED";
