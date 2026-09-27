@@ -94,7 +94,7 @@ export interface FaceVerification {
   detectedFace: "LEFT" | "RIGHT" | null;
   confidence: number;
   status: FaceVerificationStatus;
-  evidence: "DOOR_PLUS_SIDE_REFERENCE" | null;
+  evidence: "DOOR_PLUS_SIDE_REFERENCE" | "FIXED_CAMERA_PROFILE" | null;
   reason: string;
 }
 

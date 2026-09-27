@@ -77,7 +77,12 @@ export class MoondreamDamageMarker {
       : {found:false,model:MODEL,geometry:null,raw};
   }
 
-  async locateOverview(file:File,face:string,knownReferenceBox?:{x:number;y:number;width:number;height:number}|null){
+  async locateOverview(
+    file:File,
+    face:string,
+    knownReferenceBox?:{x:number;y:number;width:number;height:number}|null,
+    options?:{skipDoorDetection?:boolean}
+  ){
     const image=await this.imageData(file);
     const faceName=String(face||"container").toLowerCase();
     const damageTarget=
@@ -88,11 +93,11 @@ export class MoondreamDamageMarker {
       "do not select an isolated hinge, locking bar, side panel or another background container";
 
     if(knownReferenceBox){
-      const [damageRaw,doorRaw]=await Promise.all([
-        this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3}),
-        this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2})
-      ]);
-      const damageBox=largestBox(damageRaw),doorBox=largestBox(doorRaw);
+      const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
+      const doorRaw=options?.skipDoorDetection
+        ? null
+        : await this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2});
+      const damageBox=largestBox(damageRaw),doorBox=doorRaw?largestBox(doorRaw):null;
       return {
         found:Boolean(damageBox),
         model:MODEL,
@@ -104,14 +109,16 @@ export class MoondreamDamageMarker {
     }
 
     const referenceTarget="entire visible "+faceName+" side face of the shipping container including its outer structural frame; exclude the door-end plane, front-end plane and background containers";
-    const [damageRaw,referenceRaw,doorRaw]=await Promise.all([
+    const [damageRaw,referenceRaw]=await Promise.all([
       this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3}),
-      this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3}),
-      this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2})
+      this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3})
     ]);
+    const doorRaw=options?.skipDoorDetection
+      ? null
+      : await this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2});
     const damageBox=largestBox(damageRaw);
     const referenceBox=largestBox(referenceRaw);
-    const doorBox=largestBox(doorRaw);
+    const doorBox=doorRaw?largestBox(doorRaw):null;
     return {
       found:Boolean(damageBox),
       model:MODEL,

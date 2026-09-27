@@ -15,12 +15,17 @@ import {
 } from "../domain/container/faceHomography";
 import { inferDoorEndDetection, inferFaceVerification } from "../domain/container/doorEndOrientation";
 import { CedexRepository } from "../infrastructure/d1/cedexRepository";
+import { fixedCameraProfile } from "../domain/container/fixedCameraProfile";
 import { MoondreamDamageMarker } from "../infrastructure/ai/moondreamDamageMarker";
 
 type CaptureMetadata={
   source?:unknown;
   measurementQuality?:unknown;
   referenceFrame?:unknown;
+  fixedCameraMode?:unknown;
+  fixedCameraId?:unknown;
+  fixedCameraFace?:unknown;
+  fixedDoorEndInImage?:unknown;
 };
 
 function normalizedBox(value:unknown):NormalizedBox|null{
@@ -39,13 +44,15 @@ function normalizedBox(value:unknown):NormalizedBox|null{
 
 function captureInfo(value:unknown){
   if(!value||typeof value!=="object"||Array.isArray(value)){
-    return {source:"unknown",measurementQuality:"UNKNOWN",referenceFrame:null as NormalizedBox|null};
+    return {source:"unknown",measurementQuality:"UNKNOWN",referenceFrame:null as NormalizedBox|null,fixedCameraMode:false,fixedCameraId:null as string|null};
   }
   const meta=value as CaptureMetadata;
   const source=typeof meta.source==="string"?meta.source.toLowerCase():"unknown";
   const measurementQuality=typeof meta.measurementQuality==="string"?meta.measurementQuality.toUpperCase():"UNKNOWN";
   const referenceFrame=source==="guided_camera"?normalizedBox(meta.referenceFrame):null;
-  return {source,measurementQuality,referenceFrame};
+  const fixedCameraMode=meta.fixedCameraMode===true;
+  const fixedCameraId=typeof meta.fixedCameraId==="string"?meta.fixedCameraId.toUpperCase():null;
+  return {source,measurementQuality,referenceFrame,fixedCameraMode,fixedCameraId};
 }
 
 function expectedAspect(face:string,geometry:{
@@ -85,10 +92,13 @@ export class LocationSuggestionService{
     if(!context)throw new Error("Finding not found.");
     const geometry=await this.repo.geometryForFinding(input.findingId);
     const capture=captureInfo(input.captureMetadata);
+    const fixedCamera=capture.fixedCameraMode?fixedCameraProfile(capture.fixedCameraId):null;
+    const fixedCameraMatches=Boolean(fixedCamera&&fixedCamera.face===context.container_face);
     const located=await this.marker.locateOverview(
       input.file,
       context.container_face,
-      capture.referenceFrame
+      capture.referenceFrame,
+      {skipDoorDetection:fixedCameraMatches}
     );
 
     const referenceBox=located.referenceBox;
@@ -104,25 +114,36 @@ export class LocationSuggestionService{
     const knownGeometryAvailable=expected!==null;
     const guidedQualityOk=!guided||["GOOD","USABLE"].includes(capture.measurementQuality);
     const galleryGeometryOk=guided||(score!==null&&score>=0.68);
-    const faceVerification=inferFaceVerification({
-      selectedFace:context.container_face,
-      door:doorEndDetection,
-      hasSideReference:Boolean(referenceBox),
-      geometryScore:score,
-      guidedReference:guided
-    });
-    const orientationConflict=faceVerification.status==="MISMATCH";
+    const faceVerification=fixedCameraMatches&&sideSupported
+      ?{
+          selectedFace:context.container_face,
+          detectedFace:context.container_face as "LEFT"|"RIGHT",
+          confidence:1,
+          status:"MATCH" as const,
+          evidence:"FIXED_CAMERA_PROFILE" as const,
+          reason:"Container face and orientation come from the fixed POC camera profile."
+        }
+      :inferFaceVerification({
+          selectedFace:context.container_face,
+          door:doorEndDetection,
+          hasSideReference:Boolean(referenceBox),
+          geometryScore:score,
+          guidedReference:guided
+        });
+    const orientationConflict=!fixedCameraMatches&&faceVerification.status==="MISMATCH";
     const autoUsable=Boolean(referenceBox)&&sideSupported&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk&&!orientationConflict;
 
     if(!located.found||!located.damageBox){
       const noDamageReason=!sideSupported
-        ?"Automatic CEDEX location is enabled for LEFT/RIGHT side overviews in this POC. Enter the location manually for this face."
+        ?"Automatic CEDEX location is enabled for fixed Cameras R/L in this POC. Enter the location manually for Camera "+(fixedCamera?.id??"—")+" / "+context.container_face+"."
         :orientationConflict
-          ?doorEndDetection.reason+" Verify the selected LEFT/RIGHT face before calculating the location."
+          ?faceVerification.reason+" Verify the camera/finding setup before calculating the location."
           :!referenceBox
-            ?doorEndDetection.doorDominant
-              ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
-              :"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
+            ?fixedCameraMatches
+              ?"Fixed Camera "+fixedCamera!.id+" supplies face/orientation, but usable container geometry was not established from this overview."
+              :doorEndDetection.doorDominant
+                ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with more side panel visible."
+                :"Container face reference could not be established automatically."
             :!knownGeometryAvailable
               ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
               :!guidedQualityOk
@@ -140,11 +161,13 @@ export class LocationSuggestionService{
           found:false,
           damageBox:null,
           referenceBox,
-          referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+          referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
           geometryScore:score,
           doorEndDetection,
           doorBox:located.doorBox??null,
           faceVerification,
+          fixedCameraId:fixedCamera?.id??null,
+          fixedCameraFace:fixedCamera?.face??null,
           orientationConflict,
           autoUsable,
           reason:noDamageReason
@@ -155,12 +178,14 @@ export class LocationSuggestionService{
           isoCode:context.observed_iso_code,
           captureSource:capture.source,
           measurementQuality:capture.measurementQuality,
-          referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+          referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
           detectedDoorEnd:doorEndDetection.side,
           doorOrientationConfidence:doorEndDetection.confidence,
           aiDetectedFace:faceVerification.detectedFace,
           aiFaceConfidence:faceVerification.confidence,
           aiFaceVerificationStatus:faceVerification.status,
+          fixedCameraId:fixedCamera?.id??null,
+          fixedCameraFace:fixedCamera?.face??null,
           orientationConflict
         }
       });
@@ -171,11 +196,13 @@ export class LocationSuggestionService{
         point:null,
         damageBox:null,
         referenceBox,
-        referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+        referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
         geometryScore:score,
         doorEndDetection,
         doorBox:located.doorBox??null,
         faceVerification,
+        fixedCameraId:fixedCamera?.id??null,
+        fixedCameraFace:fixedCamera?.face??null,
         orientationConflict,
         autoUsable,
         location:{code:null,reviewRequired:true,reason:noDamageReason}
@@ -203,9 +230,11 @@ export class LocationSuggestionService{
       (!guided&&score!==null&&score<0.82);
 
     const reason=orientationConflict
-      ?faceVerification.reason+" Verify or correct the surveyed face before accepting the CEDEX location."
+      ?faceVerification.reason+" Verify the camera/finding setup before accepting the CEDEX location."
+      :fixedCameraMatches&&referenceBox
+        ?calculated?.reason??"Calculated from fixed camera face/orientation and overview geometry."
       :faceVerification.status==="UNVERIFIED"&&referenceBox&&galleryGeometryOk
-        ?"AI could not independently verify the surveyed face. CEDEX location is calculated from the surveyor-selected face and usable geometry; surveyor confirmation is required."
+        ?"AI could not independently verify the surveyed face. CEDEX location is calculated from the selected face and usable geometry; surveyor confirmation is required."
       :!referenceBox
         ?doorEndDetection.doorDominant
           ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
@@ -229,11 +258,13 @@ export class LocationSuggestionService{
         damageBox:located.damageBox,
         point,
         referenceBox,
-        referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+        referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
         geometryScore:score,
         doorEndDetection,
         doorBox:located.doorBox??null,
         faceVerification,
+        fixedCameraId:fixedCamera?.id??null,
+        fixedCameraFace:fixedCamera?.face??null,
         orientationConflict,
         calculatedLocation:calculated,
         selectedCode,
@@ -246,12 +277,14 @@ export class LocationSuggestionService{
         isoCode:context.observed_iso_code,
         captureSource:capture.source,
         measurementQuality:capture.measurementQuality,
-        referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+        referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
         detectedDoorEnd:doorEndDetection.side,
         doorOrientationConfidence:doorEndDetection.confidence,
         aiDetectedFace:faceVerification.detectedFace,
         aiFaceConfidence:faceVerification.confidence,
         aiFaceVerificationStatus:faceVerification.status,
+        fixedCameraId:fixedCamera?.id??null,
+        fixedCameraFace:fixedCamera?.face??null,
         orientationConflict
       }
     });
@@ -263,7 +296,7 @@ export class LocationSuggestionService{
       point,
       damageBox:located.damageBox,
       referenceBox,
-      referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+      referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
       geometryScore:score,
       doorEndDetection,
       doorBox:located.doorBox??null,
