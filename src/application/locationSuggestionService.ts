@@ -273,6 +273,11 @@ export class LocationSuggestionService{
       throw new Error("Manual four-corner face mapping is currently supported for LEFT/RIGHT side findings.");
     }
     if(input.doorEnd!=="LEFT"&&input.doorEnd!=="RIGHT")throw new Error("Select which side of the photo contains the door end.");
+    const expectedDoorEnd=context.container_face==="RIGHT"?"LEFT":"RIGHT";
+    if(input.doorEnd!==expectedDoorEnd){
+      const suggestedFace=input.doorEnd==="LEFT"?"RIGHT":"LEFT";
+      throw new Error("Door-end orientation conflicts with the selected "+context.container_face+" side. The photo orientation suggests "+suggestedFace+" side; verify the finding face before calculating CEDEX location.");
+    }
     if(!Array.isArray(input.corners)||input.corners.length!==4||!isValidFaceQuad(input.corners)){
       throw new Error("Mark the four container-face corners in order: top-left, top-right, bottom-right, bottom-left.");
     }
