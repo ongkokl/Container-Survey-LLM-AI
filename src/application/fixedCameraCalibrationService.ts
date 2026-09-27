@@ -1,14 +1,15 @@
 import { fixedCameraProfile } from "../domain/container/fixedCameraProfile";
 import {
   isValidFaceQuad,
-  mapBoxToFace,
-  mapPointToFace,
+  mapBoxToCalibratedFace,
+  mapPointToCalibratedFace,
   type FaceQuad
 } from "../domain/container/faceHomography";
 import {
-  suggestCedexLocationOnNormalizedSide,
+  suggestCedexLocationOnNormalizedFace,
   type NormalizedBox,
-  type NormalizedPoint
+  type NormalizedPoint,
+  type SurveyFace
 } from "../domain/container/locationCode";
 import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 
@@ -44,52 +45,46 @@ export class FixedCameraCalibrationService {
     const finding=await this.repo.findingContext(findingId);
     if(!finding)throw new Error("Finding not found.");
     const camera=fixedCameraProfile(cameraId);
-    if(!camera)throw new Error("Select a valid fixed camera: R, L, D or T.");
-    if(camera.id!=="R"&&camera.id!=="L")throw new Error("Automatic fixed-camera CEDEX side calibration is currently enabled for Cameras R/L only.");
+    if(!camera)throw new Error("Select a valid fixed camera: R, L, D, F, T or B.");
     if(camera.face!==finding.container_face)throw new Error("Fixed camera profile does not match this finding face.");
-    if(!camera.doorEndInImage)throw new Error("Fixed camera door orientation is unavailable.");
-    const face=camera.face as "LEFT"|"RIGHT";
-    const doorEndInImage=camera.doorEndInImage as "LEFT"|"RIGHT";
+    const face=camera.face as SurveyFace;
     const geometry=await this.repo.geometryForFinding(findingId);
     const lengthFt=Number(geometry?.lengthFt)||Number(finding.length_ft)||0;
     const heightMm=Number(geometry?.heightMm)||0;
     if(![20,40].includes(lengthFt)||heightMm<=0){
       throw new Error("Known container length/height geometry is required before fixed-camera calibration can be used.");
     }
-    return {finding,camera,face,doorEndInImage,geometry,lengthFt,heightMm};
+    return {finding,camera,face,geometry,lengthFt,heightMm};
   }
 
   async get(findingId:string,cameraId:string){
     const ctx=await this.context(findingId,cameraId);
     const stored=await this.repo.fixedCameraCalibration(ctx.camera.id,ctx.lengthFt,ctx.heightMm);
-    if(!stored)return {
-      available:false,
+    const common={
       cameraId:ctx.camera.id,
       face:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.doorEndInImage,
+      doorEndInImage:ctx.camera.doorEndInImage,
+      canonicalFlipX:ctx.camera.canonicalFlipX,
+      canonicalFlipY:ctx.camera.canonicalFlipY
+    };
+    if(!stored)return {
+      ...common,
+      available:false,
       calibrationVersion:null,
       corners:null
     };
     const corners=asFaceQuad(stored.corners);
     if(!corners)return {
+      ...common,
       available:false,
-      cameraId:ctx.camera.id,
-      face:ctx.face,
-      lengthFt:ctx.lengthFt,
-      heightMm:ctx.heightMm,
-      doorEndInImage:ctx.doorEndInImage,
       calibrationVersion:stored.calibrationVersion,
       corners:null
     };
     return {
+      ...common,
       available:true,
-      cameraId:ctx.camera.id,
-      face:ctx.face,
-      lengthFt:ctx.lengthFt,
-      heightMm:ctx.heightMm,
-      doorEndInImage:ctx.doorEndInImage,
       calibrationVersion:stored.calibrationVersion,
       corners,
       updatedAt:stored.updatedAt
@@ -105,7 +100,7 @@ export class FixedCameraCalibrationService {
       containerFace:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.doorEndInImage,
+      doorEndInImage:ctx.camera.doorEndInImage,
       corners
     });
     return {
@@ -114,7 +109,9 @@ export class FixedCameraCalibrationService {
       face:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.doorEndInImage,
+      doorEndInImage:ctx.camera.doorEndInImage,
+      canonicalFlipX:ctx.camera.canonicalFlipX,
+      canonicalFlipY:ctx.camera.canonicalFlipY,
       calibrationVersion:stored?.calibrationVersion??1,
       corners,
       updatedAt:stored?.updatedAt??new Date().toISOString()
@@ -135,13 +132,17 @@ export class FixedCameraCalibrationService {
       );
     }
 
+    const orientation={
+      flipX:calibration.canonicalFlipX,
+      flipY:calibration.canonicalFlipY
+    };
     let normalizedDamage:NormalizedBox;
     let normalizedPoint:NormalizedPoint|null=null;
     let markType:"BOX"|"POINT";
 
     const box=validBox(input.damageBox);
     if(box){
-      normalizedDamage=mapBoxToFace(box,calibration.corners,calibration.doorEndInImage);
+      normalizedDamage=mapBoxToCalibratedFace(box,calibration.corners,orientation);
       normalizedPoint={
         x:normalizedDamage.x+normalizedDamage.width/2,
         y:normalizedDamage.y+normalizedDamage.height/2
@@ -150,7 +151,7 @@ export class FixedCameraCalibrationService {
     }else{
       const point=validPoint(input.damagePoint);
       if(!point)throw new Error("Mark the damage area or damage point first.");
-      normalizedPoint=mapPointToFace(point,calibration.corners,calibration.doorEndInImage);
+      normalizedPoint=mapPointToCalibratedFace(point,calibration.corners,orientation);
       const tiny=1e-6;
       normalizedDamage={
         x:Math.max(0,normalizedPoint.x-tiny/2),
@@ -161,7 +162,7 @@ export class FixedCameraCalibrationService {
       markType="POINT";
     }
 
-    const result=suggestCedexLocationOnNormalizedSide({
+    const result=suggestCedexLocationOnNormalizedFace({
       face:calibration.face,
       lengthFt:calibration.lengthFt,
       damageBox:normalizedDamage
