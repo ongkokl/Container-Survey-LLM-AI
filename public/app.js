@@ -1041,7 +1041,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
   const requestId=++overviewAiRequest;
   if(!overviewFile){locationReview.hidden=true;overviewMarkTools.hidden=true;faceReferenceTools.hidden=true;updateFindingReady();return;}
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
-  findingMessage.textContent="Fixed Camera "+(selectedFixedCamera()?.id??"—")+" overview loaded. Face/orientation come from the camera profile; AI will locate damage and usable container geometry.";
+  findingMessage.textContent="Fixed Camera "+(selectedFixedCamera()?.id??"—")+" overview loaded. Face/orientation and perspective come from the stored camera profile/calibration; AI will locate the damage area.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     overviewMarkTools.hidden=false;
     setOverviewMarkMode("AREA");
