@@ -516,7 +516,9 @@ const FIXED_CAMERA_PROFILES={
   R:{id:"R",label:"Right side camera",face:"RIGHT",doorEnd:"LEFT",zoomMode:"OPTICAL"},
   L:{id:"L",label:"Left side camera",face:"LEFT",doorEnd:"RIGHT",zoomMode:"OPTICAL"},
   D:{id:"D",label:"Door-end camera",face:"DOOR",doorEnd:null,zoomMode:"OPTICAL"},
-  T:{id:"T",label:"Roof / top camera",face:"ROOF",doorEnd:null,zoomMode:"OPTICAL"}
+  F:{id:"F",label:"Front-end camera",face:"FRONT",doorEnd:null,zoomMode:"OPTICAL"},
+  T:{id:"T",label:"Roof / top camera",face:"ROOF",doorEnd:"LEFT",zoomMode:"OPTICAL"},
+  B:{id:"B",label:"Floor / bottom camera",face:"FLOOR",doorEnd:"LEFT",zoomMode:"OPTICAL"}
 };
 const fixedCameraDebug=new URLSearchParams(window.location.search).get("debugGeometry")==="1";
 function selectedFixedCamera(){
@@ -605,7 +607,7 @@ addFindingBtn.addEventListener("click",()=>{
 
 createFindingBtn.addEventListener("click",async()=>{
   const camera=selectedFixedCamera();
-  if(!camera){findingMessage.textContent="Select fixed camera R, L, D or T first.";return;}
+  if(!camera){findingMessage.textContent="Select fixed camera R, L, D, F, T or B first.";return;}
   findingFace.value=camera.face;
   setBusy(createFindingBtn,true,"Creating…","Create finding");
   try{
@@ -661,8 +663,10 @@ function normalizedLocationCode(value){
 function validLocationCode(){
   const code=normalizedLocationCode(locationCodeInput.value);
   if(!LOCATION_CODE_PATTERN.test(code))return false;
-  if(findingFace.value==="LEFT"&&code[0]!=="L")return false;
-  if(findingFace.value==="RIGHT"&&code[0]!=="R")return false;
+  const expectedPrefix={
+    LEFT:"L",RIGHT:"R",DOOR:"D",FRONT:"F",ROOF:"T",FLOOR:"B"
+  }[findingFace.value];
+  if(expectedPrefix&&code[0]!==expectedPrefix)return false;
   return true;
 }
 
@@ -760,7 +764,7 @@ function renderLocationResult(result){
   locationAutoUsable=Boolean(result?.autoUsable);
   aiDoorEndBox=null;
   const camera=selectedFixedCamera();
-  const sideFinding=["LEFT","RIGHT"].includes(findingFace.value);
+  const calibratedFinding=["LEFT","RIGHT","DOOR","FRONT","ROOF","FLOOR"].includes(findingFace.value);
   aiDetectedFace=findingFace.value||null;
   aiFaceConfidence=1;
   detectedDoorSide=camera?.doorEnd??null;
@@ -781,12 +785,12 @@ function renderLocationResult(result){
 
   if(fixedCameraDebug){
     const calibration=result?.calibration??null;
-    faceMarkHelp.textContent=sideFinding
+    faceMarkHelp.textContent=calibratedFinding
       ?calibration?.available
         ?"Calibration loaded: Camera "+camera.id+" · "+calibration.lengthFt+" ft · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+". Recalibrate only if the physical camera/stop position changes."
         :"No stored calibration for Camera "+camera.id+" and this container size. Mark the 4 face corners once to create it."
-      :"Fixed-camera calibration is currently used for R/L side cameras only.";
-    markFaceBtn.hidden=!sideFinding;
+      :"Fixed-camera calibration is unavailable for this face.";
+    markFaceBtn.hidden=!calibratedFinding;
     markFaceBtn.textContent=calibration?.available?"Recalibrate fixed camera":"Calibrate fixed camera with 4 corners";
   }
 
@@ -815,7 +819,7 @@ function renderLocationResult(result){
         (fixedCameraDebug?" Use Calibrate fixed camera with 4 corners once.":" Admin calibration is required.");
   }else if(result?.referenceSource==="FIXED_CAMERA_PROFILE"){
     locationGeometryMessage.textContent=
-      "Fixed Camera "+(camera?.id??"—")+" supplies face "+(camera?.face??findingFace.value)+". Automatic CEDEX location for this face is outside the R/L side-location POC.";
+      "Fixed Camera "+(camera?.id??"—")+" supplies face "+(camera?.face??findingFace.value)+". Stored calibration is required before automatic CEDEX location.";
   }else if(result?.referenceSource==="GUIDED_FRAME"){
     locationGeometryMessage.textContent=
       "Reference: guided known-geometry frame"+
@@ -833,9 +837,8 @@ function renderLocationResult(result){
       "Fixed Camera "+(camera?.id??"—")+" supplies face/orientation, but usable container geometry was not established from this overview."+
       (fixedCameraDebug?" Use the debug 4-corner calibration if needed.":"");
   }else{
-    locationGeometryMessage.textContent=["LEFT","RIGHT"].includes(findingFace.value)
-      ?"Fixed Camera "+(camera?.id??"—")+" supplies face/orientation; container geometry still needs a usable overview reference."
-      :"Fixed Camera "+(camera?.id??"—")+" supplies face "+(camera?.face??findingFace.value)+". Automatic CEDEX location for this face is not enabled in the side-location POC.";
+    locationGeometryMessage.textContent=
+      "Fixed Camera "+(camera?.id??"—")+" supplies face/orientation; a stored calibration is required for automatic CEDEX location.";
   }
   locationCodeInput.setAttribute("aria-invalid",validLocationCode()?"false":locationCodeInput.value?"true":"false");
 }
@@ -847,13 +850,13 @@ async function recalculateLocationFromMark(){
   if(!usingArea&&!locationPoint)return;
   const hasFaceQuad=Array.isArray(locationReferenceQuad)&&locationReferenceQuad.length===4;
   const fixedCamera=selectedFixedCamera();
-  const fixedSideCamera=Boolean(fixedCamera&&["R","L"].includes(fixedCamera.id));
-  if(!fixedSideCamera&&hasFaceQuad&&!["LEFT","RIGHT"].includes(doorEndSide.value)){
-    locationSuggestion.textContent="Fixed camera orientation is unavailable for this side-camera debug calculation.";
+  const fixedCalibratedCamera=Boolean(fixedCamera&&["R","L","D","F","T","B"].includes(fixedCamera.id));
+  if(!fixedCalibratedCamera&&hasFaceQuad&&!["LEFT","RIGHT"].includes(doorEndSide.value)){
+    locationSuggestion.textContent="Fixed camera orientation is unavailable for this debug calculation.";
     updateFindingReady();
     return;
   }
-  if(!fixedSideCamera&&!hasFaceQuad&&(!locationReferenceBox||!locationAutoUsable)){
+  if(!fixedCalibratedCamera&&!hasFaceQuad&&(!locationReferenceBox||!locationAutoUsable)){
     locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. A usable container reference is required for automatic CEDEX location.";
     updateFindingReady();
     return;
@@ -861,7 +864,7 @@ async function recalculateLocationFromMark(){
   const requestId=++locationRecalcRequest;
   locationSuggestion.textContent="Recalculating CEDEX location from the marked "+(usingArea?"area":"point")+"…";
   try{
-    const result=fixedSideCamera
+    const result=fixedCalibratedCamera
       ? await apiJson("/api/cedex/location-from-fixed-camera",{
           method:"POST",
           headers:{"Content-Type":"application/json"},
@@ -902,7 +905,7 @@ async function recalculateLocationFromMark(){
       locationCodeInput.value=result.code;
       locationSuggestion.textContent=(usingArea?"Marked area":"Marked point")+" location: "+result.code+
         (result.reviewRequired?" · close to a CEDEX zone boundary; verify before saving":"");
-      if(fixedSideCamera&&result?.calibration?.available){
+      if(fixedCalibratedCamera&&result?.calibration?.available){
         locationGeometryMessage.textContent="Reference: stored fixed Camera "+fixedCamera.id+" calibration · "+result.calibration.lengthFt+" ft · "+result.calibration.heightMm+" mm · version "+result.calibration.calibrationVersion+".";
       }else if(hasFaceQuad){
         locationGeometryMessage.textContent="Reference: surveyor-marked 4-corner perspective · door end at image "+doorEndSide.value.toLowerCase();
@@ -980,13 +983,9 @@ function drawOverviewComposite(){
 }
 
 function beginFaceMarking(){
-  if(!["LEFT","RIGHT"].includes(findingFace.value)){
-    faceMarkHelp.textContent="Four-corner face mapping is currently available for LEFT/RIGHT side findings.";
-    return;
-  }
-  if(!["LEFT","RIGHT"].includes(doorEndSide.value)){
-    faceMarkHelp.textContent="Select the door-end position first. The selected finding face only provides an expected orientation; it is not an AI detection.";
-    doorEndSide.focus();
+  const camera=selectedFixedCamera();
+  if(!camera||!["R","L","D","F","T","B"].includes(camera.id)){
+    faceMarkHelp.textContent="Select a fixed camera before calibration.";
     return;
   }
   faceMarkResumeMode=overviewMarkMode;
@@ -998,14 +997,14 @@ function beginFaceMarking(){
   locationAutoUsable=false;
   locationCodeInput.value="";
   markFaceBtn.textContent="Restart 4-corner marking";
-  faceMarkHelp.textContent="One-time camera calibration: tap 1 top-left, 2 top-right, 3 bottom-right, 4 bottom-left of the complete container side face.";
+  faceMarkHelp.textContent="One-time camera calibration: tap 1 top-left, 2 top-right, 3 bottom-right, 4 bottom-left of the complete visible "+findingFace.value.toLowerCase()+" face.";
   drawOverviewComposite();
   updateFindingReady();
 }
 
 async function saveFixedCameraCalibration(corners){
   const camera=selectedFixedCamera();
-  if(!fixedCameraDebug||!currentFinding||!camera||!["R","L"].includes(camera.id))return null;
+  if(!fixedCameraDebug||!currentFinding||!camera||!["R","L","D","F","T","B"].includes(camera.id))return null;
   const calibration=await apiJson("/api/fixed-camera/calibration",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
@@ -1152,7 +1151,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
     markFaceBtn.textContent="Remap 4 container-face corners";
     drawOverviewComposite();
     const hasDamageMark=overviewMarkMode==="AREA"?validNormalizedBox(locationArea):Boolean(locationPoint);
-    if(fixedCameraDebug&&["R","L"].includes(selectedFixedCamera()?.id??"")){
+    if(fixedCameraDebug&&["R","L","D","F","T","B"].includes(selectedFixedCamera()?.id??"")){
       faceMarkHelp.textContent="Saving fixed-camera calibration…";
       saveFixedCameraCalibration(locationReferenceQuad).then(()=>{
         if(hasDamageMark){
