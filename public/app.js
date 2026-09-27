@@ -451,6 +451,9 @@ const overviewGalleryPhoto=document.querySelector("#overviewGalleryPhoto");
 const overviewStage=document.querySelector("#overviewStage");
 const overviewPreview=document.querySelector("#overviewPreview");
 const overviewCanvas=document.querySelector("#overviewCanvas");
+const overviewMarkTools=document.querySelector("#overviewMarkTools");
+const markAreaBtn=document.querySelector("#markAreaBtn");
+const markPointBtn=document.querySelector("#markPointBtn");
 const tapHelp=document.querySelector("#tapHelp");
 const locationReview=document.querySelector("#locationReview");
 const locationSuggestion=document.querySelector("#locationSuggestion");
@@ -490,9 +493,10 @@ let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
 
-let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,damageBox=null;
-let aiLocationPoint=null,aiDamageBox=null;
+let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,damageBox=null;
+let aiLocationPoint=null,aiLocationArea=null,aiDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
+let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 
@@ -561,6 +565,10 @@ createFindingBtn.addEventListener("click",async()=>{
     geometryReferenceText.textContent="";
     currentGeometry=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
     locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
+    locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
+    overviewMarkTools.hidden=true;overviewStage.dataset.markMode="AREA";
+    markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
+    markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
     locationReview.hidden=true;locationCodeInput.value="";locationCodeInput.removeAttribute("aria-invalid");
     locationSuggestion.textContent="Waiting for overview analysis…";locationGeometryMessage.textContent="";
     try{
@@ -596,14 +604,71 @@ function validLocationCode(){
   return true;
 }
 
+function centreOfBox(box){
+  return {x:box.x+box.width/2,y:box.y+box.height/2};
+}
+
+function validNormalizedBox(box){
+  return Boolean(box)&&[box.x,box.y,box.width,box.height].every(Number.isFinite)&&
+    box.x>=0&&box.y>=0&&box.width>0&&box.height>0&&box.x+box.width<=1.000001&&box.y+box.height<=1.000001;
+}
+
+function setOverviewMarkMode(mode){
+  overviewMarkMode=mode==="POINT"?"POINT":"AREA";
+  overviewStage.dataset.markMode=overviewMarkMode;
+  const area=overviewMarkMode==="AREA";
+  markAreaBtn.classList.toggle("active",area);
+  markAreaBtn.setAttribute("aria-pressed",String(area));
+  markPointBtn.classList.toggle("active",!area);
+  markPointBtn.setAttribute("aria-pressed",String(!area));
+  if(area){
+    if(!locationArea&&validNormalizedBox(aiLocationArea))locationArea={...aiLocationArea};
+    if(locationArea){
+      locationPoint=centreOfBox(locationArea);
+      drawBox(overviewCanvas,locationArea,!overviewEdited);
+      tapHelp.textContent="Damage area selected. Drag on the photo to redraw the full damaged area.";
+      recalculateLocationFromMark();
+    }else{
+      overviewCanvas.getContext("2d").clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+      tapHelp.textContent="Drag a box around the full damaged area. Use Pinpoint damage for a small local defect.";
+      updateFindingReady();
+    }
+  }else{
+    if(!locationPoint&&locationArea)locationPoint=centreOfBox(locationArea);
+    if(locationPoint){
+      drawTarget(overviewCanvas,locationPoint,!overviewEdited);
+      tapHelp.textContent="Damage point selected. Tap the damaged position to adjust.";
+      recalculateLocationFromMark();
+    }else{
+      overviewCanvas.getContext("2d").clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+      tapHelp.textContent="Tap the damaged position.";
+      updateFindingReady();
+    }
+  }
+}
+
+markAreaBtn.addEventListener("click",()=>setOverviewMarkMode("AREA"));
+markPointBtn.addEventListener("click",()=>setOverviewMarkMode("POINT"));
+
 function resetOverviewLocation(){
   locationReferenceBox=null;
   locationAutoUsable=false;
   aiLocationCode=null;
+  locationPoint=null;
+  locationArea=null;
+  aiLocationPoint=null;
+  aiLocationArea=null;
+  overviewEdited=false;
+  overviewDragStart=null;
+  overviewMarkMode="AREA";
   locationRecalcRequest++;
   locationCodeInput.value="";
   locationCodeInput.removeAttribute("aria-invalid");
   locationReview.hidden=false;
+  overviewMarkTools.hidden=false;
+  overviewStage.dataset.markMode="AREA";
+  markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
+  markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
   locationSuggestion.textContent="Analysing overview for CEDEX location…";
   locationGeometryMessage.textContent="";
 }
@@ -647,20 +712,27 @@ function renderLocationResult(result){
   locationCodeInput.setAttribute("aria-invalid",validLocationCode()?"false":locationCodeInput.value?"true":"false");
 }
 
-async function recalculateLocationFromMarkedPoint(){
-  if(!currentFinding||!locationPoint)return;
+async function recalculateLocationFromMark(){
+  if(!currentFinding)return;
+  const usingArea=overviewMarkMode==="AREA";
+  if(usingArea&&!validNormalizedBox(locationArea))return;
+  if(!usingArea&&!locationPoint)return;
   if(!locationReferenceBox||!locationAutoUsable){
-    locationSuggestion.textContent="Damage point updated. Enter the CEDEX location manually because the overview geometry is not reliable enough for automatic calculation.";
+    locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. Enter the CEDEX location manually because the overview geometry is not reliable enough for automatic calculation.";
     updateFindingReady();
     return;
   }
   const requestId=++locationRecalcRequest;
-  locationSuggestion.textContent="Recalculating CEDEX location from the marked point…";
+  locationSuggestion.textContent="Recalculating CEDEX location from the marked "+(usingArea?"area":"point")+"…";
   try{
-    const result=await apiJson("/api/cedex/location-from-point",{
+    const result=await apiJson(usingArea?"/api/cedex/location-from-box":"/api/cedex/location-from-point",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
+      body:JSON.stringify(usingArea?{
+        findingId:currentFinding.id,
+        damageBox:locationArea,
+        referenceBox:locationReferenceBox
+      }:{
         findingId:currentFinding.id,
         point:locationPoint,
         referenceBox:locationReferenceBox
@@ -669,10 +741,11 @@ async function recalculateLocationFromMarkedPoint(){
     if(requestId!==locationRecalcRequest)return;
     if(result?.code){
       locationCodeInput.value=result.code;
-      locationSuggestion.textContent="Marked point location: "+result.code+(result.reviewRequired?" · close to a CEDEX zone boundary; verify before saving":"");
+      locationSuggestion.textContent=(usingArea?"Marked area":"Marked point")+" location: "+result.code+
+        (result.reviewRequired?" · close to a CEDEX zone boundary; verify before saving":"");
     }else{
       locationCodeInput.value="";
-      locationSuggestion.textContent=result?.reason||"Unable to calculate a location code from this point. Enter it manually.";
+      locationSuggestion.textContent=result?.reason||"Unable to calculate a location code from this mark. Enter it manually.";
     }
   }catch(e){
     if(requestId!==locationRecalcRequest)return;
@@ -690,19 +763,21 @@ locationCodeInput.addEventListener("input",()=>{
 });
 
 function selectOverviewPhoto(file,source,captureMetadata=null){
-  overviewFile=file??null;locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+  overviewFile=file??null;
   overviewCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"overview");
   resetOverviewLocation();
   const requestId=++overviewAiRequest;
-  if(!overviewFile){locationReview.hidden=true;updateFindingReady();return;}
+  if(!overviewFile){locationReview.hidden=true;overviewMarkTools.hidden=true;updateFindingReady();return;}
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   findingMessage.textContent=source==="gallery"
-    ?"Overview loaded from Gallery. AI will check both the damage and container geometry before suggesting a CEDEX location."
+    ?"Overview loaded from Gallery. AI will check the damage area and container geometry before suggesting a CEDEX location."
     :source==="guided"
-      ?"Guided overview captured. Verify the proposed damage point and CEDEX location before saving."
+      ?"Guided overview captured. Verify the proposed damage area and CEDEX location before saving."
       :"Overview captured. AI will establish the container reference before suggesting a CEDEX location.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
-    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible structural damage…";
+    overviewMarkTools.hidden=false;
+    setOverviewMarkMode("AREA");
+    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible structural damage area…";
     try{
       const upload=await compressForOcr(overviewFile);
       const dimensions=await imageDimensions(upload,overviewPreview);
@@ -715,24 +790,37 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
       const result=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:form});
       if(requestId!==overviewAiRequest)return;
       renderLocationResult(result);
-      if(result.found&&result.point){
-        aiLocationPoint={...result.point};
-        if(!overviewEdited){
-          locationPoint={...result.point};
-          drawTarget(overviewCanvas,locationPoint,true);
-          tapHelp.textContent="AI proposed this damage position. Tap the overview to correct it if needed.";
-        }else if(locationPoint){
-          await recalculateLocationFromMarkedPoint();
-        }
+      aiLocationArea=validNormalizedBox(result?.damageBox)?{...result.damageBox}:null;
+      aiLocationPoint=result?.point?{...result.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
+
+      if(!overviewEdited&&aiLocationArea){
+        locationArea={...aiLocationArea};
+        locationPoint=centreOfBox(locationArea);
+        overviewMarkMode="AREA";
+        markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
+        markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
+        overviewStage.dataset.markMode="AREA";
+        drawBox(overviewCanvas,locationArea,true);
+        tapHelp.textContent="AI proposed this damage area. Drag on the photo to redraw it, or switch to Pinpoint damage for a small defect.";
+      }else if(!overviewEdited&&aiLocationPoint){
+        locationPoint={...aiLocationPoint};
+        overviewMarkMode="POINT";
+        markPointBtn.classList.add("active");markPointBtn.setAttribute("aria-pressed","true");
+        markAreaBtn.classList.remove("active");markAreaBtn.setAttribute("aria-pressed","false");
+        overviewStage.dataset.markMode="POINT";
+        drawTarget(overviewCanvas,locationPoint,true);
+        tapHelp.textContent="AI proposed this damage point. Tap the photo to correct it, or switch to Draw damage area.";
+      }else if(overviewEdited){
+        await recalculateLocationFromMark();
       }else{
-        tapHelp.textContent="AI could not identify a reliable damage position. Tap the damaged position and enter the location code manually if needed.";
+        tapHelp.textContent="AI could not identify the damage area. Drag a box around the damage, or switch to Pinpoint damage for a small defect.";
       }
     }catch(e){
       if(requestId!==overviewAiRequest)return;
       locationAutoUsable=false;
       locationSuggestion.textContent="Automatic CEDEX location unavailable. Enter the location manually.";
       locationGeometryMessage.textContent=e instanceof Error?e.message:"Overview analysis unavailable.";
-      tapHelp.textContent="AI marking unavailable. Tap the damaged position.";
+      tapHelp.textContent="AI marking unavailable. Draw the damage area or switch to pinpoint.";
     }
     updateFindingReady();
   });
@@ -761,8 +849,10 @@ function syncAnnotationCanvas(img,canvas){
   if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
 }
 function redrawAnnotations(){
-  if(!overviewStage.hidden&&overviewPreview.complete&&locationPoint){
-    syncAnnotationCanvas(overviewPreview,overviewCanvas);drawTarget(overviewCanvas,locationPoint,!overviewEdited);
+  if(!overviewStage.hidden&&overviewPreview.complete){
+    syncAnnotationCanvas(overviewPreview,overviewCanvas);
+    if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited);
+    else if(locationPoint)drawTarget(overviewCanvas,locationPoint,!overviewEdited);
   }
   if(!closeupStage.hidden&&closeupPreview.complete&&damageBox){
     syncAnnotationCanvas(closeupPreview,closeupCanvas);drawBox(closeupCanvas,damageBox,!closeupEdited);
@@ -771,13 +861,67 @@ function redrawAnnotations(){
 window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)requestAnimationFrame(redrawAnnotations);});
 
+function overviewPointer(event){
+  const rect=overviewCanvas.getBoundingClientRect();
+  return {
+    x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
+    y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
+  };
+}
+
 overviewCanvas.addEventListener("pointerdown",(event)=>{
   overviewEdited=true;
-  const rect=overviewCanvas.getBoundingClientRect();
-  locationPoint={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
+  const point=overviewPointer(event);
+  if(overviewMarkMode==="AREA"){
+    overviewDragStart=point;
+    overviewCanvas.setPointerCapture(event.pointerId);
+    return;
+  }
+  locationPoint=point;
   drawTarget(overviewCanvas,locationPoint,false);
   tapHelp.textContent="Damage position marked. Tap again to adjust.";
-  recalculateLocationFromMarkedPoint();
+  recalculateLocationFromMark();
+});
+
+overviewCanvas.addEventListener("pointermove",(event)=>{
+  if(overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
+  const end=overviewPointer(event);
+  const preview={
+    x:Math.min(overviewDragStart.x,end.x),
+    y:Math.min(overviewDragStart.y,end.y),
+    width:Math.abs(end.x-overviewDragStart.x),
+    height:Math.abs(end.y-overviewDragStart.y)
+  };
+  if(preview.width>0&&preview.height>0)drawBox(overviewCanvas,preview,false);
+});
+
+overviewCanvas.addEventListener("pointerup",(event)=>{
+  if(overviewMarkMode!=="AREA"||!overviewDragStart)return;
+  const end=overviewPointer(event);
+  const area={
+    x:Math.min(overviewDragStart.x,end.x),
+    y:Math.min(overviewDragStart.y,end.y),
+    width:Math.abs(end.x-overviewDragStart.x),
+    height:Math.abs(end.y-overviewDragStart.y)
+  };
+  overviewDragStart=null;
+  if(overviewCanvas.hasPointerCapture(event.pointerId))overviewCanvas.releasePointerCapture(event.pointerId);
+  if(area.width<0.01||area.height<0.01){
+    tapHelp.textContent="Draw a larger box around the damaged area, or switch to Pinpoint damage.";
+    redrawAnnotations();
+    return;
+  }
+  locationArea=area;
+  locationPoint=centreOfBox(area);
+  drawBox(overviewCanvas,locationArea,false);
+  tapHelp.textContent="Damage area marked. Drag again to adjust the full damaged extent.";
+  recalculateLocationFromMark();
+});
+
+overviewCanvas.addEventListener("pointercancel",(event)=>{
+  overviewDragStart=null;
+  if(overviewCanvas.hasPointerCapture(event.pointerId))overviewCanvas.releasePointerCapture(event.pointerId);
+  redrawAnnotations();
 });
 
 let dragStart=null;
@@ -830,8 +974,9 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
 function updateFindingReady(){
   const code=normalizedLocationCode(locationCodeInput.value);
   const locationValid=validLocationCode();
+  const overviewMarkReady=overviewMarkMode==="AREA"?validNormalizedBox(locationArea):Boolean(locationPoint);
   if(locationCodeInput.value)locationCodeInput.setAttribute("aria-invalid",locationValid?"false":"true");
-  saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox&&locationValid);
+  saveFindingBtn.disabled=!(overviewFile&&closeupFile&&overviewMarkReady&&locationPoint&&damageBox&&locationValid);
 }
 
 async function uploadFindingPhoto(file,role,img,captureMetadata){
@@ -849,7 +994,9 @@ saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
     const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewCaptureMeta);
+    if(aiLocationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiLocationArea,createdBy:"AI"})});
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
+    if(overviewMarkMode==="AREA"&&locationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:locationArea,createdBy:"SURVEYOR"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
     if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});

@@ -124,6 +124,27 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (request.method === "POST" && url.pathname === "/api/cedex/location-from-box") {
+    try {
+      const body=await readJson<{
+        findingId?:string;
+        damageBox?:{x:number;y:number;width:number;height:number};
+        referenceBox?:{x:number;y:number;width:number;height:number};
+      }>(request);
+      const repo=new CedexRepository(env.DB);
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const service=new LocationSuggestionService(repo,new MoondreamDamageMarker(ai));
+      const result=await service.fromBox({
+        findingId:body.findingId??"",
+        damageBox:body.damageBox??{x:Number.NaN,y:Number.NaN,width:Number.NaN,height:Number.NaN},
+        referenceBox:body.referenceBox??{x:Number.NaN,y:Number.NaN,width:Number.NaN,height:Number.NaN}
+      });
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"LOCATION_BOX_FAILED",message:error instanceof Error?error.message:"Unable to calculate damage area location."},422);
+    }
+  }
+
   if (request.method === "POST" && url.pathname === "/api/cedex/location-from-point") {
     try {
       const body=await readJson<{

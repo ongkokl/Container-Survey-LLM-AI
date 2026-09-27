@@ -477,7 +477,7 @@ export class CedexRepository {
       this.db.prepare("INSERT INTO ai_runs (id,survey_id,finding_id,task_type,request_context_json,response_json,started_at,completed_at) VALUES (?,?,?,?,?,?,?,?)")
         .bind(runId,input.surveyId,input.findingId,"LOCATION_SUGGESTION",JSON.stringify({model:input.modelName,...input.requestContext}),JSON.stringify(input.response),now,now),
       this.db.prepare("INSERT INTO ai_predictions (id,ai_run_id,prediction_type,selected_code,confidence,status,created_at) VALUES (?,?, 'LOCATION',?,NULL,?,?)")
-        .bind(predictionId,input.selectedCode,input.status??"REVIEW_REQUIRED",now)
+        .bind(predictionId,runId,input.selectedCode,input.status??"REVIEW_REQUIRED",now)
     ]);
     return {predictionId};
   }

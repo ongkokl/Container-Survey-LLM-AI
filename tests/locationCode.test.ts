@@ -48,6 +48,22 @@ describe("CEDEX side location calculation",()=>{
     }).code).toBe("RX5N");
   });
 
+  it("uses X and first/last sections when one damage area spans top and bottom sections 5-6",()=>{
+    expect(suggestCedexLocation({
+      face:"RIGHT",lengthFt:40,
+      damageBox:{x:0.42,y:0.35,width:0.16,height:0.30},
+      referenceBox:full
+    }).code).toBe("RX56");
+  });
+
+  it("mirrors the same top/bottom 5-6 span correctly on the left side",()=>{
+    expect(suggestCedexLocation({
+      face:"LEFT",lengthFt:40,
+      damageBox:{x:0.42,y:0.35,width:0.16,height:0.30},
+      referenceBox:full
+    }).code).toBe("LX56");
+  });
+
   it("abstains for unsupported faces instead of guessing",()=>{
     const result=suggestCedexLocationFromPoint({
       face:"FRONT",lengthFt:40,point:{x:0.25,y:0.25},referenceBox:full
