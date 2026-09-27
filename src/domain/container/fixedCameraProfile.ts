@@ -1,14 +1,16 @@
-export type FixedCameraId = "R" | "L" | "D" | "T";
-export type FixedCameraFace = "RIGHT" | "LEFT" | "DOOR" | "ROOF";
+export type FixedCameraId = "R" | "L" | "D" | "F" | "T" | "B";
+export type FixedCameraFace = "RIGHT" | "LEFT" | "DOOR" | "FRONT" | "ROOF" | "FLOOR";
 
 export interface FixedCameraProfile {
   id: FixedCameraId;
   label: string;
   face: FixedCameraFace;
   doorEndInImage: "LEFT" | "RIGHT" | null;
+  canonicalFlipX: boolean;
+  canonicalFlipY: boolean;
   zoomCapable: true;
   zoomMode: "OPTICAL";
-  automaticSideLocation: boolean;
+  automaticLocation: true;
 }
 
 const PROFILES:Record<FixedCameraId,FixedCameraProfile>={
@@ -17,36 +19,66 @@ const PROFILES:Record<FixedCameraId,FixedCameraProfile>={
     label:"Right side camera",
     face:"RIGHT",
     doorEndInImage:"LEFT",
+    canonicalFlipX:false,
+    canonicalFlipY:false,
     zoomCapable:true,
     zoomMode:"OPTICAL",
-    automaticSideLocation:true
+    automaticLocation:true
   },
   L:{
     id:"L",
     label:"Left side camera",
     face:"LEFT",
     doorEndInImage:"RIGHT",
+    canonicalFlipX:true,
+    canonicalFlipY:false,
     zoomCapable:true,
     zoomMode:"OPTICAL",
-    automaticSideLocation:true
+    automaticLocation:true
   },
   D:{
     id:"D",
     label:"Door-end camera",
     face:"DOOR",
     doorEndInImage:null,
+    canonicalFlipX:false,
+    canonicalFlipY:false,
     zoomCapable:true,
     zoomMode:"OPTICAL",
-    automaticSideLocation:false
+    automaticLocation:true
+  },
+  F:{
+    id:"F",
+    label:"Front-end camera",
+    face:"FRONT",
+    doorEndInImage:null,
+    canonicalFlipX:true,
+    canonicalFlipY:false,
+    zoomCapable:true,
+    zoomMode:"OPTICAL",
+    automaticLocation:true
   },
   T:{
     id:"T",
     label:"Roof / top camera",
     face:"ROOF",
-    doorEndInImage:null,
+    doorEndInImage:"LEFT",
+    canonicalFlipX:false,
+    canonicalFlipY:false,
     zoomCapable:true,
     zoomMode:"OPTICAL",
-    automaticSideLocation:false
+    automaticLocation:true
+  },
+  B:{
+    id:"B",
+    label:"Floor / bottom camera",
+    face:"FLOOR",
+    doorEndInImage:"LEFT",
+    canonicalFlipX:false,
+    canonicalFlipY:false,
+    zoomCapable:true,
+    zoomMode:"OPTICAL",
+    automaticLocation:true
   }
 };
 
