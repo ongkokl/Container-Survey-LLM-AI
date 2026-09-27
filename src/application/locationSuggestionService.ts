@@ -13,6 +13,7 @@ import {
   type DoorEndSide,
   type FaceQuad
 } from "../domain/container/faceHomography";
+import { inferDoorEndDetection } from "../domain/container/doorEndOrientation";
 import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 import { MoondreamDamageMarker } from "../infrastructure/ai/moondreamDamageMarker";
 
@@ -91,6 +92,11 @@ export class LocationSuggestionService{
     );
 
     const referenceBox=located.referenceBox;
+    const doorEndDetection=inferDoorEndDetection({
+      selectedFace:context.container_face,
+      doorBox:located.doorBox??null,
+      referenceBox
+    });
     const expected=expectedAspect(context.container_face,geometry);
     const score=geometryScore(referenceBox,input.imageWidth,input.imageHeight,expected);
     const guided=capture.referenceFrame!==null;
@@ -98,20 +104,25 @@ export class LocationSuggestionService{
     const knownGeometryAvailable=expected!==null;
     const guidedQualityOk=!guided||["GOOD","USABLE"].includes(capture.measurementQuality);
     const galleryGeometryOk=guided||(score!==null&&score>=0.68);
-    const autoUsable=Boolean(referenceBox)&&sideSupported&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk;
+    const orientationConflict=doorEndDetection.matchesSelectedFace===false&&doorEndDetection.confidence>=0.64;
+    const autoUsable=Boolean(referenceBox)&&sideSupported&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk&&!orientationConflict;
 
     if(!located.found||!located.damageBox){
       const noDamageReason=!sideSupported
         ?"Automatic CEDEX location is enabled for LEFT/RIGHT side overviews in this POC. Enter the location manually for this face."
-        :!referenceBox
-          ?"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
-          :!knownGeometryAvailable
-            ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
-            :!guidedQualityOk
-              ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
-              :!galleryGeometryOk
-                ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Enter the location manually."
-                :"Container geometry is ready. Tap the damaged position to calculate the CEDEX location.";
+        :orientationConflict
+          ?doorEndDetection.reason+" Verify the selected LEFT/RIGHT face before calculating the location."
+          :!referenceBox
+            ?doorEndDetection.doorDominant
+              ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
+              :"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
+            :!knownGeometryAvailable
+              ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
+              :!guidedQualityOk
+                ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
+                :!galleryGeometryOk
+                  ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Mark the four face corners or enter the location manually."
+                  :"Container geometry is ready. Mark the damaged position to calculate the CEDEX location.";
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
         surveyId:context.survey_id,
@@ -124,6 +135,8 @@ export class LocationSuggestionService{
           referenceBox,
           referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
           geometryScore:score,
+          doorEndDetection,
+          orientationConflict,
           autoUsable,
           reason:noDamageReason
         },
@@ -133,7 +146,10 @@ export class LocationSuggestionService{
           isoCode:context.observed_iso_code,
           captureSource:capture.source,
           measurementQuality:capture.measurementQuality,
-          referenceSource:guided?"GUIDED_FRAME":"AI_FACE"
+          referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+          detectedDoorEnd:doorEndDetection.side,
+          doorOrientationConfidence:doorEndDetection.confidence,
+          orientationConflict
         }
       });
       return {
@@ -145,6 +161,8 @@ export class LocationSuggestionService{
         referenceBox,
         referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
         geometryScore:score,
+        doorEndDetection,
+        orientationConflict,
         autoUsable,
         location:{code:null,reviewRequired:true,reason:noDamageReason}
       };
@@ -165,19 +183,24 @@ export class LocationSuggestionService{
     const selectedCode=autoUsable?calculated?.code??null:null;
     const reviewRequired=
       !autoUsable||
+      orientationConflict||
       Boolean(calculated?.reviewRequired)||
       (guided&&capture.measurementQuality!=="GOOD")||
       (!guided&&score!==null&&score<0.82);
 
-    const reason=!referenceBox
-      ?"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
-      :!knownGeometryAvailable
-        ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
-        :!guidedQualityOk
-          ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
-          :!galleryGeometryOk
-            ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Enter the location manually."
-            :calculated?.reason??"Automatic location is unavailable for this container face.";
+    const reason=orientationConflict
+      ?doorEndDetection.reason+" Verify the selected LEFT/RIGHT face before accepting the CEDEX location."
+      :!referenceBox
+        ?doorEndDetection.doorDominant
+          ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
+          :"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
+        :!knownGeometryAvailable
+          ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
+          :!guidedQualityOk
+            ?"Guided overview quality is too poor for automatic CEDEX location. Retake or enter the location manually."
+            :!galleryGeometryOk
+              ?"Gallery overview perspective/geometry is too distorted for reliable automatic CEDEX location. Mark the four face corners or enter the location manually."
+              :calculated?.reason??"Automatic location is unavailable for this container face.";
 
     const prediction=await this.repo.saveLocationPrediction({
       findingId:input.findingId,
@@ -192,6 +215,8 @@ export class LocationSuggestionService{
         referenceBox,
         referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
         geometryScore:score,
+        doorEndDetection,
+        orientationConflict,
         calculatedLocation:calculated,
         selectedCode,
         reviewRequired,
@@ -203,7 +228,10 @@ export class LocationSuggestionService{
         isoCode:context.observed_iso_code,
         captureSource:capture.source,
         measurementQuality:capture.measurementQuality,
-        referenceSource:guided?"GUIDED_FRAME":"AI_FACE"
+        referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
+        detectedDoorEnd:doorEndDetection.side,
+        doorOrientationConfidence:doorEndDetection.confidence,
+        orientationConflict
       }
     });
 
@@ -216,6 +244,8 @@ export class LocationSuggestionService{
       referenceBox,
       referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
       geometryScore:score,
+      doorEndDetection,
+      orientationConflict,
       autoUsable,
       location:calculated?{
         ...calculated,
