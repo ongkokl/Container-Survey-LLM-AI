@@ -472,3 +472,41 @@ button.camera {
 .locationReview input[aria-invalid="true"] {
   border-color:#ff7b7b;
 }
+
+
+.markTools {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  margin-top:10px;
+}
+
+.markTools[hidden] {
+  display:none;
+}
+
+.markTool {
+  min-height:42px;
+  border:1px solid #38506e;
+  border-radius:12px;
+  background:#0b1625;
+  color:#c9d7e7;
+  padding:8px 10px;
+  font:inherit;
+  font-weight:700;
+}
+
+.markTool.active,
+.markTool[aria-pressed="true"] {
+  border-color:#6ee7ff;
+  background:#102a3b;
+  color:#f4fbff;
+}
+
+.annotationStage[data-mark-mode="AREA"] canvas {
+  cursor:crosshair;
+}
+
+.annotationStage[data-mark-mode="POINT"] canvas {
+  cursor:crosshair;
+}
