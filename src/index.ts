@@ -20,6 +20,7 @@ import { CedexClassificationService } from "./application/cedexClassificationSer
 import { DamageClassificationService } from "./application/damageClassificationService";
 import { RepairRecommendationService } from "./application/repairRecommendationService";
 import { LocationSuggestionService } from "./application/locationSuggestionService";
+import { fixedCameraProfile } from "./domain/container/fixedCameraProfile";
 
 export interface Env {
   DB: D1Database;
@@ -308,9 +309,12 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (request.method === "POST" && url.pathname === "/api/findings") {
     try {
-      const body=await readJson<{surveyId?:string;containerFace?:string}>(request);
-      const result=await findingService(env).create(body.surveyId??"",body.containerFace??"");
-      return json({ok:true,result},201);
+      const body=await readJson<{surveyId?:string;cameraId?:string;containerFace?:string}>(request);
+      const camera=body.cameraId?fixedCameraProfile(body.cameraId):null;
+      if(body.cameraId&&!camera)throw new Error("Select a valid fixed camera: R, L, D or T.");
+      const face=camera?.face??body.containerFace??"";
+      const result=await findingService(env).create(body.surveyId??"",face);
+      return json({ok:true,result:{...result,fixed_camera:camera}},201);
     } catch(error) {
       return json({ok:false,error:"FINDING_CREATE_FAILED",message:error instanceof Error?error.message:"Unable to create finding."},422);
     }
