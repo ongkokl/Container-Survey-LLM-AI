@@ -441,6 +441,7 @@ confirmBtn.addEventListener("click", async () => {
 
 const addFindingBtn=document.querySelector("#addFindingBtn");
 const findingCard=document.querySelector("#findingCard");
+const findingCamera=document.querySelector("#findingCamera");
 const findingFace=document.querySelector("#findingFace");
 const createFindingBtn=document.querySelector("#createFindingBtn");
 const findingCapture=document.querySelector("#findingCapture");
@@ -511,6 +512,24 @@ let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResu
 let aiDoorEndBox=null,detectedDoorSide=null,doorOrientationConfirmed=false;
 let aiDetectedFace=null,aiFaceConfidence=0;
 
+const FIXED_CAMERA_PROFILES={
+  R:{id:"R",label:"Right side camera",face:"RIGHT",doorEnd:"LEFT",zoomMode:"OPTICAL"},
+  L:{id:"L",label:"Left side camera",face:"LEFT",doorEnd:"RIGHT",zoomMode:"OPTICAL"},
+  D:{id:"D",label:"Door-end camera",face:"DOOR",doorEnd:null,zoomMode:"OPTICAL"},
+  T:{id:"T",label:"Roof / top camera",face:"ROOF",doorEnd:null,zoomMode:"OPTICAL"}
+};
+const fixedCameraDebug=new URLSearchParams(window.location.search).get("debugGeometry")==="1";
+function selectedFixedCamera(){
+  return FIXED_CAMERA_PROFILES[findingCamera?.value]??null;
+}
+findingCamera?.addEventListener("change",()=>{
+  const camera=selectedFixedCamera();
+  findingFace.value=camera?.face??"";
+  findingMessage.textContent=camera
+    ?"Camera "+camera.id+" selected · "+camera.label+" · face "+camera.face+" · optical zoom available."
+    :"";
+});
+
 const cameraGuidanceV1=new URLSearchParams(window.location.search).get("cameraGuidance")!=="0";
 const guidedCamera=createGuidedCamera({
   modal:cameraGuideModal,
@@ -524,8 +543,27 @@ const guidedCamera=createGuidedCamera({
   fallbackButton:guidedCameraFallback
 });
 
-function unscoredCaptureMetadata(source,photoType){
+function fixedCameraMetadata(base,photoType){
+  const camera=selectedFixedCamera();
+  const overviewRoi=overviewMarkMode==="AREA"&&validNormalizedBox(locationArea)
+    ?{type:"BOX",geometry:{...locationArea}}
+    :locationPoint
+      ?{type:"POINT",geometry:{...locationPoint}}
+      :null;
   return {
+    ...(base??{}),
+    fixedCameraMode:true,
+    fixedCameraId:camera?.id??null,
+    fixedCameraLabel:camera?.label??null,
+    fixedCameraFace:camera?.face??findingFace.value||null,
+    fixedDoorEndInImage:camera?.doorEnd??null,
+    zoomMode:photoType==="closeup"?"OPTICAL":"NONE",
+    overviewDamageRoi:photoType==="closeup"?overviewRoi:null
+  };
+}
+
+function unscoredCaptureMetadata(source,photoType){
+  return fixedCameraMetadata({
     version:"camera_guidance_v1",
     source,
     photoType,
@@ -533,7 +571,7 @@ function unscoredCaptureMetadata(source,photoType){
     equipmentType:currentGeometry?.equipmentType||containerType.textContent.trim()||null,
     identificationQuality:"UNKNOWN",
     measurementQuality:"UNKNOWN"
-  };
+  },photoType);
 }
 
 function openGuidedCapture(mode){
@@ -547,8 +585,9 @@ function openGuidedCapture(mode){
     geometry:currentGeometry,
     fallbackInput,
     onCapture:async(file,metadata)=>{
-      if(isOverview)selectOverviewPhoto(file,"guided",metadata);
-      else selectCloseupPhoto(file,"guided",metadata);
+      const enriched=fixedCameraMetadata(metadata,isOverview?"overview":"closeup");
+      if(isOverview)selectOverviewPhoto(file,"guided",enriched);
+      else selectCloseupPhoto(file,"guided",enriched);
     }
   }).catch((error)=>{
     findingMessage.textContent=error instanceof Error?error.message:"Unable to start guided camera.";
@@ -565,13 +604,16 @@ addFindingBtn.addEventListener("click",()=>{
 });
 
 createFindingBtn.addEventListener("click",async()=>{
-  if(!findingFace.value){findingMessage.textContent="Select the container face first.";return;}
+  const camera=selectedFixedCamera();
+  if(!camera){findingMessage.textContent="Select fixed camera R, L, D or T first.";return;}
+  findingFace.value=camera.face;
   setBusy(createFindingBtn,true,"Creating…","Create finding");
   try{
-    currentFinding=await apiJson("/api/findings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({surveyId:currentSurveyId,containerFace:findingFace.value})});
-    findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
-    findingCapture.hidden=false; createFindingBtn.hidden=true; findingFace.disabled=true;
-    findingMessage.textContent="Finding created. Capture the overview / measurement photo.";
+    currentFinding=await apiJson("/api/findings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({surveyId:currentSurveyId,cameraId:camera.id})});
+    findingFace.value=currentFinding.container_face??camera.face;
+    findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · Camera "+camera.id+" · "+camera.label+" · "+findingFace.value;
+    findingCapture.hidden=false; createFindingBtn.hidden=true; findingCamera.disabled=true;
+    findingMessage.textContent="Finding created from fixed Camera "+camera.id+". Capture the overview reference image.";
     geometryReference.hidden=true;
     geometryReferenceText.textContent="";
     currentGeometry=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
@@ -581,20 +623,21 @@ createFindingBtn.addEventListener("click",async()=>{
     overviewMarkTools.hidden=true;overviewStage.dataset.markMode="AREA";
     markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
     markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
-    faceReferenceTools.hidden=true;faceMarkHelp.textContent="Use when the container face is not detected automatically.";
-    faceVerificationStatus.textContent="Waiting for AI face verification…";
-    correctFaceBtn.hidden=true;correctFaceBtn.disabled=false;correctFaceBtn.textContent="Correct surveyed face";
-    aiDoorEndBox=null;detectedDoorSide=null;doorOrientationConfirmed=false;aiDetectedFace=null;aiFaceConfidence=0;
-    doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
-    confirmDoorOrientationBtn.disabled=true;confirmDoorOrientationBtn.textContent="Confirm door orientation";
-    doorEndSide.value="";
+    faceReferenceTools.hidden=!fixedCameraDebug;
+    faceMarkHelp.textContent="Admin/debug geometry fallback for fixed-camera calibration.";
+    faceVerificationStatus.textContent="Fixed camera profile supplies face and orientation; AI face verification is not required.";
+    correctFaceBtn.hidden=true;correctFaceBtn.disabled=true;correctFaceBtn.textContent="Correct surveyed face";
+    aiDoorEndBox=null;detectedDoorSide=null;doorOrientationConfirmed=true;aiDetectedFace=findingFace.value;aiFaceConfidence=1;
+    doorDetectionStatus.textContent="Orientation supplied by fixed Camera "+camera.id+".";
+    confirmDoorOrientationBtn.disabled=true;confirmDoorOrientationBtn.textContent="Fixed by camera profile";
+    doorEndSide.value=camera.doorEnd??"";
     locationReview.hidden=true;locationCodeInput.value="";locationCodeInput.removeAttribute("aria-invalid");
     locationSuggestion.textContent="Waiting for overview analysis…";locationGeometryMessage.textContent="";
     try{
       const geometry=await apiJson("/api/findings/geometry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
       currentGeometry=geometry;
       if(geometry?.lengthMm&&geometry?.heightMm){
-        geometryReferenceText.textContent=geometry.isoCode+" · "+geometry.equipmentType+" · "+geometry.lengthMm+" × "+geometry.heightMm+" mm external reference";
+        geometryReferenceText.textContent="Camera "+camera.id+" · "+camera.label+" · "+geometry.isoCode+" · "+geometry.equipmentType+" · "+geometry.lengthMm+" × "+geometry.heightMm+" mm external reference";
         geometryReference.hidden=false;
       }
     }catch{}
@@ -676,18 +719,19 @@ markPointBtn.addEventListener("click",()=>setOverviewMarkMode("POINT"));
 function resetOverviewLocation(){
   locationReferenceBox=null;
   locationReferenceQuad=null;
-  faceReferenceTools.hidden=true;
-  faceVerificationStatus.textContent="Waiting for AI face verification…";
-  correctFaceBtn.hidden=true;correctFaceBtn.disabled=false;correctFaceBtn.textContent="Correct surveyed face";
+  faceReferenceTools.hidden=!fixedCameraDebug;
+  faceVerificationStatus.textContent="Fixed camera profile supplies face and orientation.";
+  correctFaceBtn.hidden=true;correctFaceBtn.disabled=true;correctFaceBtn.textContent="Correct surveyed face";
   aiDoorEndBox=null;
   detectedDoorSide=null;
-  aiDetectedFace=null;
-  aiFaceConfidence=0;
-  doorOrientationConfirmed=false;
-  doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
+  aiDetectedFace=findingFace.value||null;
+  aiFaceConfidence=1;
+  doorOrientationConfirmed=true;
+  const fixedCamera=selectedFixedCamera();
+  doorDetectionStatus.textContent=fixedCamera?"Orientation supplied by fixed Camera "+fixedCamera.id+".":"Fixed camera not selected.";
   confirmDoorOrientationBtn.disabled=true;
-  confirmDoorOrientationBtn.textContent="Confirm door orientation";
-  doorEndSide.value="";
+  confirmDoorOrientationBtn.textContent="Fixed by camera profile";
+  doorEndSide.value=fixedCamera?.doorEnd??"";
   faceMarkMode=false;
   faceMarkPoints=[];
   locationAutoUsable=false;
@@ -714,75 +758,34 @@ function resetOverviewLocation(){
 function renderLocationResult(result){
   locationReferenceBox=result?.referenceBox??null;
   locationAutoUsable=Boolean(result?.autoUsable);
-  aiDoorEndBox=validNormalizedBox(result?.doorBox)?{...result.doorBox}:null;
+  aiDoorEndBox=null;
+  const camera=selectedFixedCamera();
   const sideFinding=["LEFT","RIGHT"].includes(findingFace.value);
-  const faceVerification=result?.faceVerification??null;
-  aiDetectedFace=faceVerification?.detectedFace??null;
-  aiFaceConfidence=Number(faceVerification?.confidence)||0;
-  const door=result?.doorEndDetection??null;
-  detectedDoorSide=door?.side??null;
-  doorOrientationConfirmed=false;
-  confirmDoorOrientationBtn.disabled=false;
-  confirmDoorOrientationBtn.textContent="Confirm door orientation";
-  faceReferenceTools.hidden=!sideFinding;
-  if(sideFinding&&faceVerification){
-    const pct=Math.round(aiFaceConfidence*100);
-    if(faceVerification.status==="MATCH"){
-      faceVerificationStatus.textContent=
-        "Surveyor-selected face: "+findingFace.value+" · AI verified face: "+faceVerification.detectedFace+
-        " · "+pct+"% · consistent.";
-      correctFaceBtn.hidden=true;
-    }else if(faceVerification.status==="MISMATCH"&&faceVerification.detectedFace){
-      faceVerificationStatus.textContent=
-        "Surveyor-selected face: "+findingFace.value+" · AI verified face: "+faceVerification.detectedFace+
-        " · "+pct+"% · MISMATCH. Automatic CEDEX location is blocked until the face is reviewed.";
-      correctFaceBtn.hidden=false;
-      correctFaceBtn.disabled=false;
-      correctFaceBtn.textContent="Change surveyed face to "+faceVerification.detectedFace;
-    }else{
-      faceVerificationStatus.textContent=
-        "Surveyor-selected face: "+findingFace.value+" · AI face verification: not confirmed"+
-        (faceVerification.detectedFace?" · possible "+faceVerification.detectedFace+" · "+pct+"%":"")+".";
-      correctFaceBtn.hidden=true;
-    }
-  }else if(sideFinding){
-    faceVerificationStatus.textContent="Surveyor-selected face: "+findingFace.value+" · AI face verification: not confirmed.";
-    correctFaceBtn.hidden=true;
+  aiDetectedFace=findingFace.value||null;
+  aiFaceConfidence=1;
+  detectedDoorSide=camera?.doorEnd??null;
+  doorOrientationConfirmed=true;
+  doorEndSide.value=camera?.doorEnd??"";
+  faceReferenceTools.hidden=!fixedCameraDebug;
+  faceVerificationStatus.textContent=camera
+    ?"Fixed Camera "+camera.id+" is the face/orientation source · face "+camera.face+
+      (camera.doorEnd?" · door end image "+camera.doorEnd.toLowerCase():"")+"."
+    :"Fixed camera profile unavailable.";
+  correctFaceBtn.hidden=true;
+  correctFaceBtn.disabled=true;
+  confirmDoorOrientationBtn.disabled=true;
+  confirmDoorOrientationBtn.textContent="Fixed by camera profile";
+  doorDetectionStatus.textContent=camera
+    ?"No manual door orientation required for Camera "+camera.id+"."
+    :"Fixed camera profile unavailable.";
+
+  if(fixedCameraDebug){
+    faceMarkHelp.textContent=sideFinding&&!locationReferenceBox
+      ?"Debug: automatic side geometry was not established. Use 4-corner calibration only for POC diagnostics."
+      :"Debug: automatic side geometry available. 4-corner calibration can override it.";
+    markFaceBtn.hidden=!sideFinding;
   }
 
-  const expectedDoorSide=findingFace.value==="RIGHT"?"LEFT":findingFace.value==="LEFT"?"RIGHT":null;
-  const selectedFaceSummary=sideFinding
-    ?"Selected finding: "+findingFace.value+" side"+(expectedDoorSide?" · expected door position: image "+expectedDoorSide.toLowerCase():"")
-    :"";
-
-  if(sideFinding&&door?.visible&&door.side){
-    doorEndSide.value=door.side;
-    confirmDoorOrientationBtn.disabled=false;
-    const confidence=Math.round((Number(door.confidence)||0)*100);
-    if(result?.orientationConflict){
-      doorDetectionStatus.textContent=
-        selectedFaceSummary+" · AI detected door end: image "+door.side.toLowerCase()+" · "+confidence+
-        "% · conflict with selected face"+
-        (door.suggestedFace?" · photo likely shows "+door.suggestedFace+" side":"")+".";
-    }else{
-      doorDetectionStatus.textContent=
-        selectedFaceSummary+" · AI detected door end: image "+door.side.toLowerCase()+" · "+confidence+
-        "%. Confirm or correct the AI result.";
-    }
-  }else if(sideFinding){
-    doorEndSide.value="";
-    confirmDoorOrientationBtn.disabled=true;
-    doorDetectionStatus.textContent=
-      selectedFaceSummary+" · AI door detection: not confirmed. Select the door-end position manually if you use the 4-corner reference.";
-  }
-
-  if(sideFinding&&!locationReferenceBox){
-    faceMarkHelp.textContent=door?.doorDominant
-      ?"Door end detected but side-panel geometry was not established. Use a side overview with more side panel visible, or mark the 4 side-face corners."
-      :"Automatic face detection failed. Mark the 4 corners to continue automatic CEDEX location calculation.";
-  }else if(sideFinding){
-    faceMarkHelp.textContent="Automatic side reference found. The 4-corner tool remains available as a perspective override.";
-  }
   const location=result?.location??null;
   aiLocationCode=location?.code??null;
 
@@ -796,11 +799,9 @@ function renderLocationResult(result){
     locationSuggestion.textContent=location?.reason||"Automatic location unavailable. Enter the CEDEX location manually.";
   }
 
-  const sideOrientation=findingFace.value==="RIGHT"
-    ?" · verify door end is at image left"
-    :findingFace.value==="LEFT"
-      ?" · verify door end is at image right"
-      :"";
+  const sideOrientation=camera?.doorEnd
+    ?" · fixed Camera "+camera.id+" orientation: door end image "+camera.doorEnd.toLowerCase()
+    :camera?" · fixed Camera "+camera.id+" face "+camera.face:"";
   if(result?.referenceSource==="GUIDED_FRAME"){
     locationGeometryMessage.textContent=
       "Reference: guided known-geometry frame"+
@@ -815,11 +816,12 @@ function renderLocationResult(result){
       sideOrientation;
   }else if(result?.referenceSource==="AI_FACE"&&!locationReferenceBox){
     locationGeometryMessage.textContent=
-      "Reference: container side face was not detected automatically. Mark the 4 face corners to continue automatic location calculation.";
+      "Fixed Camera "+(camera?.id??"—")+" supplies face/orientation, but usable container geometry was not established from this overview."+
+      (fixedCameraDebug?" Use the debug 4-corner calibration if needed.":"");
   }else{
     locationGeometryMessage.textContent=["LEFT","RIGHT"].includes(findingFace.value)
-      ?"Automatic container-face reference was not established. Mark the 4 face corners to continue automatic location calculation."
-      :"No reliable container reference frame was established."+sideOrientation;
+      ?"Fixed Camera "+(camera?.id??"—")+" supplies face/orientation; container geometry still needs a usable overview reference."
+      :"Fixed Camera "+(camera?.id??"—")+" supplies face "+(camera?.face??findingFace.value)+". Automatic CEDEX location for this face is not enabled in the side-location POC.";
   }
   locationCodeInput.setAttribute("aria-invalid",validLocationCode()?"false":locationCodeInput.value?"true":"false");
 }
@@ -831,12 +833,13 @@ async function recalculateLocationFromMark(){
   if(!usingArea&&!locationPoint)return;
   const hasFaceQuad=Array.isArray(locationReferenceQuad)&&locationReferenceQuad.length===4;
   if(hasFaceQuad&&!["LEFT","RIGHT"].includes(doorEndSide.value)){
-    locationSuggestion.textContent="Select and confirm the door-end position before calculating the CEDEX location from the 4-corner reference.";
+    locationSuggestion.textContent="Fixed camera orientation is unavailable for this side-camera debug calculation.";
     updateFindingReady();
     return;
   }
   if(!hasFaceQuad&&(!locationReferenceBox||!locationAutoUsable)){
-    locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. Mark the 4 container-face corners to calculate the CEDEX location automatically.";
+    locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. Fixed Camera "+(selectedFixedCamera()?.id??"—")+" supplies the face/orientation, but usable overview geometry is still required for automatic CEDEX location."+
+      (fixedCameraDebug?" Use the debug 4-corner calibration if required.":"");
     updateFindingReady();
     return;
   }
@@ -972,61 +975,13 @@ function beginFaceMarking(){
 
 markFaceBtn.addEventListener("click",beginFaceMarking);
 
-correctFaceBtn.addEventListener("click",async()=>{
-  if(!currentFinding||!["LEFT","RIGHT"].includes(aiDetectedFace)||aiDetectedFace===findingFace.value)return;
-  const targetFace=aiDetectedFace;
-  setBusy(correctFaceBtn,true,"Updating surveyed face…","Correct surveyed face");
-  try{
-    const updated=await apiJson("/api/findings/face",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({findingId:currentFinding.id,containerFace:targetFace})
-    });
-    currentFinding={...currentFinding,...updated};
-    findingFace.value=targetFace;
-    findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
-    findingMessage.textContent="Surveyed face updated to "+targetFace+". Rechecking the current overview photo.";
-    correctFaceBtn.hidden=true;
-    aiDetectedFace=null;aiFaceConfidence=0;
-    if(overviewFile){
-      const source=overviewCaptureMeta?.source||"system_camera";
-      selectOverviewPhoto(overviewFile,source,overviewCaptureMeta);
-    }
-  }catch(e){
-    faceVerificationStatus.textContent=e instanceof Error?e.message:"Unable to update the surveyed face.";
-    setBusy(correctFaceBtn,false,"Updating surveyed face…","Correct surveyed face");
-  }
-});
+correctFaceBtn.addEventListener("click",()=>{});
 
-confirmDoorOrientationBtn.addEventListener("click",()=>{
-  if(!["LEFT","RIGHT"].includes(doorEndSide.value)){
-    doorDetectionStatus.textContent="Select the door-end position before confirming.";
-    confirmDoorOrientationBtn.disabled=true;
-    return;
-  }
-  doorOrientationConfirmed=true;
-  confirmDoorOrientationBtn.disabled=true;
-  confirmDoorOrientationBtn.textContent="Door orientation confirmed ✓";
-  doorDetectionStatus.textContent="Surveyor confirmed door end at image "+doorEndSide.value.toLowerCase()+
-    (detectedDoorSide&&detectedDoorSide!==doorEndSide.value?" · corrected from AI "+detectedDoorSide.toLowerCase():"")+".";
-  if(locationReferenceQuad?.length===4)recalculateLocationFromMark();
-});
+confirmDoorOrientationBtn.addEventListener("click",()=>{});
 
 doorEndSide.addEventListener("change",()=>{
-  doorOrientationConfirmed=false;
-  const valid=["LEFT","RIGHT"].includes(doorEndSide.value);
-  confirmDoorOrientationBtn.disabled=!valid;
-  confirmDoorOrientationBtn.textContent="Confirm door orientation";
-  if(!valid){
-    const expected=findingFace.value==="RIGHT"?"left":findingFace.value==="LEFT"?"right":"";
-    doorDetectionStatus.textContent="AI door detection: not confirmed."+(expected?" Selected "+findingFace.value+" side normally expects the door at image "+expected+".":"");
-    return;
-  }
-  doorDetectionStatus.textContent="Manual door-end selection: image "+doorEndSide.value.toLowerCase()+". Confirm the orientation before final review.";
-  if(locationReferenceQuad?.length===4){
-    faceMarkHelp.textContent="Door-end orientation changed. Recalculating location from the marked face.";
-    recalculateLocationFromMark();
-  }
+  if(!fixedCameraDebug)return;
+  if(locationReferenceQuad?.length===4)recalculateLocationFromMark();
 });
 
 locationCodeInput.addEventListener("input",()=>{
@@ -1038,16 +993,12 @@ locationCodeInput.addEventListener("input",()=>{
 
 function selectOverviewPhoto(file,source,captureMetadata=null){
   overviewFile=file??null;
-  overviewCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"overview");
+  overviewCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"overview"),"overview");
   resetOverviewLocation();
   const requestId=++overviewAiRequest;
   if(!overviewFile){locationReview.hidden=true;overviewMarkTools.hidden=true;faceReferenceTools.hidden=true;updateFindingReady();return;}
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
-  findingMessage.textContent=source==="gallery"
-    ?"Overview loaded from Gallery. AI will check the damage area and container geometry before suggesting a CEDEX location."
-    :source==="guided"
-      ?"Guided overview captured. Verify the proposed damage area and CEDEX location before saving."
-      :"Overview captured. AI will establish the container reference before suggesting a CEDEX location.";
+  findingMessage.textContent="Fixed Camera "+(selectedFixedCamera()?.id??"—")+" overview loaded. Face/orientation come from the camera profile; AI will locate damage and usable container geometry.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
     overviewMarkTools.hidden=false;
     setOverviewMarkMode("AREA");
@@ -1226,15 +1177,11 @@ overviewCanvas.addEventListener("pointercancel",(event)=>{
 let dragStart=null;
 function selectCloseupPhoto(file,source,captureMetadata=null){
   closeupFile=file??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
-  closeupCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"closeup");
+  closeupCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"closeup"),"closeup");
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
-  findingMessage.textContent=source==="gallery"
-    ?"Close-up loaded from Gallery. It can support classification; measurement will rely on overview geometry."
-    :source==="guided"
-      ?"Guided close-up captured. Verify the AI damage box before saving."
-      :"Close-up captured. Keep the complete damage and surrounding component detail visible.";
+  findingMessage.textContent="Optical-zoom close-up loaded from fixed Camera "+(selectedFixedCamera()?.id??"—")+". The overview damage mark remains the CEDEX location reference.";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
     boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
     try{
