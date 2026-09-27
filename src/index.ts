@@ -151,6 +151,30 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (request.method === "POST" && url.pathname === "/api/fixed-camera/end-structure-calibration") {
+    try {
+      const body=await readJson<{
+        findingId?:string;
+        cameraId?:string;
+        positionGuides?:unknown;
+        verticalGuides?:unknown;
+      }>(request);
+      const service=new FixedCameraCalibrationService(new CedexRepository(env.DB));
+      return json({ok:true,result:await service.saveEndStructure({
+        findingId:body.findingId??"",
+        cameraId:body.cameraId??"",
+        positionGuides:body.positionGuides,
+        verticalGuides:body.verticalGuides
+      })});
+    } catch(error) {
+      return json({
+        ok:false,
+        error:"FIXED_CAMERA_END_STRUCTURE_SAVE_FAILED",
+        message:error instanceof Error?error.message:"Unable to save Door/Front structure calibration."
+      },422);
+    }
+  }
+
   if (request.method === "POST" && url.pathname === "/api/cedex/location-from-fixed-camera") {
     try {
       const body=await readJson<{

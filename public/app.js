@@ -467,6 +467,8 @@ const doorEndSide=document.querySelector("#doorEndSide");
 const confirmDoorOrientationBtn=document.querySelector("#confirmDoorOrientationBtn");
 const markFaceBtn=document.querySelector("#markFaceBtn");
 const faceMarkHelp=document.querySelector("#faceMarkHelp");
+const markEndStructureBtn=document.querySelector("#markEndStructureBtn");
+const endStructureHelp=document.querySelector("#endStructureHelp");
 const locationCodeInput=document.querySelector("#locationCodeInput");
 const closeupCameraBtn=document.querySelector("#closeupCameraBtn");
 const closeupPhoto=document.querySelector("#closeupPhoto");
@@ -509,6 +511,7 @@ let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
+let currentFixedCalibration=null,endStructureMarkMode=false,endStructurePoints=[];
 let aiDoorEndBox=null,detectedDoorSide=null,doorOrientationConfirmed=false;
 let aiDetectedFace=null,aiFaceConfidence=0;
 
@@ -524,9 +527,21 @@ const fixedCameraDebug=new URLSearchParams(window.location.search).get("debugGeo
 function selectedFixedCamera(){
   return FIXED_CAMERA_PROFILES[findingCamera?.value]??null;
 }
+
+function isEndFaceCamera(camera=selectedFixedCamera()){
+  return Boolean(camera&&["D","F"].includes(camera.id));
+}
+
+function updateLocationPlaceholder(){
+  const examples={
+    RIGHT:"RT5N",LEFT:"LT5N",DOOR:"DH2N",FRONT:"FB3N",ROOF:"TL3N",FLOOR:"BL1N"
+  };
+  locationCodeInput.placeholder="e.g. "+(examples[findingFace.value]??"RT5N");
+}
 findingCamera?.addEventListener("change",()=>{
   const camera=selectedFixedCamera();
   findingFace.value=camera?.face??"";
+  updateLocationPlaceholder();
   findingMessage.textContent=camera
     ?"Camera "+camera.id+" selected · "+camera.label+" · face "+camera.face+" · optical zoom available."
     :"";
@@ -684,6 +699,10 @@ function setOverviewMarkMode(mode){
     faceMarkMode=false;
     faceMarkPoints=[];
   }
+  if(endStructureMarkMode){
+    endStructureMarkMode=false;
+    endStructurePoints=[];
+  }
   overviewMarkMode=mode==="POINT"?"POINT":"AREA";
   overviewStage.dataset.markMode=overviewMarkMode;
   const area=overviewMarkMode==="AREA";
@@ -738,6 +757,11 @@ function resetOverviewLocation(){
   doorEndSide.value=fixedCamera?.doorEnd??"";
   faceMarkMode=false;
   faceMarkPoints=[];
+  endStructureMarkMode=false;
+  endStructurePoints=[];
+  currentFixedCalibration=null;
+  markEndStructureBtn.hidden=true;
+  endStructureHelp.hidden=true;
   locationAutoUsable=false;
   aiLocationCode=null;
   locationPoint=null;
@@ -749,6 +773,7 @@ function resetOverviewLocation(){
   overviewMarkMode="AREA";
   locationRecalcRequest++;
   locationCodeInput.value="";
+  updateLocationPlaceholder();
   locationCodeInput.removeAttribute("aria-invalid");
   locationReview.hidden=false;
   overviewMarkTools.hidden=false;
@@ -783,15 +808,32 @@ function renderLocationResult(result){
     ?"No manual door orientation required for Camera "+camera.id+"."
     :"Fixed camera profile unavailable.";
 
+  const calibration=result?.calibration??null;
+  currentFixedCalibration=calibration;
   if(fixedCameraDebug){
-    const calibration=result?.calibration??null;
+    const reused=calibration?.reusedAcrossLength
+      ?" · reused from "+calibration.calibrationSourceLengthFt+" ft end-face calibration"
+      :"";
     faceMarkHelp.textContent=calibratedFinding
       ?calibration?.available
-        ?"Calibration loaded: Camera "+camera.id+" · "+calibration.lengthFt+" ft · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+". Recalibrate only if the physical camera/stop position changes."
+        ?"Calibration loaded: Camera "+camera.id+" · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+reused+". Recalibrate only if the physical camera/stop position changes."
         :"No stored calibration for Camera "+camera.id+" and this container size. Mark the 4 face corners once to create it."
       :"Fixed-camera calibration is unavailable for this face.";
     markFaceBtn.hidden=!calibratedFinding;
     markFaceBtn.textContent=calibration?.available?"Recalibrate fixed camera":"Calibrate fixed camera with 4 corners";
+
+    const endFace=isEndFaceCamera(camera);
+    markEndStructureBtn.hidden=!(endFace&&calibration?.available);
+    endStructureHelp.hidden=!(endFace&&calibration?.available);
+    if(endFace&&calibration?.available){
+      const structure=calibration.endFaceStructure;
+      endStructureHelp.textContent=structure?.available
+        ?"Physical CEDEX structure loaded · "+structure.equipmentType+" · "+structure.heightMm+" mm · version "+structure.calibrationVersion+". Recalibrate only if the end-frame structural references change."
+        :"Stage 2 required: mark the real 1|2, 2|3, 3|4 and H|T, T|B, B|G boundaries. Automatic Door/Front location stays disabled until this is saved.";
+      markEndStructureBtn.textContent=structure?.available
+        ?"Recalibrate Door/Front CEDEX structure"
+        :"Calibrate Door/Front CEDEX structure";
+    }
   }
 
   const location=result?.location??null;
@@ -813,8 +855,10 @@ function renderLocationResult(result){
   if(result?.referenceSource==="FIXED_CAMERA_CALIBRATION"){
     const calibration=result?.calibration??null;
     locationGeometryMessage.textContent=calibration?.available
-      ?"Camera "+(camera?.id??"—")+" calibration loaded · "+calibration.lengthFt+" ft · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+
-        " · damage coordinates are mapped through the stored perspective calibration."
+      ?isEndFaceCamera(camera)&&!calibration.endFaceStructure?.available
+        ?"Camera "+(camera?.id??"—")+" perspective calibration is loaded, but physical Door/Front CEDEX structure calibration is still required."
+        :"Camera "+(camera?.id??"—")+" calibration loaded · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+
+          " · damage coordinates are mapped through stored physical calibration."
       :"Camera "+(camera?.id??"—")+" face/orientation is known, but no stored calibration exists for this container size."+
         (fixedCameraDebug?" Use Calibrate fixed camera with 4 corners once.":" Admin calibration is required.");
   }else if(result?.referenceSource==="FIXED_CAMERA_PROFILE"){
@@ -970,6 +1014,27 @@ function drawDoorEndBox(canvas,box){
   ctx.restore();
 }
 
+function drawEndStructureGuidePoints(canvas,points){
+  if(!points?.length)return;
+  const labels=["1|2","2|3","3|4","H|T","T|B","B|G"];
+  const ctx=canvas.getContext("2d");
+  ctx.save();
+  ctx.lineWidth=4;
+  ctx.strokeStyle="#5eead4";
+  ctx.fillStyle="#5eead4";
+  ctx.shadowColor="rgba(0,0,0,.8)";
+  ctx.shadowBlur=4;
+  ctx.font="700 12px system-ui,sans-serif";
+  ctx.textAlign="left";
+  ctx.textBaseline="middle";
+  points.forEach((point,index)=>{
+    const x=point.x*canvas.width,y=point.y*canvas.height;
+    ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.stroke();
+    ctx.fillText(labels[index]??String(index+1),x+14,y);
+  });
+  ctx.restore();
+}
+
 function drawOverviewComposite(){
   if(overviewStage.hidden||!overviewPreview.complete)return;
   syncAnnotationCanvas(overviewPreview,overviewCanvas);
@@ -978,6 +1043,7 @@ function drawOverviewComposite(){
   if(aiDoorEndBox)drawDoorEndBox(overviewCanvas,aiDoorEndBox);
   const quad=faceMarkMode?faceMarkPoints:locationReferenceQuad;
   if(quad?.length)drawFaceReference(overviewCanvas,quad,quad.length===4,false);
+  if(endStructureMarkMode&&endStructurePoints.length)drawEndStructureGuidePoints(overviewCanvas,endStructurePoints);
   if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited,false);
   else if(locationPoint)drawTarget(overviewCanvas,locationPoint,!overviewEdited,false);
 }
@@ -1010,12 +1076,65 @@ async function saveFixedCameraCalibration(corners){
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({findingId:currentFinding.id,cameraId:camera.id,corners})
   });
-  faceMarkHelp.textContent="Calibration saved: Camera "+camera.id+" · "+calibration.lengthFt+" ft · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+".";
+  currentFixedCalibration=calibration;
+  faceMarkHelp.textContent="Calibration saved: Camera "+camera.id+" · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+".";
   markFaceBtn.textContent="Recalibrate fixed camera";
+  if(isEndFaceCamera(camera)){
+    markEndStructureBtn.hidden=false;
+    endStructureHelp.hidden=false;
+    endStructureHelp.textContent=calibration.endFaceStructure?.available
+      ?"Physical CEDEX structure is already calibrated · version "+calibration.endFaceStructure.calibrationVersion+"."
+      :"Stage 2 required: calibrate the physical Door/Front CEDEX structure before automatic location can be used.";
+  }
+  return calibration;
+}
+
+function beginEndStructureMarking(){
+  const camera=selectedFixedCamera();
+  if(!fixedCameraDebug||!isEndFaceCamera(camera)){
+    endStructureHelp.textContent="Physical structure calibration is only used for fixed Cameras D and F.";
+    return;
+  }
+  if(!currentFixedCalibration?.available){
+    endStructureHelp.textContent="Complete the four-corner camera calibration first.";
+    return;
+  }
+  faceMarkMode=false;
+  faceMarkPoints=[];
+  endStructureMarkMode=true;
+  endStructurePoints=[];
+  overviewStage.dataset.markMode="STRUCTURE";
+  const first=camera.id==="F"
+    ?"Tap the image-left physical boundary between CEDEX positions 4 and 3 at mid-height."
+    :"Tap the physical boundary between CEDEX positions 1 and 2 at mid-height.";
+  endStructureHelp.textContent="Stage 2 · 1 of 6: "+first;
+  drawOverviewComposite();
+  updateFindingReady();
+}
+
+async function saveEndStructureCalibration(points){
+  const camera=selectedFixedCamera();
+  if(!fixedCameraDebug||!currentFinding||!isEndFaceCamera(camera))return null;
+  endStructureHelp.textContent="Saving physical Door/Front CEDEX structure calibration…";
+  const calibration=await apiJson("/api/fixed-camera/end-structure-calibration",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      findingId:currentFinding.id,
+      cameraId:camera.id,
+      positionGuides:points.slice(0,3),
+      verticalGuides:points.slice(3,6)
+    })
+  });
+  currentFixedCalibration=calibration;
+  const structure=calibration.endFaceStructure;
+  endStructureHelp.textContent="Physical CEDEX structure saved · "+structure.equipmentType+" · "+structure.heightMm+" mm · version "+structure.calibrationVersion+".";
+  markEndStructureBtn.textContent="Recalibrate Door/Front CEDEX structure";
   return calibration;
 }
 
 markFaceBtn.addEventListener("click",beginFaceMarking);
+markEndStructureBtn.addEventListener("click",beginEndStructureMarking);
 
 correctFaceBtn.addEventListener("click",()=>{});
 
@@ -1136,6 +1255,45 @@ function overviewPointer(event){
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
   const point=overviewPointer(event);
+  if(endStructureMarkMode){
+    if(endStructurePoints.length>=6)endStructurePoints=[];
+    endStructurePoints.push(point);
+    const camera=selectedFixedCamera();
+    const doorLabels=[
+      "boundary 1|2 at mid-height",
+      "boundary 2|3 at mid-height",
+      "boundary 3|4 at mid-height",
+      "H|T boundary near face centre",
+      "T|B boundary near face centre",
+      "B|G boundary near face centre"
+    ];
+    const frontLabels=[
+      "image-left boundary 4|3 at mid-height",
+      "centre boundary 3|2 at mid-height",
+      "image-right boundary 2|1 at mid-height",
+      "H|T boundary near face centre",
+      "T|B boundary near face centre",
+      "B|G boundary near face centre"
+    ];
+    const labels=camera?.id==="F"?frontLabels:doorLabels;
+    if(endStructurePoints.length<6){
+      endStructureHelp.textContent="Stage 2 · "+(endStructurePoints.length+1)+" of 6: tap "+labels[endStructurePoints.length]+".";
+      drawOverviewComposite();
+      return;
+    }
+    endStructureMarkMode=false;
+    overviewStage.dataset.markMode=faceMarkResumeMode;
+    drawOverviewComposite();
+    saveEndStructureCalibration(endStructurePoints.map(p=>({...p}))).then(()=>{
+      const hasDamageMark=overviewMarkMode==="AREA"?validNormalizedBox(locationArea):Boolean(locationPoint);
+      if(hasDamageMark)recalculateLocationFromMark();
+      else updateFindingReady();
+    }).catch((e)=>{
+      endStructureHelp.textContent=e instanceof Error?e.message:"Unable to save physical CEDEX structure calibration.";
+      updateFindingReady();
+    });
+    return;
+  }
   if(faceMarkMode){
     if(faceMarkPoints.length>=4)faceMarkPoints=[];
     faceMarkPoints.push(point);
@@ -1187,7 +1345,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 });
 
 overviewCanvas.addEventListener("pointermove",(event)=>{
-  if(faceMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
+  if(faceMarkMode||endStructureMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
   const end=overviewPointer(event);
   const preview={
     x:Math.min(overviewDragStart.x,end.x),
@@ -1202,7 +1360,7 @@ overviewCanvas.addEventListener("pointermove",(event)=>{
 });
 
 overviewCanvas.addEventListener("pointerup",(event)=>{
-  if(faceMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart)return;
+  if(faceMarkMode||endStructureMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart)return;
   const end=overviewPointer(event);
   const area={
     x:Math.min(overviewDragStart.x,end.x),

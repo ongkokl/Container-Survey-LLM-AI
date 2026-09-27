@@ -267,7 +267,7 @@ export class LocationSuggestionService{
         doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
         fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
         orientationConflict:false,autoUsable:Boolean(selectedCode),
-        location:selectedCode?{...calculated,code:selectedCode,reviewRequired:true,reason}:null
+        location:{...calculated,code:selectedCode,reviewRequired:true,reason}
       };
     }
 

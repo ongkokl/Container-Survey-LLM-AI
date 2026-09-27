@@ -6,6 +6,10 @@ import {
 } from "../src/domain/container/locationCode";
 
 const full={x:0,y:0,width:1,height:1};
+const endStructure={
+  positionBoundariesX:[0.10,0.50,0.90] as [number,number,number],
+  verticalBoundariesY:[0.10,0.50,0.90] as [number,number,number]
+};
 
 describe("CEDEX side location calculation",()=>{
   it("maps a 40 ft right-side upper point to section 5",()=>{
@@ -66,17 +70,39 @@ describe("CEDEX side location calculation",()=>{
 
   it("maps IICL door-end examples DH2N and DB1N",()=>{
     expect(suggestCedexLocationFromPoint({
-      face:"DOOR",lengthFt:40,point:{x:0.25,y:0.05},referenceBox:full
+      face:"DOOR",lengthFt:40,point:{x:0.25,y:0.05},referenceBox:full,endFaceStructure:endStructure
     }).code).toBe("DH2N");
     expect(suggestCedexLocationFromPoint({
-      face:"DOOR",lengthFt:40,point:{x:0.05,y:0.70},referenceBox:full
+      face:"DOOR",lengthFt:40,point:{x:0.05,y:0.70},referenceBox:full,endFaceStructure:endStructure
     }).code).toBe("DB1N");
   });
 
   it("maps the canonical front plane to FB3N",()=>{
     expect(suggestCedexLocationFromPoint({
-      face:"FRONT",lengthFt:40,point:{x:0.62,y:0.70},referenceBox:full
+      face:"FRONT",lengthFt:40,point:{x:0.62,y:0.70},referenceBox:full,endFaceStructure:endStructure
     }).code).toBe("FB3N");
+  });
+
+  it("does not fall back to percentage bands when Door structure calibration is missing",()=>{
+    const result=suggestCedexLocationFromPoint({
+      face:"DOOR",lengthFt:40,point:{x:0.25,y:0.05},referenceBox:full
+    });
+    expect(result.code).toBeNull();
+    expect(result.reviewRequired).toBe(true);
+    expect(result.reason).toMatch(/structure calibration/i);
+  });
+
+  it("uses stored physical boundaries rather than fixed 10/50/90 percentages",()=>{
+    const physical={
+      positionBoundariesX:[0.18,0.57,0.84] as [number,number,number],
+      verticalBoundariesY:[0.14,0.56,0.87] as [number,number,number]
+    };
+    expect(suggestCedexLocationFromPoint({
+      face:"DOOR",lengthFt:40,point:{x:0.15,y:0.12},referenceBox:full,endFaceStructure:physical
+    }).code).toBe("DH1N");
+    expect(suggestCedexLocationFromPoint({
+      face:"DOOR",lengthFt:40,point:{x:0.20,y:0.20},referenceBox:full,endFaceStructure:physical
+    }).code).toBe("DT2N");
   });
 
   it("maps roof left-half section 3 to TL3N",()=>{
