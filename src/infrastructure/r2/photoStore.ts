@@ -32,4 +32,26 @@ export class PhotoStore {
     const key="surveys/"+input.surveyId+"/findings/"+input.findingId+"/"+input.role.toLowerCase()+"-"+input.photoId+"."+extensionFor(input.contentType);
     return this.put(key,input.bytes,input.contentType,{photoRole:input.role,surveyId:input.surveyId,findingId:input.findingId});
   }
+
+  async saveComponentReferencePhoto(input:{
+    referenceId:string;
+    equipmentType:"GP"|"RF";
+    componentCode:string;
+    containerFace:string;
+    bytes:ArrayBuffer;
+    contentType:string;
+  }):Promise<StoredPhoto>{
+    const key="component-reference/"+
+      input.equipmentType.toLowerCase()+"/"+
+      input.componentCode.toLowerCase()+"/"+
+      input.containerFace.toLowerCase()+"/"+
+      input.referenceId+"."+extensionFor(input.contentType);
+    return this.put(key,input.bytes,input.contentType,{
+      photoRole:"COMPONENT_REFERENCE",
+      referenceId:input.referenceId,
+      equipmentType:input.equipmentType,
+      componentCode:input.componentCode,
+      containerFace:input.containerFace
+    });
+  }
 }
