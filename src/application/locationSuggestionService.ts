@@ -218,6 +218,25 @@ export class LocationSuggestionService{
     };
   }
 
+  async fromBox(input:{
+    findingId:string;
+    damageBox:NormalizedBox;
+    referenceBox:NormalizedBox;
+  }){
+    const context=await this.repo.findingContext(input.findingId);
+    if(!context)throw new Error("Finding not found.");
+    const damage=normalizedBox(input.damageBox);
+    if(!damage)throw new Error("Invalid damage area.");
+    const reference=normalizedBox(input.referenceBox);
+    if(!reference)throw new Error("Invalid overview reference frame.");
+    return suggestCedexLocation({
+      face:context.container_face as SurveyFace,
+      lengthFt:Number(context.length_ft)||40,
+      damageBox:damage,
+      referenceBox:reference
+    });
+  }
+
   async fromPoint(input:{
     findingId:string;
     point:NormalizedPoint;
