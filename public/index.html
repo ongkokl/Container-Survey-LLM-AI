@@ -144,11 +144,18 @@
       <button id="addFindingBtn" class="primary" type="button">Add damage finding</button>
     </section>
     <section id="findingCard" class="card" hidden>
-      <div class="step"><span class="stepNo">3</span><div><h2>Capture finding</h2><p>Select the container face being surveyed, then take an overview photo. AI will verify the face and propose the damage position.</p></div></div>
-      <label class="field"><span>Container face being surveyed</span><select id="findingFace">
-        <option value="">Select face</option><option value="LEFT">Left side</option><option value="RIGHT">Right side</option>
-        <option value="FRONT">Front end</option><option value="DOOR">Door end</option><option value="ROOF">Roof</option><option value="FLOOR">Floor / underside</option>
-      </select><small>Surveyor selection. AI verification happens after the overview photo and will not change this automatically.</small></label>
+      <div class="step"><span class="stepNo">3</span><div><h2>Capture finding</h2><p>Select the fixed POC camera. The camera profile determines the container face and orientation automatically.</p></div></div>
+      <label class="field"><span>Fixed camera</span><select id="findingCamera">
+        <option value="">Select camera</option>
+        <option value="R">Camera R — Right side</option>
+        <option value="L">Camera L — Left side</option>
+        <option value="D">Camera D — Door end</option>
+        <option value="T">Camera T — Roof / top</option>
+      </select><small>POC assumption: each camera has a fixed position, known face/orientation and optical zoom for damage close-up.</small></label>
+      <select id="findingFace" hidden aria-hidden="true">
+        <option value=""></option><option value="LEFT">Left side</option><option value="RIGHT">Right side</option>
+        <option value="DOOR">Door end</option><option value="ROOF">Roof</option>
+      </select>
       <button id="createFindingBtn" class="primary" type="button">Create finding</button>
       <div id="findingCapture" hidden>
         <p class="findingLabel" id="findingLabel"></p>
@@ -157,9 +164,9 @@
           <span id="geometryReferenceText" class="message"></span>
           <span class="message">Overview = scale/perspective reference. Dent depth remains manual.</span>
         </div>
-        <button id="overviewCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Take guided overview / measurement photo</strong><span>Live guide checks alignment, sharpness, glare and visible container geometry before capture.</span></button>
+        <button id="overviewCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture fixed-camera overview</strong><span>POC: use the selected R/L/D/T camera overview as the geometry and damage-location reference.</span></button>
         <input id="overviewPhoto" type="file" accept="image/*" capture="environment" hidden>
-        <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose overview from Gallery</strong><span>Allowed for testing; measurement quality depends on visible geometry and perspective.</span></label>
+        <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Load fixed-camera overview for POC test</strong><span>Use a photo representing the selected fixed camera position.</span></label>
         <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
         <p class="message"><strong>Measurement photo:</strong> no digital zoom · avoid strong angle/glare · keep full damage visible · include known container geometry.</p>
         <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview measurement photo"><canvas id="overviewCanvas"></canvas></div>
@@ -173,8 +180,8 @@
           <span id="locationSuggestion" class="message">Waiting for overview analysis…</span>
           <span id="locationGeometryMessage" class="message"></span>
           <div id="faceReferenceTools" class="faceReferenceTools" hidden>
-            <strong>Container face verification</strong>
-            <span id="faceVerificationStatus" class="message">Waiting for AI face verification…</span>
+            <strong>Fixed-camera geometry debug</strong>
+            <span id="faceVerificationStatus" class="message">Fixed camera profile supplies the container face and orientation.</span>
             <button id="correctFaceBtn" class="secondary" type="button" hidden>Correct surveyed face</button>
             <strong>Container face reference</strong>
             <span id="doorDetectionStatus" class="message">Checking whether the cargo door end is visible…</span>
@@ -192,9 +199,9 @@
           <input id="locationCodeInput" type="text" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. RT5N">
           <span class="message">LEFT/RIGHT side overviews are calculated deterministically from the confirmed damage position and container reference frame. Other faces use manual entry in this POC.</span>
         </div>
-        <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Take guided damage close-up</strong><span>Keep the full damage inside the live target and retain enough surrounding component detail for classification.</span></button>
+        <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture optical-zoom damage close-up</strong><span>POC assumption: the same fixed camera optically zooms to the confirmed overview damage region.</span></button>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
-        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose close-up from Gallery</strong><span>Suitable for classification; absolute size will come from the overview geometry when registration is available.</span></label>
+        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Load zoomed close-up for POC test</strong><span>Use a close-up from the same fixed camera; the overview remains the location reference.</span></label>
         <input id="closeupGalleryPhoto" type="file" accept="image/*" hidden>
         <div id="closeupStage" class="annotationStage" hidden><img id="closeupPreview" alt="Close-up photo"><canvas id="closeupCanvas"></canvas></div>
         <p id="boxHelp" class="message" hidden>AI will propose a damage box. Drag to redraw it if needed.</p>
