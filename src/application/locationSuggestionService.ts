@@ -95,20 +95,17 @@ export class LocationSuggestionService{
     const capture=captureInfo(input.captureMetadata);
     const fixedCamera=capture.fixedCameraMode?fixedCameraProfile(capture.fixedCameraId):null;
     const fixedCameraMatches=Boolean(fixedCamera&&fixedCamera.face===context.container_face);
-    const sideSupported=["LEFT","RIGHT"].includes(context.container_face);
-
     if(fixedCameraMatches&&fixedCamera){
       const calibrationService=new FixedCameraCalibrationService(this.repo);
-      const calibration=sideSupported
-        ?await calibrationService.get(input.findingId,fixedCamera.id)
-        :null;
+      const calibration=await calibrationService.get(input.findingId,fixedCamera.id);
       const located=await this.marker.locateOverview(
         input.file,
         context.container_face,
         null,
         {skipDoorDetection:true,skipReferenceDetection:true}
       );
-      const fixedFaceVerification=sideSupported
+      const sideFace=context.container_face==="LEFT"||context.container_face==="RIGHT";
+      const fixedFaceVerification=sideFace
         ?{
             selectedFace:context.container_face,
             detectedFace:context.container_face as "LEFT"|"RIGHT",
@@ -123,7 +120,7 @@ export class LocationSuggestionService{
             confidence:1,
             status:"UNVERIFIED" as const,
             evidence:null,
-            reason:"Fixed camera profile supplies this non-side face."
+            reason:"Container face and orientation come from the fixed POC camera profile."
           };
       const fixedDoorEndDetection={
         visible:false,
@@ -131,19 +128,17 @@ export class LocationSuggestionService{
         confidence:1,
         expectedSide:fixedCamera.doorEndInImage,
         matchesSelectedFace:true,
-        suggestedFace:sideSupported?context.container_face as "LEFT"|"RIGHT":null,
+        suggestedFace:sideFace?context.container_face as "LEFT"|"RIGHT":null,
         doorDominant:false,
         reason:fixedCamera.doorEndInImage
-          ?"Door orientation comes from fixed Camera "+fixedCamera.id+"."
-          :"Door orientation is not required for fixed Camera "+fixedCamera.id+"."
+          ?"Longitudinal orientation comes from fixed Camera "+fixedCamera.id+"."
+          :"Face orientation comes from fixed Camera "+fixedCamera.id+"."
       };
 
       if(!located.found||!located.damageBox){
-        const reason=sideSupported
-          ?calibration?.available
-            ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. AI could not identify the damage area; mark the damage manually to calculate CEDEX location."
-            :"Fixed Camera "+fixedCamera.id+" calibration is not configured for this container size. Use debug calibration once, then mark the damage."
-          :"Fixed Camera "+fixedCamera.id+" identifies the "+context.container_face+" face. Automatic CEDEX location for this face is outside the side-location POC.";
+        const reason=calibration.available
+          ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. AI could not identify the damage area; mark the damage manually to calculate CEDEX location."
+          :"Fixed Camera "+fixedCamera.id+" calibration is not configured for this container size. Run the one-time admin calibration, then mark the damage.";
         const prediction=await this.repo.saveLocationPrediction({
           findingId:input.findingId,
           surveyId:context.survey_id,
@@ -154,7 +149,7 @@ export class LocationSuggestionService{
             found:false,
             damageBox:null,
             referenceBox:null,
-            referenceSource:sideSupported?"FIXED_CAMERA_CALIBRATION":"FIXED_CAMERA_PROFILE",
+            referenceSource:"FIXED_CAMERA_CALIBRATION",
             geometryScore:null,
             doorEndDetection:fixedDoorEndDetection,
             doorBox:null,
@@ -172,11 +167,11 @@ export class LocationSuggestionService{
             isoCode:context.observed_iso_code,
             captureSource:capture.source,
             measurementQuality:capture.measurementQuality,
-            referenceSource:sideSupported?"FIXED_CAMERA_CALIBRATION":"FIXED_CAMERA_PROFILE",
+            referenceSource:"FIXED_CAMERA_CALIBRATION",
             fixedCameraId:fixedCamera.id,
             fixedCameraFace:fixedCamera.face,
-            calibrationAvailable:Boolean(calibration?.available),
-            calibrationVersion:calibration?.calibrationVersion??null,
+            calibrationAvailable:Boolean(calibration.available),
+            calibrationVersion:calibration.calibrationVersion??null,
             orientationConflict:false
           }
         });
@@ -187,7 +182,7 @@ export class LocationSuggestionService{
           point:null,
           damageBox:null,
           referenceBox:null,
-          referenceSource:sideSupported?"FIXED_CAMERA_CALIBRATION":"FIXED_CAMERA_PROFILE",
+          referenceSource:"FIXED_CAMERA_CALIBRATION",
           geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,
           doorBox:null,
@@ -205,66 +200,27 @@ export class LocationSuggestionService{
         x:located.damageBox.x+located.damageBox.width/2,
         y:located.damageBox.y+located.damageBox.height/2
       };
-      if(sideSupported){
-        if(!calibration?.available){
-          const reason="Fixed Camera "+fixedCamera.id+" calibration is not configured for "+
-            calibration?.lengthFt+" ft / "+calibration?.heightMm+" mm geometry. Run the one-time debug calibration before automatic CEDEX location.";
-          const prediction=await this.repo.saveLocationPrediction({
-            findingId:input.findingId,
-            surveyId:context.survey_id,
-            modelName:located.model,
-            selectedCode:null,
-            status:"FAILED",
-            response:{
-              found:true,damageBox:located.damageBox,point,referenceBox:null,
-              referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
-              doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
-              fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
-              orientationConflict:false,autoUsable:false,reason
-            },
-            requestContext:{
-              face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
-              captureSource:capture.source,measurementQuality:capture.measurementQuality,
-              referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
-              calibrationAvailable:false,calibrationVersion:calibration?.calibrationVersion??null,orientationConflict:false
-            }
-          });
-          return {
-            found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox:located.damageBox,
-            referenceBox:null,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
-            doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
-            fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
-            orientationConflict:false,autoUsable:false,
-            location:{code:null,reviewRequired:true,reason}
-          };
-        }
-
-        const calculated=await calibrationService.calculate({
-          findingId:input.findingId,
-          cameraId:fixedCamera.id,
-          damageBox:located.damageBox
-        });
-        const selectedCode=calculated.code??null;
-        const reason=calculated.reason??"Calculated from fixed-camera calibration and the detected damage area.";
+      if(!calibration.available){
+        const reason="Fixed Camera "+fixedCamera.id+" calibration is not configured for "+
+          calibration.lengthFt+" ft / "+calibration.heightMm+" mm geometry. Run the one-time admin calibration before automatic CEDEX location.";
         const prediction=await this.repo.saveLocationPrediction({
           findingId:input.findingId,
           surveyId:context.survey_id,
           modelName:located.model,
-          selectedCode,
-          status:selectedCode?"REVIEW_REQUIRED":"FAILED",
+          selectedCode:null,
+          status:"FAILED",
           response:{
             found:true,damageBox:located.damageBox,point,referenceBox:null,
             referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
             doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
-            orientationConflict:false,autoUsable:Boolean(selectedCode),
-            calculatedLocation:calculated,selectedCode,reviewRequired:true,reason
+            orientationConflict:false,autoUsable:false,reason
           },
           requestContext:{
             face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
             captureSource:capture.source,measurementQuality:capture.measurementQuality,
             referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
-            calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,orientationConflict:false
+            calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,orientationConflict:false
           }
         });
         return {
@@ -272,37 +228,50 @@ export class LocationSuggestionService{
           referenceBox:null,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
-          orientationConflict:false,autoUsable:Boolean(selectedCode),
-          location:selectedCode?{...calculated,code:selectedCode,reviewRequired:true,reason}:null
+          orientationConflict:false,autoUsable:false,
+          location:{code:null,reviewRequired:true,reason}
         };
       }
 
-      const reason="Fixed Camera "+fixedCamera.id+" identifies the "+context.container_face+
-        " face. Automatic CEDEX location for this face is outside the current R/L side-location POC.";
+      const calculated=await calibrationService.calculate({
+        findingId:input.findingId,
+        cameraId:fixedCamera.id,
+        damageBox:located.damageBox
+      });
+      const selectedCode=calculated.code??null;
+      const reason=calculated.reason??"Calculated from fixed-camera calibration and the detected damage area.";
       const prediction=await this.repo.saveLocationPrediction({
-        findingId:input.findingId,surveyId:context.survey_id,modelName:located.model,selectedCode:null,status:"FAILED",
+        findingId:input.findingId,
+        surveyId:context.survey_id,
+        modelName:located.model,
+        selectedCode,
+        status:selectedCode?"REVIEW_REQUIRED":"FAILED",
         response:{
-          found:true,damageBox:located.damageBox,point,referenceBox:null,referenceSource:"FIXED_CAMERA_PROFILE",
-          geometryScore:null,doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
-          fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration:null,
-          orientationConflict:false,autoUsable:false,reason
+          found:true,damageBox:located.damageBox,point,referenceBox:null,
+          referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
+          doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
+          fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
+          orientationConflict:false,autoUsable:Boolean(selectedCode),
+          calculatedLocation:calculated,selectedCode,reviewRequired:true,reason
         },
         requestContext:{
           face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
           captureSource:capture.source,measurementQuality:capture.measurementQuality,
-          referenceSource:"FIXED_CAMERA_PROFILE",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
-          orientationConflict:false
+          referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
+          calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,orientationConflict:false
         }
       });
       return {
         found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox:located.damageBox,
-        referenceBox:null,referenceSource:"FIXED_CAMERA_PROFILE",geometryScore:null,
+        referenceBox:null,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
         doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
-        fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration:null,
-        orientationConflict:false,autoUsable:false,
-        location:{code:null,reviewRequired:true,reason}
+        fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
+        orientationConflict:false,autoUsable:Boolean(selectedCode),
+        location:selectedCode?{...calculated,code:selectedCode,reviewRequired:true,reason}:null
       };
     }
+
+    const sideSupported=["LEFT","RIGHT"].includes(context.container_face);
 
     const located=await this.marker.locateOverview(
       input.file,
