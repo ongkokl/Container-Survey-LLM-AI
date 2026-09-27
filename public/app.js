@@ -802,7 +802,23 @@ function renderLocationResult(result){
   const sideOrientation=camera?.doorEnd
     ?" · fixed Camera "+camera.id+" orientation: door end image "+camera.doorEnd.toLowerCase()
     :camera?" · fixed Camera "+camera.id+" face "+camera.face:"";
-  if(result?.referenceSource==="GUIDED_FRAME"){
+  if(result?.referenceSource==="FIXED_CAMERA_GUIDED_FRAME"){
+    locationGeometryMessage.textContent=
+      "Fixed Camera "+(camera?.id??"—")+" supplies face/orientation · guided overview frame supplies geometry"+
+      (locationAutoUsable?" · suitable for automatic side-location calculation":" · geometry review required")+
+      sideOrientation;
+  }else if(result?.referenceSource==="FIXED_CAMERA_AI_GEOMETRY"&&locationReferenceBox){
+    const score=typeof result.geometryScore==="number"?Math.round(result.geometryScore*100):null;
+    locationGeometryMessage.textContent=
+      "Fixed Camera "+(camera?.id??"—")+" supplies face/orientation · AI detected the visible container geometry"+
+      (score!==null?" · geometry match "+score+"%":"")+
+      (locationAutoUsable?"":" · geometry review required")+
+      sideOrientation;
+  }else if(result?.referenceSource==="FIXED_CAMERA_AI_GEOMETRY"&&!locationReferenceBox){
+    locationGeometryMessage.textContent=
+      "Fixed Camera "+(camera?.id??"—")+" supplies face/orientation, but usable container geometry was not established from this overview."+
+      (fixedCameraDebug?" Use the debug 4-corner calibration if needed.":"");
+  }else if(result?.referenceSource==="GUIDED_FRAME"){
     locationGeometryMessage.textContent=
       "Reference: guided known-geometry frame"+
       (locationAutoUsable?" · suitable for automatic side-location calculation":" · not suitable for automatic location")+
