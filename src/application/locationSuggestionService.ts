@@ -197,13 +197,15 @@ export class LocationSuggestionService{
     const selectedCode=autoUsable?calculated?.code??null:null;
     const reviewRequired=
       !autoUsable||
-      orientationConflict||
+      faceVerification.status!=="MATCH"||
       Boolean(calculated?.reviewRequired)||
       (guided&&capture.measurementQuality!=="GOOD")||
       (!guided&&score!==null&&score<0.82);
 
     const reason=orientationConflict
-      ?doorEndDetection.reason+" Verify the selected LEFT/RIGHT face before accepting the CEDEX location."
+      ?faceVerification.reason+" Verify or correct the surveyed face before accepting the CEDEX location."
+      :faceVerification.status==="UNVERIFIED"&&referenceBox&&galleryGeometryOk
+        ?"AI could not independently verify the surveyed face. CEDEX location is calculated from the surveyor-selected face and usable geometry; surveyor confirmation is required."
       :!referenceBox
         ?doorEndDetection.doorDominant
           ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
