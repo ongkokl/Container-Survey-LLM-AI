@@ -637,22 +637,22 @@ function setOverviewMarkMode(mode){
     if(!locationArea&&validNormalizedBox(aiLocationArea))locationArea={...aiLocationArea};
     if(locationArea){
       locationPoint=centreOfBox(locationArea);
-      drawBox(overviewCanvas,locationArea,!overviewEdited);
+      drawOverviewComposite();
       tapHelp.textContent="Damage area selected. Drag on the photo to redraw the full damaged area.";
       recalculateLocationFromMark();
     }else{
-      overviewCanvas.getContext("2d").clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+      drawOverviewComposite();
       tapHelp.textContent="Drag a box around the full damaged area. Use Pinpoint damage for a small local defect.";
       updateFindingReady();
     }
   }else{
     if(!locationPoint&&locationArea)locationPoint=centreOfBox(locationArea);
     if(locationPoint){
-      drawTarget(overviewCanvas,locationPoint,!overviewEdited);
+      drawOverviewComposite();
       tapHelp.textContent="Damage point selected. Tap the damaged position to adjust.";
       recalculateLocationFromMark();
     }else{
-      overviewCanvas.getContext("2d").clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+      drawOverviewComposite();
       tapHelp.textContent="Tap the damaged position.";
       updateFindingReady();
     }
@@ -665,6 +665,7 @@ markPointBtn.addEventListener("click",()=>setOverviewMarkMode("POINT"));
 function resetOverviewLocation(){
   locationReferenceBox=null;
   locationReferenceQuad=null;
+  faceReferenceTools.hidden=true;
   faceMarkMode=false;
   faceMarkPoints=[];
   locationAutoUsable=false;
@@ -780,6 +781,7 @@ async function recalculateLocationFromMark(){
       locationCodeInput.value=result.code;
       locationSuggestion.textContent=(usingArea?"Marked area":"Marked point")+" location: "+result.code+
         (result.reviewRequired?" · close to a CEDEX zone boundary; verify before saving":"");
+      if(hasFaceQuad)locationGeometryMessage.textContent="Reference: surveyor-marked 4-corner perspective · door end at image "+doorEndSide.value.toLowerCase();
     }else{
       locationCodeInput.value="";
       locationSuggestion.textContent=result?.reason||"Unable to calculate a location code from this mark. Enter it manually.";
@@ -984,9 +986,15 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
     faceMarkMode=false;
     overviewStage.dataset.markMode=faceMarkResumeMode;
     markFaceBtn.textContent="Remap 4 container-face corners";
-    faceMarkHelp.textContent="4-corner perspective reference saved. Recalculating the CEDEX location.";
     drawOverviewComposite();
-    recalculateLocationFromMark();
+    const hasDamageMark=overviewMarkMode==="AREA"?validNormalizedBox(locationArea):Boolean(locationPoint);
+    if(hasDamageMark){
+      faceMarkHelp.textContent="4-corner perspective reference saved. Recalculating the CEDEX location.";
+      recalculateLocationFromMark();
+    }else{
+      faceMarkHelp.textContent="4-corner perspective reference saved. Now draw the damage area or select Pinpoint damage.";
+      updateFindingReady();
+    }
     return;
   }
   overviewEdited=true;
@@ -996,7 +1004,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
     return;
   }
   locationPoint=point;
-  drawTarget(overviewCanvas,locationPoint,false);
+  drawOverviewComposite();
   tapHelp.textContent="Damage position marked. Tap again to adjust.";
   recalculateLocationFromMark();
 });
@@ -1010,7 +1018,10 @@ overviewCanvas.addEventListener("pointermove",(event)=>{
     width:Math.abs(end.x-overviewDragStart.x),
     height:Math.abs(end.y-overviewDragStart.y)
   };
-  if(preview.width>0&&preview.height>0)drawBox(overviewCanvas,preview,false);
+  if(preview.width>0&&preview.height>0){
+    drawOverviewComposite();
+    drawBox(overviewCanvas,preview,false,false);
+  }
 });
 
 overviewCanvas.addEventListener("pointerup",(event)=>{
@@ -1031,7 +1042,7 @@ overviewCanvas.addEventListener("pointerup",(event)=>{
   }
   locationArea=area;
   locationPoint=centreOfBox(area);
-  drawBox(overviewCanvas,locationArea,false);
+  drawOverviewComposite();
   tapHelp.textContent="Damage area marked. Drag again to adjust the full damaged extent.";
   recalculateLocationFromMark();
 });
