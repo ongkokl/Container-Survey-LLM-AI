@@ -136,6 +136,7 @@ export class LocationSuggestionService{
           referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
           geometryScore:score,
           doorEndDetection,
+          doorBox:located.doorBox??null,
           orientationConflict,
           autoUsable,
           reason:noDamageReason
@@ -162,6 +163,7 @@ export class LocationSuggestionService{
         referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
         geometryScore:score,
         doorEndDetection,
+        doorBox:located.doorBox??null,
         orientationConflict,
         autoUsable,
         location:{code:null,reviewRequired:true,reason:noDamageReason}
@@ -216,6 +218,7 @@ export class LocationSuggestionService{
         referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
         geometryScore:score,
         doorEndDetection,
+        doorBox:located.doorBox??null,
         orientationConflict,
         calculatedLocation:calculated,
         selectedCode,
@@ -245,6 +248,7 @@ export class LocationSuggestionService{
       referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
       geometryScore:score,
       doorEndDetection,
+      doorBox:located.doorBox??null,
       orientationConflict,
       autoUsable,
       location:calculated?{
