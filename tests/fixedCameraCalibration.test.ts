@@ -20,6 +20,14 @@ function repoWithCalibration(stored:any=null,face="RIGHT"){
       lengthMm:12192,widthMm:2438,heightMm:2896,geometrySource:"ISO",geometryVersion:"v1"
     })),
     fixedCameraCalibration:vi.fn(async()=>stored),
+    fixedCameraCalibrationByHeight:vi.fn(async()=>stored),
+    fixedCameraEndStructureCalibration:vi.fn(async()=>null),
+    upsertFixedCameraEndStructureCalibration:vi.fn(async(input:any)=>({
+      cameraId:input.cameraId,containerFace:input.containerFace,equipmentType:input.equipmentType,
+      heightMm:input.heightMm,positionBoundariesX:[...input.positionBoundariesX],
+      verticalBoundariesY:[...input.verticalBoundariesY],calibrationVersion:1,
+      updatedAt:"2026-09-27T00:00:00.000Z"
+    })),
     upsertFixedCameraCalibration:vi.fn(async(input:any)=>({
       cameraId:input.cameraId,
       containerFace:input.containerFace,
@@ -78,7 +86,7 @@ describe("fixed camera calibration service",()=>{
     expect(result.code?.startsWith("R")).toBe(true);
   });
 
-  it("maps Door camera damage to the IICL end-face grid",async()=>{
+  it("requires physical structure calibration before Door automatic location",async()=>{
     const service=new FixedCameraCalibrationService(
       repoWithCalibration(stored("D","DOOR",null),"DOOR")
     );
@@ -86,18 +94,58 @@ describe("fixed camera calibration service",()=>{
       findingId:"f1",cameraId:"D",
       damagePoint:{x:0.30,y:0.13}
     });
-    expect(result.code).toBe("DH2N");
+    expect(result.code).toBeNull();
+    expect(result.reason).toMatch(/structure calibration/i);
   });
 
-  it("mirrors Front camera horizontal positions so they follow the door positions",async()=>{
-    const service=new FixedCameraCalibrationService(
-      repoWithCalibration(stored("F","FRONT",null),"FRONT")
-    );
+  it("maps Door damage through stored physical structure boundaries",async()=>{
+    const repo=repoWithCalibration(stored("D","DOOR",null),"DOOR") as any;
+    repo.fixedCameraEndStructureCalibration=vi.fn(async()=>({
+      cameraId:"D",containerFace:"DOOR",equipmentType:"GP",heightMm:2896,
+      positionBoundariesX:[0.10,0.50,0.90],verticalBoundariesY:[0.10,0.50,0.90],
+      calibrationVersion:1,updatedAt:"2026-09-27T00:00:00.000Z"
+    }));
+    const service=new FixedCameraCalibrationService(repo);
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"D",
+      damagePoint:{x:0.30,y:0.13}
+    });
+    expect(result.code).toBe("DT2N");
+  });
+
+  it("mirrors Front camera and applies its stored physical structure",async()=>{
+    const repo=repoWithCalibration(stored("F","FRONT",null),"FRONT") as any;
+    repo.fixedCameraEndStructureCalibration=vi.fn(async()=>({
+      cameraId:"F",containerFace:"FRONT",equipmentType:"GP",heightMm:2896,
+      positionBoundariesX:[0.10,0.50,0.90],verticalBoundariesY:[0.10,0.50,0.90],
+      calibrationVersion:1,updatedAt:"2026-09-27T00:00:00.000Z"
+    }));
+    const service=new FixedCameraCalibrationService(repo);
     const result=await service.calculate({
       findingId:"f1",cameraId:"F",
       damagePoint:{x:0.40,y:0.66}
     });
     expect(result.code).toBe("FB3N");
+  });
+
+  it("saves six physical guide points as canonical Door structure boundaries",async()=>{
+    const repo=repoWithCalibration(stored("D","DOOR",null),"DOOR") as any;
+    const service=new FixedCameraCalibrationService(repo);
+    await service.saveEndStructure({
+      findingId:"f1",cameraId:"D",
+      positionGuides:[{x:0.18,y:0.5},{x:0.5,y:0.5},{x:0.82,y:0.5}],
+      verticalGuides:[{x:0.5,y:0.18},{x:0.5,y:0.5},{x:0.5,y:0.82}]
+    });
+    expect(repo.upsertFixedCameraEndStructureCalibration).toHaveBeenCalledWith(expect.objectContaining({
+      cameraId:"D",containerFace:"DOOR",equipmentType:"GP",heightMm:2896
+    }));
+    const saved=repo.upsertFixedCameraEndStructureCalibration.mock.calls[0][0];
+    expect(saved.positionBoundariesX[0]).toBeCloseTo(0.10,6);
+    expect(saved.positionBoundariesX[1]).toBeCloseTo(0.50,6);
+    expect(saved.positionBoundariesX[2]).toBeCloseTo(0.90,6);
+    expect(saved.verticalBoundariesY[0]).toBeCloseTo(0.10,6);
+    expect(saved.verticalBoundariesY[1]).toBeCloseTo(0.50,6);
+    expect(saved.verticalBoundariesY[2]).toBeCloseTo(0.90,6);
   });
 
   it("maps Roof camera longitudinal and left/right halves",async()=>{
