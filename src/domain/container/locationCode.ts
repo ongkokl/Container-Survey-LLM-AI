@@ -71,11 +71,11 @@ function closeTo(value:number,target:number,tolerance=0.025):boolean{
 
 function sideSuggestionFromRearRange(face:"LEFT"|"RIGHT",lengthFt:number,box:NormalizedBox,rearStart:number,rearEnd:number):LocationSuggestion{
   const count=lengthFt<=20?5:10;
-  const first=sectionAt(rearStart,count);
-  const last=sectionAt(Math.max(rearStart,rearEnd-1e-6),count);
   rearStart=clamp01(rearStart);
   rearEnd=clamp01(rearEnd);
   if(rearEnd<rearStart)[rearStart,rearEnd]=[rearEnd,rearStart];
+  const first=sectionAt(rearStart,count);
+  const last=sectionAt(Math.max(rearStart,rearEnd-1e-6),count);
   const segment=verticalSegment(box);
 
   const spansWholeLength=rearStart<=0.01&&rearEnd>=0.99;
