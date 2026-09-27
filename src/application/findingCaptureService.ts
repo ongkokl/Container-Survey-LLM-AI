@@ -24,6 +24,12 @@ export class FindingCaptureService {
     return this.repo.create(surveyId,normalized);
   }
 
+  async updateFace(findingId:string,face:string){
+    const normalized=face.toUpperCase() as ContainerFace;
+    if(!findingId||!FACES.has(normalized))throw new Error("Select a valid container face.");
+    return this.repo.updateFace(findingId,normalized);
+  }
+
   async list(surveyId:string){ return this.repo.list(surveyId); }
 
   async upload(input:{surveyId:string;findingId:string;role:string;file:File;width?:number|null;height?:number|null;captureMetadata?:unknown;}){
