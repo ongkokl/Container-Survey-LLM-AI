@@ -45,16 +45,18 @@ export class FixedCameraCalibrationService {
     if(!finding)throw new Error("Finding not found.");
     const camera=fixedCameraProfile(cameraId);
     if(!camera)throw new Error("Select a valid fixed camera: R, L, D or T.");
-    if(!["R","L"].includes(camera.id))throw new Error("Automatic fixed-camera CEDEX side calibration is currently enabled for Cameras R/L only.");
+    if(camera.id!=="R"&&camera.id!=="L")throw new Error("Automatic fixed-camera CEDEX side calibration is currently enabled for Cameras R/L only.");
     if(camera.face!==finding.container_face)throw new Error("Fixed camera profile does not match this finding face.");
     if(!camera.doorEndInImage)throw new Error("Fixed camera door orientation is unavailable.");
+    const face=camera.face as "LEFT"|"RIGHT";
+    const doorEndInImage=camera.doorEndInImage as "LEFT"|"RIGHT";
     const geometry=await this.repo.geometryForFinding(findingId);
     const lengthFt=Number(geometry?.lengthFt)||Number(finding.length_ft)||0;
     const heightMm=Number(geometry?.heightMm)||0;
     if(![20,40].includes(lengthFt)||heightMm<=0){
       throw new Error("Known container length/height geometry is required before fixed-camera calibration can be used.");
     }
-    return {finding,camera,geometry,lengthFt,heightMm};
+    return {finding,camera,face,doorEndInImage,geometry,lengthFt,heightMm};
   }
 
   async get(findingId:string,cameraId:string){
@@ -63,10 +65,10 @@ export class FixedCameraCalibrationService {
     if(!stored)return {
       available:false,
       cameraId:ctx.camera.id,
-      face:ctx.camera.face,
+      face:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.camera.doorEndInImage,
+      doorEndInImage:ctx.doorEndInImage,
       calibrationVersion:null,
       corners:null
     };
@@ -74,20 +76,20 @@ export class FixedCameraCalibrationService {
     if(!corners)return {
       available:false,
       cameraId:ctx.camera.id,
-      face:ctx.camera.face,
+      face:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.camera.doorEndInImage,
+      doorEndInImage:ctx.doorEndInImage,
       calibrationVersion:stored.calibrationVersion,
       corners:null
     };
     return {
       available:true,
       cameraId:ctx.camera.id,
-      face:ctx.camera.face,
+      face:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.camera.doorEndInImage,
+      doorEndInImage:ctx.doorEndInImage,
       calibrationVersion:stored.calibrationVersion,
       corners,
       updatedAt:stored.updatedAt
@@ -100,19 +102,19 @@ export class FixedCameraCalibrationService {
     if(!corners)throw new Error("Mark the four container-face corners in order: top-left, top-right, bottom-right, bottom-left.");
     const stored=await this.repo.upsertFixedCameraCalibration({
       cameraId:ctx.camera.id,
-      containerFace:ctx.camera.face,
+      containerFace:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.camera.doorEndInImage,
+      doorEndInImage:ctx.doorEndInImage,
       corners
     });
     return {
       available:true,
       cameraId:ctx.camera.id,
-      face:ctx.camera.face,
+      face:ctx.face,
       lengthFt:ctx.lengthFt,
       heightMm:ctx.heightMm,
-      doorEndInImage:ctx.camera.doorEndInImage,
+      doorEndInImage:ctx.doorEndInImage,
       calibrationVersion:stored?.calibrationVersion??1,
       corners,
       updatedAt:stored?.updatedAt??new Date().toISOString()
