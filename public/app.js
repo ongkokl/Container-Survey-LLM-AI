@@ -458,6 +458,10 @@ const tapHelp=document.querySelector("#tapHelp");
 const locationReview=document.querySelector("#locationReview");
 const locationSuggestion=document.querySelector("#locationSuggestion");
 const locationGeometryMessage=document.querySelector("#locationGeometryMessage");
+const faceReferenceTools=document.querySelector("#faceReferenceTools");
+const doorEndSide=document.querySelector("#doorEndSide");
+const markFaceBtn=document.querySelector("#markFaceBtn");
+const faceMarkHelp=document.querySelector("#faceMarkHelp");
 const locationCodeInput=document.querySelector("#locationCodeInput");
 const closeupCameraBtn=document.querySelector("#closeupCameraBtn");
 const closeupPhoto=document.querySelector("#closeupPhoto");
@@ -499,6 +503,7 @@ let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=fa
 let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
+let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
 
 const cameraGuidanceV1=new URLSearchParams(window.location.search).get("cameraGuidance")!=="0";
 const guidedCamera=createGuidedCamera({
@@ -565,10 +570,13 @@ createFindingBtn.addEventListener("click",async()=>{
     geometryReferenceText.textContent="";
     currentGeometry=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
     locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
+    locationReferenceQuad=null;faceMarkMode=false;faceMarkPoints=[];faceMarkResumeMode="AREA";
     locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
     overviewMarkTools.hidden=true;overviewStage.dataset.markMode="AREA";
     markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
     markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
+    faceReferenceTools.hidden=true;faceMarkHelp.textContent="Use when the container face is not detected automatically.";
+    doorEndSide.value=findingFace.value==="LEFT"?"RIGHT":"LEFT";
     locationReview.hidden=true;locationCodeInput.value="";locationCodeInput.removeAttribute("aria-invalid");
     locationSuggestion.textContent="Waiting for overview analysis…";locationGeometryMessage.textContent="";
     try{
@@ -614,6 +622,10 @@ function validNormalizedBox(box){
 }
 
 function setOverviewMarkMode(mode){
+  if(faceMarkMode){
+    faceMarkMode=false;
+    faceMarkPoints=[];
+  }
   overviewMarkMode=mode==="POINT"?"POINT":"AREA";
   overviewStage.dataset.markMode=overviewMarkMode;
   const area=overviewMarkMode==="AREA";
@@ -652,6 +664,9 @@ markPointBtn.addEventListener("click",()=>setOverviewMarkMode("POINT"));
 
 function resetOverviewLocation(){
   locationReferenceBox=null;
+  locationReferenceQuad=null;
+  faceMarkMode=false;
+  faceMarkPoints=[];
   locationAutoUsable=false;
   aiLocationCode=null;
   locationPoint=null;
@@ -676,6 +691,13 @@ function resetOverviewLocation(){
 function renderLocationResult(result){
   locationReferenceBox=result?.referenceBox??null;
   locationAutoUsable=Boolean(result?.autoUsable);
+  const sideFinding=["LEFT","RIGHT"].includes(findingFace.value);
+  faceReferenceTools.hidden=!sideFinding;
+  if(sideFinding&&!locationReferenceBox){
+    faceMarkHelp.textContent="Automatic face detection failed. Mark the 4 corners to continue automatic CEDEX location calculation.";
+  }else if(sideFinding){
+    faceMarkHelp.textContent="Automatic reference found. You can mark 4 corners manually if you want to override it.";
+  }
   const location=result?.location??null;
   aiLocationCode=location?.code??null;
 
@@ -707,7 +729,9 @@ function renderLocationResult(result){
       (locationAutoUsable?"":" · manual location review required")+
       sideOrientation;
   }else{
-    locationGeometryMessage.textContent="No reliable container reference frame was established."+sideOrientation;
+    locationGeometryMessage.textContent=["LEFT","RIGHT"].includes(findingFace.value)
+      ?"Automatic container-face reference was not established. Mark the 4 face corners to continue automatic location calculation."
+      :"No reliable container reference frame was established."+sideOrientation;
   }
   locationCodeInput.setAttribute("aria-invalid",validLocationCode()?"false":locationCodeInput.value?"true":"false");
 }
@@ -717,27 +741,40 @@ async function recalculateLocationFromMark(){
   const usingArea=overviewMarkMode==="AREA";
   if(usingArea&&!validNormalizedBox(locationArea))return;
   if(!usingArea&&!locationPoint)return;
-  if(!locationReferenceBox||!locationAutoUsable){
-    locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. Enter the CEDEX location manually because the overview geometry is not reliable enough for automatic calculation.";
+  const hasFaceQuad=Array.isArray(locationReferenceQuad)&&locationReferenceQuad.length===4;
+  if(!hasFaceQuad&&(!locationReferenceBox||!locationAutoUsable)){
+    locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. Mark the 4 container-face corners to calculate the CEDEX location automatically.";
     updateFindingReady();
     return;
   }
   const requestId=++locationRecalcRequest;
   locationSuggestion.textContent="Recalculating CEDEX location from the marked "+(usingArea?"area":"point")+"…";
   try{
-    const result=await apiJson(usingArea?"/api/cedex/location-from-box":"/api/cedex/location-from-point",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(usingArea?{
-        findingId:currentFinding.id,
-        damageBox:locationArea,
-        referenceBox:locationReferenceBox
-      }:{
-        findingId:currentFinding.id,
-        point:locationPoint,
-        referenceBox:locationReferenceBox
-      })
-    });
+    const result=hasFaceQuad
+      ? await apiJson("/api/cedex/location-from-face-quad",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            findingId:currentFinding.id,
+            corners:locationReferenceQuad,
+            doorEnd:doorEndSide.value,
+            damageBox:usingArea?locationArea:null,
+            damagePoint:usingArea?null:locationPoint
+          })
+        })
+      : await apiJson(usingArea?"/api/cedex/location-from-box":"/api/cedex/location-from-point",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify(usingArea?{
+            findingId:currentFinding.id,
+            damageBox:locationArea,
+            referenceBox:locationReferenceBox
+          }:{
+            findingId:currentFinding.id,
+            point:locationPoint,
+            referenceBox:locationReferenceBox
+          })
+        });
     if(requestId!==locationRecalcRequest)return;
     if(result?.code){
       locationCodeInput.value=result.code;
@@ -755,6 +792,73 @@ async function recalculateLocationFromMark(){
   updateFindingReady();
 }
 
+function drawFaceReference(canvas,points,complete=false,clear=false){
+  const ctx=canvas.getContext("2d");
+  if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!points?.length)return;
+  ctx.save();
+  ctx.lineWidth=4;
+  ctx.strokeStyle="#9c8cff";
+  ctx.fillStyle="#9c8cff";
+  ctx.shadowColor="rgba(0,0,0,.8)";
+  ctx.shadowBlur=4;
+  ctx.beginPath();
+  points.forEach((point,index)=>{
+    const x=point.x*canvas.width,y=point.y*canvas.height;
+    if(index===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  if(complete&&points.length===4)ctx.closePath();
+  ctx.stroke();
+  ctx.font="700 13px system-ui,sans-serif";
+  ctx.textAlign="center";
+  ctx.textBaseline="middle";
+  points.forEach((point,index)=>{
+    const x=point.x*canvas.width,y=point.y*canvas.height;
+    ctx.beginPath();ctx.arc(x,y,11,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#08131f";ctx.fillText(String(index+1),x,y);ctx.fillStyle="#9c8cff";
+  });
+  ctx.restore();
+}
+
+function drawOverviewComposite(){
+  if(overviewStage.hidden||!overviewPreview.complete)return;
+  syncAnnotationCanvas(overviewPreview,overviewCanvas);
+  const ctx=overviewCanvas.getContext("2d");
+  ctx.clearRect(0,0,overviewCanvas.width,overviewCanvas.height);
+  const quad=faceMarkMode?faceMarkPoints:locationReferenceQuad;
+  if(quad?.length)drawFaceReference(overviewCanvas,quad,quad.length===4,false);
+  if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited,false);
+  else if(locationPoint)drawTarget(overviewCanvas,locationPoint,!overviewEdited,false);
+}
+
+function beginFaceMarking(){
+  if(!["LEFT","RIGHT"].includes(findingFace.value)){
+    faceMarkHelp.textContent="Four-corner face mapping is currently available for LEFT/RIGHT side findings.";
+    return;
+  }
+  faceMarkResumeMode=overviewMarkMode;
+  faceMarkMode=true;
+  faceMarkPoints=[];
+  overviewStage.dataset.markMode="FACE";
+  locationReferenceQuad=null;
+  locationReferenceBox=null;
+  locationAutoUsable=false;
+  locationCodeInput.value="";
+  markFaceBtn.textContent="Restart 4-corner marking";
+  faceMarkHelp.textContent="Tap 1 top-left, 2 top-right, 3 bottom-right, 4 bottom-left of the container side panel.";
+  drawOverviewComposite();
+  updateFindingReady();
+}
+
+markFaceBtn.addEventListener("click",beginFaceMarking);
+
+doorEndSide.addEventListener("change",()=>{
+  if(locationReferenceQuad?.length===4){
+    faceMarkHelp.textContent="Door-end orientation changed. Recalculating location from the marked face.";
+    recalculateLocationFromMark();
+  }
+});
+
 locationCodeInput.addEventListener("input",()=>{
   const normalized=normalizedLocationCode(locationCodeInput.value).replace(/[^A-Z0-9]/g,"").slice(0,4);
   if(locationCodeInput.value!==normalized)locationCodeInput.value=normalized;
@@ -767,7 +871,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
   overviewCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"overview");
   resetOverviewLocation();
   const requestId=++overviewAiRequest;
-  if(!overviewFile){locationReview.hidden=true;overviewMarkTools.hidden=true;updateFindingReady();return;}
+  if(!overviewFile){locationReview.hidden=true;overviewMarkTools.hidden=true;faceReferenceTools.hidden=true;updateFindingReady();return;}
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   findingMessage.textContent=source==="gallery"
     ?"Overview loaded from Gallery. AI will check the damage area and container geometry before suggesting a CEDEX location."
@@ -828,16 +932,16 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
 overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.files?.[0]??null,"system_camera"));
 overviewGalleryPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewGalleryPhoto.files?.[0]??null,"gallery"));
 
-function drawTarget(canvas,point,isAi=false){
+function drawTarget(canvas,point,isAi=false,clear=true){
   const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height,r=14;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.lineWidth=5;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";ctx.fillStyle=isAi?"#ffd54a":"#6ee7ff";
   ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();
   ctx.beginPath();ctx.moveTo(x-r-10,y);ctx.lineTo(x+r+10,y);ctx.moveTo(x,y-r-10);ctx.lineTo(x,y+r+10);ctx.stroke();
   ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
 }
-function drawBox(canvas,box,isAi=false){
-  const ctx=canvas.getContext("2d");ctx.clearRect(0,0,canvas.width,canvas.height);
+function drawBox(canvas,box,isAi=false,clear=true){
+  const ctx=canvas.getContext("2d");if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.save();
   ctx.lineWidth=6;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
   ctx.shadowColor="rgba(0,0,0,.85)";ctx.shadowBlur=4;
@@ -849,11 +953,7 @@ function syncAnnotationCanvas(img,canvas){
   if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
 }
 function redrawAnnotations(){
-  if(!overviewStage.hidden&&overviewPreview.complete){
-    syncAnnotationCanvas(overviewPreview,overviewCanvas);
-    if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited);
-    else if(locationPoint)drawTarget(overviewCanvas,locationPoint,!overviewEdited);
-  }
+  if(!overviewStage.hidden&&overviewPreview.complete)drawOverviewComposite();
   if(!closeupStage.hidden&&closeupPreview.complete&&damageBox){
     syncAnnotationCanvas(closeupPreview,closeupCanvas);drawBox(closeupCanvas,damageBox,!closeupEdited);
   }
@@ -870,8 +970,26 @@ function overviewPointer(event){
 }
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
-  overviewEdited=true;
   const point=overviewPointer(event);
+  if(faceMarkMode){
+    if(faceMarkPoints.length>=4)faceMarkPoints=[];
+    faceMarkPoints.push(point);
+    const labels=["top-left","top-right","bottom-right","bottom-left"];
+    if(faceMarkPoints.length<4){
+      faceMarkHelp.textContent="Corner "+faceMarkPoints.length+" marked. Tap "+(faceMarkPoints.length+1)+" "+labels[faceMarkPoints.length]+".";
+      drawOverviewComposite();
+      return;
+    }
+    locationReferenceQuad=faceMarkPoints.map(p=>({...p}));
+    faceMarkMode=false;
+    overviewStage.dataset.markMode=faceMarkResumeMode;
+    markFaceBtn.textContent="Remap 4 container-face corners";
+    faceMarkHelp.textContent="4-corner perspective reference saved. Recalculating the CEDEX location.";
+    drawOverviewComposite();
+    recalculateLocationFromMark();
+    return;
+  }
+  overviewEdited=true;
   if(overviewMarkMode==="AREA"){
     overviewDragStart=point;
     overviewCanvas.setPointerCapture(event.pointerId);
@@ -884,7 +1002,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 });
 
 overviewCanvas.addEventListener("pointermove",(event)=>{
-  if(overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
+  if(faceMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
   const end=overviewPointer(event);
   const preview={
     x:Math.min(overviewDragStart.x,end.x),
@@ -896,7 +1014,7 @@ overviewCanvas.addEventListener("pointermove",(event)=>{
 });
 
 overviewCanvas.addEventListener("pointerup",(event)=>{
-  if(overviewMarkMode!=="AREA"||!overviewDragStart)return;
+  if(faceMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart)return;
   const end=overviewPointer(event);
   const area={
     x:Math.min(overviewDragStart.x,end.x),
@@ -994,6 +1112,7 @@ saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
     const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewCaptureMeta);
+    if(locationReferenceQuad?.length===4) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"CONTAINER_FACE",geometryType:"POLYGON",geometry:{corners:locationReferenceQuad,doorEnd:doorEndSide.value,source:"SURVEYOR_FACE_QUAD"},createdBy:"SURVEYOR"})});
     if(aiLocationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiLocationArea,createdBy:"AI"})});
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
     if(overviewMarkMode==="AREA"&&locationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:locationArea,createdBy:"SURVEYOR"})});
