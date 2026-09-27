@@ -104,7 +104,7 @@ export class LocationSuggestionService{
       const noDamageReason=!sideSupported
         ?"Automatic CEDEX location is enabled for LEFT/RIGHT side overviews in this POC. Enter the location manually for this face."
         :!referenceBox
-          ?"Container face reference could not be established. Mark the damage and enter the CEDEX location manually."
+          ?"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
           :!knownGeometryAvailable
             ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
             :!guidedQualityOk
@@ -170,7 +170,7 @@ export class LocationSuggestionService{
       (!guided&&score!==null&&score<0.82);
 
     const reason=!referenceBox
-      ?"Container face reference could not be established. Mark the damage and enter the CEDEX location manually."
+      ?"Container face reference could not be established automatically. Mark the four face corners to continue automatic CEDEX location calculation."
       :!knownGeometryAvailable
         ?"Known container geometry is unavailable, so automatic CEDEX location is disabled. Enter the location manually."
         :!guidedQualityOk
