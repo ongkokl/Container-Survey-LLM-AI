@@ -233,7 +233,6 @@ function endFaceSuggestion(
   const verticalStart=endVerticalZoneAt(y1,structure.verticalBoundariesY);
   const verticalEnd=endVerticalZoneAt(Math.max(y1,y2-1e-6),structure.verticalBoundariesY);
   const vertical=verticalStart===verticalEnd?verticalStart:"X";
-  const thresholds=[...structure.positionBoundariesX,...structure.verticalBoundariesY];
   const boundaryNear=[x1,x2].some(v=>structure.positionBoundariesX.some(t=>closeTo(v,t)))||
     [y1,y2].some(v=>structure.verticalBoundariesY.some(t=>closeTo(v,t)));
   return {
