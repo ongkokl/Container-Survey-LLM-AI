@@ -581,8 +581,8 @@ createFindingBtn.addEventListener("click",async()=>{
     faceReferenceTools.hidden=true;faceMarkHelp.textContent="Use when the container face is not detected automatically.";
     aiDoorEndBox=null;detectedDoorSide=null;doorOrientationConfirmed=false;
     doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
-    confirmDoorOrientationBtn.disabled=false;confirmDoorOrientationBtn.textContent="Confirm door orientation";
-    doorEndSide.value=findingFace.value==="LEFT"?"RIGHT":"LEFT";
+    confirmDoorOrientationBtn.disabled=true;confirmDoorOrientationBtn.textContent="Confirm door orientation";
+    doorEndSide.value="";
     locationReview.hidden=true;locationCodeInput.value="";locationCodeInput.removeAttribute("aria-invalid");
     locationSuggestion.textContent="Waiting for overview analysis…";locationGeometryMessage.textContent="";
     try{
@@ -676,8 +676,9 @@ function resetOverviewLocation(){
   detectedDoorSide=null;
   doorOrientationConfirmed=false;
   doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
-  confirmDoorOrientationBtn.disabled=false;
+  confirmDoorOrientationBtn.disabled=true;
   confirmDoorOrientationBtn.textContent="Confirm door orientation";
+  doorEndSide.value="";
   faceMarkMode=false;
   faceMarkPoints=[];
   locationAutoUsable=false;
@@ -713,22 +714,30 @@ function renderLocationResult(result){
   confirmDoorOrientationBtn.textContent="Confirm door orientation";
   faceReferenceTools.hidden=!sideFinding;
 
+  const expectedDoorSide=findingFace.value==="RIGHT"?"LEFT":findingFace.value==="LEFT"?"RIGHT":null;
+  const selectedFaceSummary=sideFinding
+    ?"Selected finding: "+findingFace.value+" side"+(expectedDoorSide?" · expected door position: image "+expectedDoorSide.toLowerCase():"")
+    :"";
+
   if(sideFinding&&door?.visible&&door.side){
     doorEndSide.value=door.side;
+    confirmDoorOrientationBtn.disabled=false;
     const confidence=Math.round((Number(door.confidence)||0)*100);
     if(result?.orientationConflict){
       doorDetectionStatus.textContent=
-        "AI detected door end on image "+door.side.toLowerCase()+" · "+confidence+
-        "% · this conflicts with selected "+findingFace.value+" side"+
+        selectedFaceSummary+" · AI detected door end: image "+door.side.toLowerCase()+" · "+confidence+
+        "% · conflict with selected face"+
         (door.suggestedFace?" · photo likely shows "+door.suggestedFace+" side":"")+".";
     }else{
       doorDetectionStatus.textContent=
-        "AI detected door end on image "+door.side.toLowerCase()+" · "+confidence+
-        "%. Confirm or correct the orientation.";
+        selectedFaceSummary+" · AI detected door end: image "+door.side.toLowerCase()+" · "+confidence+
+        "%. Confirm or correct the AI result.";
     }
   }else if(sideFinding){
+    doorEndSide.value="";
+    confirmDoorOrientationBtn.disabled=true;
     doorDetectionStatus.textContent=
-      "AI did not detect the door end confidently. Select its image side manually if using the 4-corner reference.";
+      selectedFaceSummary+" · AI door detection: not confirmed. Select the door-end position manually if you use the 4-corner reference.";
   }
 
   if(sideFinding&&!locationReferenceBox){
@@ -761,13 +770,16 @@ function renderLocationResult(result){
       "Reference: guided known-geometry frame"+
       (locationAutoUsable?" · suitable for automatic side-location calculation":" · not suitable for automatic location")+
       sideOrientation;
-  }else if(result?.referenceSource==="AI_FACE"){
+  }else if(result?.referenceSource==="AI_FACE"&&locationReferenceBox){
     const score=typeof result.geometryScore==="number"?Math.round(result.geometryScore*100):null;
     locationGeometryMessage.textContent=
-      "Reference: container face detected from uploaded overview"+
+      "Reference: container side face detected from uploaded overview"+
       (score!==null?" · geometry match "+score+"%":"")+
       (locationAutoUsable?"":" · manual location review required")+
       sideOrientation;
+  }else if(result?.referenceSource==="AI_FACE"&&!locationReferenceBox){
+    locationGeometryMessage.textContent=
+      "Reference: container side face was not detected automatically. Mark the 4 face corners to continue automatic location calculation.";
   }else{
     locationGeometryMessage.textContent=["LEFT","RIGHT"].includes(findingFace.value)
       ?"Automatic container-face reference was not established. Mark the 4 face corners to continue automatic location calculation."
@@ -782,6 +794,11 @@ async function recalculateLocationFromMark(){
   if(usingArea&&!validNormalizedBox(locationArea))return;
   if(!usingArea&&!locationPoint)return;
   const hasFaceQuad=Array.isArray(locationReferenceQuad)&&locationReferenceQuad.length===4;
+  if(hasFaceQuad&&!["LEFT","RIGHT"].includes(doorEndSide.value)){
+    locationSuggestion.textContent="Select and confirm the door-end position before calculating the CEDEX location from the 4-corner reference.";
+    updateFindingReady();
+    return;
+  }
   if(!hasFaceQuad&&(!locationReferenceBox||!locationAutoUsable)){
     locationSuggestion.textContent=(usingArea?"Damage area":"Damage point")+" updated. Mark the 4 container-face corners to calculate the CEDEX location automatically.";
     updateFindingReady();
@@ -898,6 +915,11 @@ function beginFaceMarking(){
     faceMarkHelp.textContent="Four-corner face mapping is currently available for LEFT/RIGHT side findings.";
     return;
   }
+  if(!["LEFT","RIGHT"].includes(doorEndSide.value)){
+    faceMarkHelp.textContent="Select the door-end position first. The selected finding face only provides an expected orientation; it is not an AI detection.";
+    doorEndSide.focus();
+    return;
+  }
   faceMarkResumeMode=overviewMarkMode;
   faceMarkMode=true;
   faceMarkPoints=[];
@@ -915,6 +937,11 @@ function beginFaceMarking(){
 markFaceBtn.addEventListener("click",beginFaceMarking);
 
 confirmDoorOrientationBtn.addEventListener("click",()=>{
+  if(!["LEFT","RIGHT"].includes(doorEndSide.value)){
+    doorDetectionStatus.textContent="Select the door-end position before confirming.";
+    confirmDoorOrientationBtn.disabled=true;
+    return;
+  }
   doorOrientationConfirmed=true;
   confirmDoorOrientationBtn.disabled=true;
   confirmDoorOrientationBtn.textContent="Door orientation confirmed ✓";
@@ -925,9 +952,15 @@ confirmDoorOrientationBtn.addEventListener("click",()=>{
 
 doorEndSide.addEventListener("change",()=>{
   doorOrientationConfirmed=false;
-  confirmDoorOrientationBtn.disabled=false;
+  const valid=["LEFT","RIGHT"].includes(doorEndSide.value);
+  confirmDoorOrientationBtn.disabled=!valid;
   confirmDoorOrientationBtn.textContent="Confirm door orientation";
-  doorDetectionStatus.textContent="Door end set to image "+doorEndSide.value.toLowerCase()+". Confirm the orientation before final review.";
+  if(!valid){
+    const expected=findingFace.value==="RIGHT"?"left":findingFace.value==="LEFT"?"right":"";
+    doorDetectionStatus.textContent="AI door detection: not confirmed."+(expected?" Selected "+findingFace.value+" side normally expects the door at image "+expected+".":"");
+    return;
+  }
+  doorDetectionStatus.textContent="Manual door-end selection: image "+doorEndSide.value.toLowerCase()+". Confirm the orientation before final review.";
   if(locationReferenceQuad?.length===4){
     faceMarkHelp.textContent="Door-end orientation changed. Recalculating location from the marked face.";
     recalculateLocationFromMark();
