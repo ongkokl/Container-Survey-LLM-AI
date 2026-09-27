@@ -105,7 +105,47 @@ function guideStroke(quality){
   return "#ff7b7b";
 }
 
-function drawOverlay(canvas,face,equipmentType,mode,quality){
+function overviewReferenceFrame(width,height,face,geometry){
+  const maxWidth=width*0.92;
+  const maxHeight=height*0.84;
+  let targetAspect=null;
+  const lengthMm=Number(geometry?.lengthMm);
+  const widthMm=Number(geometry?.widthMm);
+  const heightMm=Number(geometry?.heightMm);
+  if((face==="LEFT"||face==="RIGHT")&&lengthMm>0&&heightMm>0)targetAspect=lengthMm/heightMm;
+  else if((face==="DOOR"||face==="FRONT")&&widthMm>0&&heightMm>0)targetAspect=widthMm/heightMm;
+  else if((face==="ROOF"||face==="FLOOR")&&lengthMm>0&&widthMm>0)targetAspect=lengthMm/widthMm;
+
+  let boxWidth=maxWidth,boxHeight=maxHeight;
+  if(targetAspect&&Number.isFinite(targetAspect)){
+    if(maxWidth/maxHeight>targetAspect)boxWidth=maxHeight*targetAspect;
+    else boxHeight=maxWidth/targetAspect;
+  }else if(face==="LEFT"||face==="RIGHT"){
+    boxWidth=width*0.88;boxHeight=height*0.70;
+  }else if(face==="DOOR"||face==="FRONT"){
+    boxWidth=width*0.72;boxHeight=height*0.84;
+  }else{
+    boxWidth=width*0.76;boxHeight=height*0.68;
+  }
+  return {
+    x:(width-boxWidth)/2,
+    y:(height-boxHeight)/2,
+    width:boxWidth,
+    height:boxHeight
+  };
+}
+
+function normalizedReferenceFrame(width,height,face,geometry){
+  const frame=overviewReferenceFrame(width,height,face,geometry);
+  return {
+    x:Number((frame.x/width).toFixed(6)),
+    y:Number((frame.y/height).toFixed(6)),
+    width:Number((frame.width/width).toFixed(6)),
+    height:Number((frame.height/height).toFixed(6))
+  };
+}
+
+function drawOverlay(canvas,face,equipmentType,mode,quality,geometry=null){
   const rect=canvas.getBoundingClientRect();
   const dpr=Math.min(window.devicePixelRatio||1,2);
   const width=Math.max(1,Math.round(rect.width*dpr));
@@ -132,35 +172,38 @@ function drawOverlay(canvas,face,equipmentType,mode,quality){
     ctx.moveTo(w*.44,h*.48);ctx.lineTo(w*.56,h*.48);
     ctx.moveTo(w*.50,h*.42);ctx.lineTo(w*.50,h*.54);
     ctx.stroke();
-  }else if(face==="LEFT"||face==="RIGHT"){
-    const x=w*.06,y=h*.14,bw=w*.88,bh=h*.70;
+  }else{
+    const frame=overviewReferenceFrame(w,h,face,geometry);
+    const x=frame.x,y=frame.y,bw=frame.width,bh=frame.height;
     ctx.strokeRect(x,y,bw,bh);
     ctx.setLineDash([]);
-    ctx.beginPath();ctx.moveTo(x,y+h*.08);ctx.lineTo(x+bw,y+h*.08);ctx.stroke();
-    ctx.beginPath();ctx.moveTo(x,y+bh-h*.08);ctx.lineTo(x+bw,y+bh-h*.08);ctx.stroke();
-    if(equipmentType==="GP"){
+    if(face==="LEFT"||face==="RIGHT"){
+      ctx.beginPath();ctx.moveTo(x,y+bh*.08);ctx.lineTo(x+bw,y+bh*.08);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x,y+bh*.92);ctx.lineTo(x+bw,y+bh*.92);ctx.stroke();
+      const sections=Number(geometry?.lengthFt)<=20?5:10;
       ctx.lineWidth=1.5;ctx.globalAlpha=.75;
-      for(let i=1;i<10;i++){const px=x+(bw*i/10);ctx.beginPath();ctx.moveTo(px,y+h*.10);ctx.lineTo(px,y+bh-h*.10);ctx.stroke();}
+      for(let i=1;i<sections;i++){
+        const px=x+(bw*i/sections);
+        ctx.beginPath();ctx.moveTo(px,y);ctx.lineTo(px,y+bh);ctx.stroke();
+      }
       ctx.globalAlpha=1;
-    }
-    ctx.lineWidth=3;
-    ctx.beginPath();ctx.moveTo(w*.46,h*.49);ctx.lineTo(w*.54,h*.49);ctx.moveTo(w*.50,h*.45);ctx.lineTo(w*.50,h*.53);ctx.stroke();
-  }else if(face==="DOOR"||face==="FRONT"){
-    const x=w*.14,y=h*.08,bw=w*.72,bh=h*.84;
-    ctx.strokeRect(x,y,bw,bh);
-    ctx.setLineDash([]);
-    ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(x+bw*.5,y);ctx.lineTo(x+bw*.5,y+bh);ctx.stroke();
-    if(face==="DOOR"){
-      ctx.beginPath();ctx.moveTo(x+bw*.30,y+h*.06);ctx.lineTo(x+bw*.30,y+bh-h*.06);ctx.moveTo(x+bw*.70,y+h*.06);ctx.lineTo(x+bw*.70,y+bh-h*.06);ctx.stroke();
+      ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(x,y+bh*.5);ctx.lineTo(x+bw,y+bh*.5);ctx.stroke();
+      ctx.font="700 11px system-ui,sans-serif";
+      ctx.fillText(face==="RIGHT"?"DOOR END":"FRONT END",x+6,y+16);
+      ctx.textAlign="right";
+      ctx.fillText(face==="RIGHT"?"FRONT END":"DOOR END",x+bw-6,y+16);
+      ctx.textAlign="left";
+    }else if(face==="DOOR"||face==="FRONT"){
+      ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(x+bw*.5,y);ctx.lineTo(x+bw*.5,y+bh);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(x,y+bh*.5);ctx.lineTo(x+bw,y+bh*.5);ctx.stroke();
+      if(face==="DOOR"){
+        ctx.beginPath();ctx.moveTo(x+bw*.30,y+bh*.06);ctx.lineTo(x+bw*.30,y+bh*.94);ctx.moveTo(x+bw*.70,y+bh*.06);ctx.lineTo(x+bw*.70,y+bh*.94);ctx.stroke();
+      }
     }
     ctx.lineWidth=3;
     ctx.beginPath();ctx.moveTo(w*.46,h*.50);ctx.lineTo(w*.54,h*.50);ctx.moveTo(w*.50,h*.46);ctx.lineTo(w*.50,h*.54);ctx.stroke();
-  }else{
-    const x=w*.12,y=h*.14,bw=w*.76,bh=h*.68;
-    ctx.strokeRect(x,y,bw,bh);
-    ctx.setLineDash([]);
-    ctx.beginPath();ctx.moveTo(w*.45,h*.50);ctx.lineTo(w*.55,h*.50);ctx.moveTo(w*.50,h*.45);ctx.lineTo(w*.50,h*.55);ctx.stroke();
   }
 
   ctx.font="700 12px system-ui,sans-serif";
@@ -225,11 +268,16 @@ export function createGuidedCamera(elements){
       analysisContext.drawImage(video,0,0,aw,ah);
       const imageData=analysisContext.getImageData(0,0,aw,ah);
       lastMetrics=analyseImageData(imageData,current.face,current.mode,orientationGamma);
-      const primaryQuality=current.mode==="overview"?lastMetrics.measurementQuality:lastMetrics.identificationQuality;
+      const portraitSide=current.mode==="overview"&&["LEFT","RIGHT"].includes(current.face)&&video.videoHeight>video.videoWidth;
+      const primaryQuality=portraitSide
+        ?"POOR"
+        :current.mode==="overview"?lastMetrics.measurementQuality:lastMetrics.identificationQuality;
       qualityBadge.textContent=(current.mode==="overview"?"Measurement: ":"Photo: ")+primaryQuality.toLowerCase();
       qualityBadge.dataset.quality=primaryQuality;
-      statusText.textContent=guidanceInstruction(lastMetrics,current.face,current.mode);
-      drawOverlay(overlay,current.face,current.equipmentType,current.mode,primaryQuality);
+      statusText.textContent=portraitSide
+        ?"Rotate phone to landscape so the full side face can fit the geometry guide"
+        :guidanceInstruction(lastMetrics,current.face,current.mode);
+      drawOverlay(overlay,current.face,current.equipmentType,current.mode,primaryQuality,current.geometry);
     }catch{
       statusText.textContent="Keep the damage centred and structural references visible";
     }
@@ -249,6 +297,7 @@ export function createGuidedCamera(elements){
         identificationQuality:"POOR",measurementQuality:"POOR",
         identificationScore:0,measurementScore:0,sharpnessScore:0,exposureScore:0,glareScore:0,geometryScore:0,levelScore:0
       };
+      const portraitSide=current.mode==="overview"&&["LEFT","RIGHT"].includes(current.face)&&video.videoHeight>video.videoWidth;
       const metadata={
         version:"camera_guidance_v1",
         source:"guided_camera",
@@ -257,8 +306,12 @@ export function createGuidedCamera(elements){
         equipmentType:current.equipmentType||null,
         capturedAt:new Date().toISOString(),
         frame:{width:video.videoWidth,height:video.videoHeight},
+        referenceFrame:current.mode==="overview"
+          ? normalizedReferenceFrame(video.videoWidth,video.videoHeight,current.face,current.geometry)
+          : null,
+        orientationSuitable:!portraitSide,
         identificationQuality:metrics.identificationQuality,
-        measurementQuality:metrics.measurementQuality,
+        measurementQuality:portraitSide?"POOR":metrics.measurementQuality,
         scores:{
           sharpness:metrics.sharpnessScore,
           exposure:metrics.exposureScore,
@@ -284,6 +337,7 @@ export function createGuidedCamera(elements){
       mode:options.mode==="closeup"?"closeup":"overview",
       face:String(options.face||"").toUpperCase(),
       equipmentType:String(options.equipmentType||"").toUpperCase()||null,
+      geometry:options.geometry&&typeof options.geometry==="object"?options.geometry:null,
       fallbackInput:options.fallbackInput||null,
       onCapture:options.onCapture
     };
@@ -293,7 +347,7 @@ export function createGuidedCamera(elements){
     qualityBadge.dataset.quality="POOR";
     statusText.textContent="Starting camera…";
     setModalOpen(true);
-    drawOverlay(overlay,request.face,request.equipmentType,request.mode,"POOR");
+    drawOverlay(overlay,request.face,request.equipmentType,request.mode,"POOR",request.geometry);
     try{
       if(!navigator.mediaDevices?.getUserMedia)throw new Error("Live camera guidance is not supported on this browser.");
       const acquiredStream=await navigator.mediaDevices.getUserMedia({
@@ -341,7 +395,7 @@ export function createGuidedCamera(elements){
     if(input)input.click();
   });
   window.addEventListener("keydown",(event)=>{if(event.key==="Escape"&&!modal.hidden)stop();});
-  window.addEventListener("resize",()=>{if(!modal.hidden&&current){const q=current.mode==="overview"?lastMetrics?.measurementQuality:lastMetrics?.identificationQuality;drawOverlay(overlay,current.face,current.equipmentType,current.mode,q||"POOR");}});
+  window.addEventListener("resize",()=>{if(!modal.hidden&&current){const q=current.mode==="overview"?lastMetrics?.measurementQuality:lastMetrics?.identificationQuality;drawOverlay(overlay,current.face,current.equipmentType,current.mode,q||"POOR",current.geometry);}});
 
   return {open,close:stop};
 }

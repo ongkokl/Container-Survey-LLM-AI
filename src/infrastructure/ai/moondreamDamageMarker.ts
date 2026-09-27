@@ -28,11 +28,38 @@ function arrayAt(raw:unknown,key:string):Record<string,unknown>[]{
   return[];
 }
 
+function objectBox(o:Record<string,unknown>):{x:number;y:number;width:number;height:number}|null{
+  let x1=finite(o.x_min??o.xmin??o.x1),y1=finite(o.y_min??o.ymin??o.y1);
+  let x2=finite(o.x_max??o.xmax??o.x2),y2=finite(o.y_max??o.ymax??o.y2);
+  if(x1===null||y1===null||x2===null||y2===null){
+    const x=finite(o.x),y=finite(o.y),w=finite(o.width??o.w),h=finite(o.height??o.h);
+    if(x===null||y===null||w===null||h===null)return null;
+    x1=x;y1=y;x2=x+w;y2=y+h;
+  }
+  x1=normalize(x1);y1=normalize(y1);x2=normalize(x2);y2=normalize(y2);
+  return {
+    x:Math.min(x1,x2),
+    y:Math.min(y1,y2),
+    width:Math.abs(x2-x1),
+    height:Math.abs(y2-y1)
+  };
+}
+
+function largestBox(raw:unknown):{x:number;y:number;width:number;height:number}|null{
+  const boxes=arrayAt(raw,"objects").map(objectBox).filter((x):x is {x:number;y:number;width:number;height:number}=>Boolean(x));
+  if(!boxes.length)return null;
+  return boxes.sort((a,b)=>b.width*b.height-a.width*a.height)[0];
+}
+
 export class MoondreamDamageMarker {
   constructor(private readonly ai:AiRunner){}
 
+  private async imageData(file:File):Promise<string>{
+    return dataUri(await file.arrayBuffer(),file.type||"image/jpeg");
+  }
+
   async point(file:File){
-    const image=dataUri(await file.arrayBuffer(),file.type||"image/jpeg");
+    const image=await this.imageData(file);
     const raw=await this.ai.run(MODEL,{task:"point",image,target:"visible physical damage on the shipping container",max_objects:3});
     const points=arrayAt(raw,"points");
     if(!points.length)return {found:false,model:MODEL,geometry:null,raw};
@@ -42,19 +69,36 @@ export class MoondreamDamageMarker {
   }
 
   async detect(file:File){
-    const image=dataUri(await file.arrayBuffer(),file.type||"image/jpeg");
+    const image=await this.imageData(file);
     const raw=await this.ai.run(MODEL,{task:"detect",image,target:"visible damaged area on the shipping container component",max_objects:3});
-    const objects=arrayAt(raw,"objects");
-    if(!objects.length)return {found:false,model:MODEL,geometry:null,raw};
-    const o=objects[0];
-    let x1=finite(o.x_min??o.xmin??o.x1),y1=finite(o.y_min??o.ymin??o.y1);
-    let x2=finite(o.x_max??o.xmax??o.x2),y2=finite(o.y_max??o.ymax??o.y2);
-    if(x1===null||y1===null||x2===null||y2===null){
-      const x=finite(o.x),y=finite(o.y),w=finite(o.width??o.w),h=finite(o.height??o.h);
-      if(x===null||y===null||w===null||h===null)return {found:false,model:MODEL,geometry:null,raw};
-      x1=x;y1=y;x2=x+w;y2=y+h;
+    const geometry=largestBox(raw);
+    return geometry
+      ? {found:true,model:MODEL,geometry,raw}
+      : {found:false,model:MODEL,geometry:null,raw};
+  }
+
+  async locateOverview(file:File,face:string,knownReferenceBox?:{x:number;y:number;width:number;height:number}|null){
+    const image=await this.imageData(file);
+    const faceName=String(face||"container").toLowerCase();
+    const damageTarget=
+      "dent, buckle, deformation, crease, puncture, tear, crack or other visible structural damage on the shipping container "+
+      faceName+" face; ignore logos, paint, dirt, stains, shadows, timestamps and normal corrugations";
+    const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
+    const damageBox=largestBox(damageRaw);
+
+    if(knownReferenceBox){
+      return {found:Boolean(damageBox),model:MODEL,damageBox,referenceBox:knownReferenceBox,raw:{damage:damageRaw,reference:null}};
     }
-    x1=normalize(x1);y1=normalize(y1);x2=normalize(x2);y2=normalize(y2);
-    return {found:true,model:MODEL,geometry:{x:Math.min(x1,x2),y:Math.min(y1,y2),width:Math.abs(x2-x1),height:Math.abs(y2-y1)},raw};
+
+    const referenceTarget="entire visible "+faceName+" face of the shipping container including its outer structural frame";
+    const referenceRaw=await this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3});
+    const referenceBox=largestBox(referenceRaw);
+    return {
+      found:Boolean(damageBox),
+      model:MODEL,
+      damageBox,
+      referenceBox,
+      raw:{damage:damageRaw,reference:referenceRaw}
+    };
   }
 }

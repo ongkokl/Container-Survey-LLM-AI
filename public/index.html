@@ -164,6 +164,14 @@
         <p class="message"><strong>Measurement photo:</strong> no digital zoom · avoid strong angle/glare · keep full damage visible · include known container geometry.</p>
         <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview measurement photo"><canvas id="overviewCanvas"></canvas></div>
         <p id="tapHelp" class="message" hidden>AI will propose a damage position. Tap anywhere to correct it.</p>
+        <div id="locationReview" class="info locationReview" hidden>
+          <strong>CEDEX damage location</strong>
+          <span id="locationSuggestion" class="message">Waiting for overview analysis…</span>
+          <span id="locationGeometryMessage" class="message"></span>
+          <label for="locationCodeInput">Surveyor-confirmed location code</label>
+          <input id="locationCodeInput" type="text" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. RT5N">
+          <span class="message">LEFT/RIGHT side overviews are calculated deterministically from the confirmed damage position and container reference frame. Other faces use manual entry in this POC.</span>
+        </div>
         <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Take guided damage close-up</strong><span>Keep the full damage inside the live target and retain enough surrounding component detail for classification.</span></button>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
         <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Choose close-up from Gallery</strong><span>Suitable for classification; absolute size will come from the overview geometry when registration is available.</span></label>

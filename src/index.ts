@@ -19,6 +19,7 @@ import { CedexRepository } from "./infrastructure/d1/cedexRepository";
 import { CedexClassificationService } from "./application/cedexClassificationService";
 import { DamageClassificationService } from "./application/damageClassificationService";
 import { RepairRecommendationService } from "./application/repairRecommendationService";
+import { LocationSuggestionService } from "./application/locationSuggestionService";
 
 export interface Env {
   DB: D1Database;
@@ -92,6 +93,68 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"AI_MARK_FAILED",message:error instanceof Error?error.message:"Unable to locate damage."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/vision/locate-overview-damage") {
+    try {
+      const form=await request.formData();
+      const file=form.get("photo");
+      if(!(file instanceof File)) throw new Error("A photo is required.");
+      if(file.size>8*1024*1024) throw new Error("Photo must be below 8 MB.");
+      const captureMetadataRaw=String(form.get("captureMetadata")??"").trim();
+      let captureMetadata:unknown=null;
+      if(captureMetadataRaw){
+        try{captureMetadata=JSON.parse(captureMetadataRaw);}
+        catch{throw new Error("Invalid capture metadata.");}
+      }
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const repo=new CedexRepository(env.DB);
+      const service=new LocationSuggestionService(repo,new MoondreamDamageMarker(ai));
+      const result=await service.analyse({
+        findingId:String(form.get("findingId")??""),
+        file,
+        imageWidth:Number(form.get("width"))||0,
+        imageHeight:Number(form.get("height"))||0,
+        captureMetadata
+      });
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"LOCATION_SUGGEST_FAILED",message:error instanceof Error?error.message:"Unable to suggest damage location."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/location-from-point") {
+    try {
+      const body=await readJson<{
+        findingId?:string;
+        point?:{x:number;y:number};
+        referenceBox?:{x:number;y:number;width:number;height:number};
+      }>(request);
+      const repo=new CedexRepository(env.DB);
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const service=new LocationSuggestionService(repo,new MoondreamDamageMarker(ai));
+      const result=await service.fromPoint({
+        findingId:body.findingId??"",
+        point:body.point??{x:Number.NaN,y:Number.NaN},
+        referenceBox:body.referenceBox??{x:Number.NaN,y:Number.NaN,width:Number.NaN,height:Number.NaN}
+      });
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"LOCATION_POINT_FAILED",message:error instanceof Error?error.message:"Unable to calculate damage location."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/cedex/location-decision") {
+    try {
+      const body=await readJson<{findingId?:string;finalCode?:string}>(request);
+      const result=await new CedexRepository(env.DB).decideLocation({
+        findingId:body.findingId??"",
+        finalCode:body.finalCode??""
+      });
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"LOCATION_DECISION_FAILED",message:error instanceof Error?error.message:"Unable to save location code."},422);
     }
   }
 

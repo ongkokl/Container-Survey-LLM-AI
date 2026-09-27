@@ -452,6 +452,10 @@ const overviewStage=document.querySelector("#overviewStage");
 const overviewPreview=document.querySelector("#overviewPreview");
 const overviewCanvas=document.querySelector("#overviewCanvas");
 const tapHelp=document.querySelector("#tapHelp");
+const locationReview=document.querySelector("#locationReview");
+const locationSuggestion=document.querySelector("#locationSuggestion");
+const locationGeometryMessage=document.querySelector("#locationGeometryMessage");
+const locationCodeInput=document.querySelector("#locationCodeInput");
 const closeupCameraBtn=document.querySelector("#closeupCameraBtn");
 const closeupPhoto=document.querySelector("#closeupPhoto");
 const closeupGalleryPhoto=document.querySelector("#closeupGalleryPhoto");
@@ -490,6 +494,7 @@ let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,
 let aiLocationPoint=null,aiDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
+let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 
 const cameraGuidanceV1=new URLSearchParams(window.location.search).get("cameraGuidance")!=="0";
 const guidedCamera=createGuidedCamera({
@@ -524,6 +529,7 @@ function openGuidedCapture(mode){
     mode,
     face:findingFace.value,
     equipmentType:currentGeometry?.equipmentType||containerType.textContent.trim(),
+    geometry:currentGeometry,
     fallbackInput,
     onCapture:async(file,metadata)=>{
       if(isOverview)selectOverviewPhoto(file,"guided",metadata);
@@ -554,6 +560,9 @@ createFindingBtn.addEventListener("click",async()=>{
     geometryReference.hidden=true;
     geometryReferenceText.textContent="";
     currentGeometry=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
+    locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
+    locationReview.hidden=true;locationCodeInput.value="";locationCodeInput.removeAttribute("aria-invalid");
+    locationSuggestion.textContent="Waiting for overview analysis…";locationGeometryMessage.textContent="";
     try{
       const geometry=await apiJson("/api/findings/geometry",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
       currentGeometry=geometry;
@@ -573,31 +582,156 @@ function showImage(file,img,stage,canvas,ready){
   img.src=url;
 }
 
+const LOCATION_CODE_PATTERN=/^[BDEFILMNRTUX][BHLGRTX][0-9NX][0-9NX]$/;
+
+function normalizedLocationCode(value){
+  return String(value||"").trim().toUpperCase();
+}
+
+function validLocationCode(){
+  const code=normalizedLocationCode(locationCodeInput.value);
+  if(!LOCATION_CODE_PATTERN.test(code))return false;
+  if(findingFace.value==="LEFT"&&code[0]!=="L")return false;
+  if(findingFace.value==="RIGHT"&&code[0]!=="R")return false;
+  return true;
+}
+
+function resetOverviewLocation(){
+  locationReferenceBox=null;
+  locationAutoUsable=false;
+  aiLocationCode=null;
+  locationRecalcRequest++;
+  locationCodeInput.value="";
+  locationCodeInput.removeAttribute("aria-invalid");
+  locationReview.hidden=false;
+  locationSuggestion.textContent="Analysing overview for CEDEX location…";
+  locationGeometryMessage.textContent="";
+}
+
+function renderLocationResult(result){
+  locationReferenceBox=result?.referenceBox??null;
+  locationAutoUsable=Boolean(result?.autoUsable);
+  const location=result?.location??null;
+  aiLocationCode=location?.code??null;
+
+  if(aiLocationCode){
+    locationCodeInput.value=aiLocationCode;
+    locationSuggestion.textContent=
+      "Suggested location: "+aiLocationCode+
+      (location.reviewRequired?" · surveyor confirmation required":" · geometry check passed");
+  }else{
+    locationCodeInput.value="";
+    locationSuggestion.textContent=location?.reason||"Automatic location unavailable. Enter the CEDEX location manually.";
+  }
+
+  const sideOrientation=findingFace.value==="RIGHT"
+    ?" · verify door end is at image left"
+    :findingFace.value==="LEFT"
+      ?" · verify door end is at image right"
+      :"";
+  if(result?.referenceSource==="GUIDED_FRAME"){
+    locationGeometryMessage.textContent=
+      "Reference: guided known-geometry frame"+
+      (locationAutoUsable?" · suitable for automatic side-location calculation":" · not suitable for automatic location")+
+      sideOrientation;
+  }else if(result?.referenceSource==="AI_FACE"){
+    const score=typeof result.geometryScore==="number"?Math.round(result.geometryScore*100):null;
+    locationGeometryMessage.textContent=
+      "Reference: container face detected from uploaded overview"+
+      (score!==null?" · geometry match "+score+"%":"")+
+      (locationAutoUsable?"":" · manual location review required")+
+      sideOrientation;
+  }else{
+    locationGeometryMessage.textContent="No reliable container reference frame was established."+sideOrientation;
+  }
+  locationCodeInput.setAttribute("aria-invalid",validLocationCode()?"false":locationCodeInput.value?"true":"false");
+}
+
+async function recalculateLocationFromMarkedPoint(){
+  if(!currentFinding||!locationPoint)return;
+  if(!locationReferenceBox||!locationAutoUsable){
+    locationSuggestion.textContent="Damage point updated. Enter the CEDEX location manually because the overview geometry is not reliable enough for automatic calculation.";
+    updateFindingReady();
+    return;
+  }
+  const requestId=++locationRecalcRequest;
+  locationSuggestion.textContent="Recalculating CEDEX location from the marked point…";
+  try{
+    const result=await apiJson("/api/cedex/location-from-point",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        findingId:currentFinding.id,
+        point:locationPoint,
+        referenceBox:locationReferenceBox
+      })
+    });
+    if(requestId!==locationRecalcRequest)return;
+    if(result?.code){
+      locationCodeInput.value=result.code;
+      locationSuggestion.textContent="Marked point location: "+result.code+(result.reviewRequired?" · close to a CEDEX zone boundary; verify before saving":"");
+    }else{
+      locationCodeInput.value="";
+      locationSuggestion.textContent=result?.reason||"Unable to calculate a location code from this point. Enter it manually.";
+    }
+  }catch(e){
+    if(requestId!==locationRecalcRequest)return;
+    locationCodeInput.value="";
+    locationSuggestion.textContent=e instanceof Error?e.message:"Unable to recalculate location. Enter it manually.";
+  }
+  updateFindingReady();
+}
+
+locationCodeInput.addEventListener("input",()=>{
+  const normalized=normalizedLocationCode(locationCodeInput.value).replace(/[^A-Z0-9]/g,"").slice(0,4);
+  if(locationCodeInput.value!==normalized)locationCodeInput.value=normalized;
+  locationCodeInput.setAttribute("aria-invalid",normalized.length>0&&!validLocationCode()?"true":"false");
+  updateFindingReady();
+});
+
 function selectOverviewPhoto(file,source,captureMetadata=null){
-  overviewFile=file??null; locationPoint=null;aiLocationPoint=null;overviewEdited=false;
+  overviewFile=file??null;locationPoint=null;aiLocationPoint=null;overviewEdited=false;
   overviewCaptureMeta=captureMetadata??unscoredCaptureMetadata(source,"overview");
+  resetOverviewLocation();
   const requestId=++overviewAiRequest;
-  if(!overviewFile)return;
+  if(!overviewFile){locationReview.hidden=true;updateFindingReady();return;}
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   findingMessage.textContent=source==="gallery"
-    ?"Overview loaded from Gallery. Verify that rails/structural references are visible before using it for measurement."
+    ?"Overview loaded from Gallery. AI will check both the damage and container geometry before suggesting a CEDEX location."
     :source==="guided"
-      ?"Guided overview captured. Verify the AI damage position before saving."
-      :"Overview captured. Verify damage is centred and known container geometry is visible.";
+      ?"Guided overview captured. Verify the proposed damage point and CEDEX location before saving."
+      :"Overview captured. AI will establish the container reference before suggesting a CEDEX location.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
-    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible damage…";
+    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible structural damage…";
     try{
-      const upload=await compressForOcr(overviewFile),form=new FormData();
-      form.append("photo",upload,upload.name||"overview.jpg");form.append("mode","point");
-      const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
-      if(requestId!==overviewAiRequest||overviewEdited)return;
-      if(result.found&&result.geometry){
-        aiLocationPoint={...result.geometry};locationPoint={...result.geometry};drawTarget(overviewCanvas,locationPoint,true);
-        tapHelp.textContent="AI proposed this position. Tap the photo to correct it if needed.";
+      const upload=await compressForOcr(overviewFile);
+      const dimensions=await imageDimensions(upload,overviewPreview);
+      const form=new FormData();
+      form.append("photo",upload,upload.name||"overview.jpg");
+      form.append("findingId",currentFinding.id);
+      form.append("width",String(dimensions.width));
+      form.append("height",String(dimensions.height));
+      form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
+      const result=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:form});
+      if(requestId!==overviewAiRequest)return;
+      renderLocationResult(result);
+      if(result.found&&result.point){
+        aiLocationPoint={...result.point};
+        if(!overviewEdited){
+          locationPoint={...result.point};
+          drawTarget(overviewCanvas,locationPoint,true);
+          tapHelp.textContent="AI proposed this damage position. Tap the overview to correct it if needed.";
+        }else if(locationPoint){
+          await recalculateLocationFromMarkedPoint();
+        }
       }else{
-        tapHelp.textContent="AI could not locate damage confidently. Tap the damaged position.";
+        tapHelp.textContent="AI could not identify a reliable damage position. Tap the damaged position and enter the location code manually if needed.";
       }
-    }catch{
+    }catch(e){
+      if(requestId!==overviewAiRequest)return;
+      locationAutoUsable=false;
+      locationSuggestion.textContent="Automatic CEDEX location unavailable. Enter the location manually.";
+      locationGeometryMessage.textContent=e instanceof Error?e.message:"Overview analysis unavailable.";
       tapHelp.textContent="AI marking unavailable. Tap the damaged position.";
     }
     updateFindingReady();
@@ -643,7 +777,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
   locationPoint={x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height};
   drawTarget(overviewCanvas,locationPoint,false);
   tapHelp.textContent="Damage position marked. Tap again to adjust.";
-  updateFindingReady();
+  recalculateLocationFromMarkedPoint();
 });
 
 let dragStart=null;
@@ -693,7 +827,12 @@ closeupCanvas.addEventListener("pointerup",(event)=>{
   boxHelp.textContent="Damage area marked. Drag again to adjust.";updateFindingReady();
 });
 
-function updateFindingReady(){saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox);}
+function updateFindingReady(){
+  const code=normalizedLocationCode(locationCodeInput.value);
+  const locationValid=validLocationCode();
+  if(locationCodeInput.value)locationCodeInput.setAttribute("aria-invalid",locationValid?"false":"true");
+  saveFindingBtn.disabled=!(overviewFile&&closeupFile&&locationPoint&&damageBox&&locationValid);
+}
 
 async function uploadFindingPhoto(file,role,img,captureMetadata){
   const upload=await compressForOcr(file),dimensions=await imageDimensions(upload,img),form=new FormData();
@@ -715,7 +854,15 @@ saveFindingBtn.addEventListener("click",async()=>{
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
     if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
-    findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved.";
+    const locationDecision=await apiJson("/api/cedex/location-decision",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({findingId:currentFinding.id,finalCode:normalizedLocationCode(locationCodeInput.value)})
+    });
+    findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved · location "+locationDecision.finalCode+".";
+    locationSuggestion.textContent=locationDecision.decision==="APPROVED"
+      ?"CEDEX location accepted: "+locationDecision.finalCode
+      :"CEDEX location confirmed/corrected: "+locationDecision.finalCode;
     redrawAnnotations();
     saveFindingBtn.textContent="Finding saved ✓";saveFindingBtn.disabled=true;
     analyseComponentBtn.hidden=false;

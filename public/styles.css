@@ -443,3 +443,32 @@ button.camera {
 #repairDepthCriterion {
   margin-top:0;
 }
+
+
+.locationReview {
+  display:grid;
+  gap:8px;
+  margin-top:12px;
+}
+
+.locationReview[hidden] {
+  display:none;
+}
+
+.locationReview input {
+  width:100%;
+  min-height:46px;
+  border:1px solid #38506e;
+  border-radius:12px;
+  background:#0b1625;
+  color:#f4f7fb;
+  padding:0 12px;
+  outline:none;
+  font:inherit;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+
+.locationReview input[aria-invalid="true"] {
+  border-color:#ff7b7b;
+}
