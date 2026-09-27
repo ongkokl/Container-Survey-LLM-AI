@@ -112,6 +112,63 @@ export class CedexRepository {
     }
   }
 
+  async registerComponentReferenceImage(input:{
+    id:string;
+    equipmentType:"GP"|"RF";
+    componentCode:string;
+    containerFace:"LEFT"|"RIGHT"|"FRONT"|"DOOR"|"ROOF"|"FLOOR";
+    overviewZone:"TOP_EDGE"|"BOTTOM_EDGE"|"LEFT_EDGE"|"RIGHT_EDGE"|"CENTRAL_FIELD"|"UNKNOWN"|"ANY";
+    r2Key:string;
+    contentType:string;
+    caption:string|null;
+    visualDescriptor:string|null;
+    sourceReference:string;
+    priority:number;
+  }){
+    const componentCode=input.componentCode.trim().toUpperCase();
+    const allowed=await this.components(input.equipmentType,input.containerFace);
+    if(!allowed.some(component=>component.component_code===componentCode)){
+      throw new Error("Reference image component is not valid for the selected equipment type and container face.");
+    }
+    const now=new Date().toISOString();
+    await this.db.prepare(`
+      INSERT INTO component_reference_images
+        (
+          id,equipment_type,component_code,container_face,overview_zone,
+          r2_key,content_type,caption,visual_descriptor,source_reference,
+          verification_status,embedding_status,vector_id,priority,active,
+          created_at,updated_at
+        )
+      VALUES (?,?,?,?,?,?,?,?,?,?,'VERIFIED','NOT_INDEXED',NULL,?,1,?,?)`
+    ).bind(
+      input.id,
+      input.equipmentType,
+      componentCode,
+      input.containerFace,
+      input.overviewZone,
+      input.r2Key,
+      input.contentType,
+      input.caption,
+      input.visualDescriptor,
+      input.sourceReference,
+      input.priority,
+      now,
+      now
+    ).run();
+    return {
+      id:input.id,
+      equipmentType:input.equipmentType,
+      componentCode,
+      containerFace:input.containerFace,
+      overviewZone:input.overviewZone,
+      r2Key:input.r2Key,
+      verificationStatus:"VERIFIED" as const,
+      embeddingStatus:"NOT_INDEXED" as const,
+      priority:input.priority,
+      createdAt:now
+    };
+  }
+
   async componentReferenceImages(
     equipment:"GP"|"RF",
     containerFace:string,
