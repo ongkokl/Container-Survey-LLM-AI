@@ -144,11 +144,11 @@
       <button id="addFindingBtn" class="primary" type="button">Add damage finding</button>
     </section>
     <section id="findingCard" class="card" hidden>
-      <div class="step"><span class="stepNo">3</span><div><h2>Capture finding</h2><p>Select the container face, take an overview photo and let AI propose the damage position. Correct it if needed.</p></div></div>
-      <label class="field"><span>Container face</span><select id="findingFace">
+      <div class="step"><span class="stepNo">3</span><div><h2>Capture finding</h2><p>Select the container face being surveyed, then take an overview photo. AI will verify the face and propose the damage position.</p></div></div>
+      <label class="field"><span>Container face being surveyed</span><select id="findingFace">
         <option value="">Select face</option><option value="LEFT">Left side</option><option value="RIGHT">Right side</option>
         <option value="FRONT">Front end</option><option value="DOOR">Door end</option><option value="ROOF">Roof</option><option value="FLOOR">Floor / underside</option>
-      </select></label>
+      </select><small>Surveyor selection. AI verification happens after the overview photo and will not change this automatically.</small></label>
       <button id="createFindingBtn" class="primary" type="button">Create finding</button>
       <div id="findingCapture" hidden>
         <p class="findingLabel" id="findingLabel"></p>
@@ -173,6 +173,9 @@
           <span id="locationSuggestion" class="message">Waiting for overview analysis…</span>
           <span id="locationGeometryMessage" class="message"></span>
           <div id="faceReferenceTools" class="faceReferenceTools" hidden>
+            <strong>Container face verification</strong>
+            <span id="faceVerificationStatus" class="message">Waiting for AI face verification…</span>
+            <button id="correctFaceBtn" class="secondary" type="button" hidden>Correct surveyed face</button>
             <strong>Container face reference</strong>
             <span id="doorDetectionStatus" class="message">Checking whether the cargo door end is visible…</span>
             <label for="doorEndSide">Door end in this photo</label>

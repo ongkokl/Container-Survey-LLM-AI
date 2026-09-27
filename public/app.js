@@ -459,6 +459,8 @@ const locationReview=document.querySelector("#locationReview");
 const locationSuggestion=document.querySelector("#locationSuggestion");
 const locationGeometryMessage=document.querySelector("#locationGeometryMessage");
 const faceReferenceTools=document.querySelector("#faceReferenceTools");
+const faceVerificationStatus=document.querySelector("#faceVerificationStatus");
+const correctFaceBtn=document.querySelector("#correctFaceBtn");
 const doorDetectionStatus=document.querySelector("#doorDetectionStatus");
 const doorEndSide=document.querySelector("#doorEndSide");
 const confirmDoorOrientationBtn=document.querySelector("#confirmDoorOrientationBtn");
@@ -507,6 +509,7 @@ let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
 let aiDoorEndBox=null,detectedDoorSide=null,doorOrientationConfirmed=false;
+let aiDetectedFace=null,aiFaceConfidence=0;
 
 const cameraGuidanceV1=new URLSearchParams(window.location.search).get("cameraGuidance")!=="0";
 const guidedCamera=createGuidedCamera({
@@ -579,7 +582,9 @@ createFindingBtn.addEventListener("click",async()=>{
     markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
     markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
     faceReferenceTools.hidden=true;faceMarkHelp.textContent="Use when the container face is not detected automatically.";
-    aiDoorEndBox=null;detectedDoorSide=null;doorOrientationConfirmed=false;
+    faceVerificationStatus.textContent="Waiting for AI face verification…";
+    correctFaceBtn.hidden=true;correctFaceBtn.disabled=false;correctFaceBtn.textContent="Correct surveyed face";
+    aiDoorEndBox=null;detectedDoorSide=null;doorOrientationConfirmed=false;aiDetectedFace=null;aiFaceConfidence=0;
     doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
     confirmDoorOrientationBtn.disabled=true;confirmDoorOrientationBtn.textContent="Confirm door orientation";
     doorEndSide.value="";
@@ -672,8 +677,12 @@ function resetOverviewLocation(){
   locationReferenceBox=null;
   locationReferenceQuad=null;
   faceReferenceTools.hidden=true;
+  faceVerificationStatus.textContent="Waiting for AI face verification…";
+  correctFaceBtn.hidden=true;correctFaceBtn.disabled=false;correctFaceBtn.textContent="Correct surveyed face";
   aiDoorEndBox=null;
   detectedDoorSide=null;
+  aiDetectedFace=null;
+  aiFaceConfidence=0;
   doorOrientationConfirmed=false;
   doorDetectionStatus.textContent="Checking whether the cargo door end is visible…";
   confirmDoorOrientationBtn.disabled=true;
@@ -707,12 +716,39 @@ function renderLocationResult(result){
   locationAutoUsable=Boolean(result?.autoUsable);
   aiDoorEndBox=validNormalizedBox(result?.doorBox)?{...result.doorBox}:null;
   const sideFinding=["LEFT","RIGHT"].includes(findingFace.value);
+  const faceVerification=result?.faceVerification??null;
+  aiDetectedFace=faceVerification?.detectedFace??null;
+  aiFaceConfidence=Number(faceVerification?.confidence)||0;
   const door=result?.doorEndDetection??null;
   detectedDoorSide=door?.side??null;
   doorOrientationConfirmed=false;
   confirmDoorOrientationBtn.disabled=false;
   confirmDoorOrientationBtn.textContent="Confirm door orientation";
   faceReferenceTools.hidden=!sideFinding;
+  if(sideFinding&&faceVerification){
+    const pct=Math.round(aiFaceConfidence*100);
+    if(faceVerification.status==="MATCH"){
+      faceVerificationStatus.textContent=
+        "Surveyor-selected face: "+findingFace.value+" · AI verified face: "+faceVerification.detectedFace+
+        " · "+pct+"% · consistent.";
+      correctFaceBtn.hidden=true;
+    }else if(faceVerification.status==="MISMATCH"&&faceVerification.detectedFace){
+      faceVerificationStatus.textContent=
+        "Surveyor-selected face: "+findingFace.value+" · AI verified face: "+faceVerification.detectedFace+
+        " · "+pct+"% · MISMATCH. Automatic CEDEX location is blocked until the face is reviewed.";
+      correctFaceBtn.hidden=false;
+      correctFaceBtn.disabled=false;
+      correctFaceBtn.textContent="Change surveyed face to "+faceVerification.detectedFace;
+    }else{
+      faceVerificationStatus.textContent=
+        "Surveyor-selected face: "+findingFace.value+" · AI face verification: not confirmed"+
+        (faceVerification.detectedFace?" · possible "+faceVerification.detectedFace+" · "+pct+"%":"")+".";
+      correctFaceBtn.hidden=true;
+    }
+  }else if(sideFinding){
+    faceVerificationStatus.textContent="Surveyor-selected face: "+findingFace.value+" · AI face verification: not confirmed.";
+    correctFaceBtn.hidden=true;
+  }
 
   const expectedDoorSide=findingFace.value==="RIGHT"?"LEFT":findingFace.value==="LEFT"?"RIGHT":null;
   const selectedFaceSummary=sideFinding
@@ -935,6 +971,32 @@ function beginFaceMarking(){
 }
 
 markFaceBtn.addEventListener("click",beginFaceMarking);
+
+correctFaceBtn.addEventListener("click",async()=>{
+  if(!currentFinding||!["LEFT","RIGHT"].includes(aiDetectedFace)||aiDetectedFace===findingFace.value)return;
+  const targetFace=aiDetectedFace;
+  setBusy(correctFaceBtn,true,"Updating surveyed face…","Correct surveyed face");
+  try{
+    const updated=await apiJson("/api/findings/face",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({findingId:currentFinding.id,containerFace:targetFace})
+    });
+    currentFinding={...currentFinding,...updated};
+    findingFace.value=targetFace;
+    findingLabel.textContent="Finding "+currentFinding.finding_sequence+" · "+findingFace.options[findingFace.selectedIndex].text;
+    findingMessage.textContent="Surveyed face updated to "+targetFace+". Rechecking the current overview photo.";
+    correctFaceBtn.hidden=true;
+    aiDetectedFace=null;aiFaceConfidence=0;
+    if(overviewFile){
+      const source=overviewCaptureMeta?.source||"system_camera";
+      selectOverviewPhoto(overviewFile,source,overviewCaptureMeta);
+    }
+  }catch(e){
+    faceVerificationStatus.textContent=e instanceof Error?e.message:"Unable to update the surveyed face.";
+    setBusy(correctFaceBtn,false,"Updating surveyed face…","Correct surveyed face");
+  }
+});
 
 confirmDoorOrientationBtn.addEventListener("click",()=>{
   if(!["LEFT","RIGHT"].includes(doorEndSide.value)){

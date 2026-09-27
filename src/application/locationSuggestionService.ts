@@ -13,7 +13,7 @@ import {
   type DoorEndSide,
   type FaceQuad
 } from "../domain/container/faceHomography";
-import { inferDoorEndDetection } from "../domain/container/doorEndOrientation";
+import { inferDoorEndDetection, inferFaceVerification } from "../domain/container/doorEndOrientation";
 import { CedexRepository } from "../infrastructure/d1/cedexRepository";
 import { MoondreamDamageMarker } from "../infrastructure/ai/moondreamDamageMarker";
 
@@ -104,7 +104,14 @@ export class LocationSuggestionService{
     const knownGeometryAvailable=expected!==null;
     const guidedQualityOk=!guided||["GOOD","USABLE"].includes(capture.measurementQuality);
     const galleryGeometryOk=guided||(score!==null&&score>=0.68);
-    const orientationConflict=doorEndDetection.matchesSelectedFace===false&&doorEndDetection.confidence>=0.64;
+    const faceVerification=inferFaceVerification({
+      selectedFace:context.container_face,
+      door:doorEndDetection,
+      hasSideReference:Boolean(referenceBox),
+      geometryScore:score,
+      guidedReference:guided
+    });
+    const orientationConflict=faceVerification.status==="MISMATCH";
     const autoUsable=Boolean(referenceBox)&&sideSupported&&knownGeometryAvailable&&guidedQualityOk&&galleryGeometryOk&&!orientationConflict;
 
     if(!located.found||!located.damageBox){
@@ -137,6 +144,7 @@ export class LocationSuggestionService{
           geometryScore:score,
           doorEndDetection,
           doorBox:located.doorBox??null,
+          faceVerification,
           orientationConflict,
           autoUsable,
           reason:noDamageReason
@@ -150,6 +158,9 @@ export class LocationSuggestionService{
           referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
           detectedDoorEnd:doorEndDetection.side,
           doorOrientationConfidence:doorEndDetection.confidence,
+          aiDetectedFace:faceVerification.detectedFace,
+          aiFaceConfidence:faceVerification.confidence,
+          aiFaceVerificationStatus:faceVerification.status,
           orientationConflict
         }
       });
@@ -164,6 +175,7 @@ export class LocationSuggestionService{
         geometryScore:score,
         doorEndDetection,
         doorBox:located.doorBox??null,
+        faceVerification,
         orientationConflict,
         autoUsable,
         location:{code:null,reviewRequired:true,reason:noDamageReason}
@@ -185,13 +197,15 @@ export class LocationSuggestionService{
     const selectedCode=autoUsable?calculated?.code??null:null;
     const reviewRequired=
       !autoUsable||
-      orientationConflict||
+      faceVerification.status!=="MATCH"||
       Boolean(calculated?.reviewRequired)||
       (guided&&capture.measurementQuality!=="GOOD")||
       (!guided&&score!==null&&score<0.82);
 
     const reason=orientationConflict
-      ?doorEndDetection.reason+" Verify the selected LEFT/RIGHT face before accepting the CEDEX location."
+      ?faceVerification.reason+" Verify or correct the surveyed face before accepting the CEDEX location."
+      :faceVerification.status==="UNVERIFIED"&&referenceBox&&galleryGeometryOk
+        ?"AI could not independently verify the surveyed face. CEDEX location is calculated from the surveyor-selected face and usable geometry; surveyor confirmation is required."
       :!referenceBox
         ?doorEndDetection.doorDominant
           ?"Door end was detected, but no usable side-panel reference was found. Use a side overview with the side panel visible, or mark the four side-face corners."
@@ -219,6 +233,7 @@ export class LocationSuggestionService{
         geometryScore:score,
         doorEndDetection,
         doorBox:located.doorBox??null,
+        faceVerification,
         orientationConflict,
         calculatedLocation:calculated,
         selectedCode,
@@ -234,6 +249,9 @@ export class LocationSuggestionService{
         referenceSource:guided?"GUIDED_FRAME":"AI_FACE",
         detectedDoorEnd:doorEndDetection.side,
         doorOrientationConfidence:doorEndDetection.confidence,
+        aiDetectedFace:faceVerification.detectedFace,
+        aiFaceConfidence:faceVerification.confidence,
+        aiFaceVerificationStatus:faceVerification.status,
         orientationConflict
       }
     });
@@ -249,6 +267,7 @@ export class LocationSuggestionService{
       geometryScore:score,
       doorEndDetection,
       doorBox:located.doorBox??null,
+      faceVerification,
       orientationConflict,
       autoUsable,
       location:calculated?{

@@ -316,6 +316,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
   }
 
+  if (request.method === "POST" && url.pathname === "/api/findings/face") {
+    try {
+      const body=await readJson<{findingId?:string;containerFace?:string}>(request);
+      const result=await findingService(env).updateFace(body.findingId??"",body.containerFace??"");
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"FINDING_FACE_UPDATE_FAILED",message:error instanceof Error?error.message:"Unable to update the finding face."},422);
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/api/findings") {
     try {
       const surveyId=url.searchParams.get("surveyId")??"";
