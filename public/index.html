@@ -172,6 +172,16 @@
           <strong>CEDEX damage location</strong>
           <span id="locationSuggestion" class="message">Waiting for overview analysis…</span>
           <span id="locationGeometryMessage" class="message"></span>
+          <div id="faceReferenceTools" class="faceReferenceTools" hidden>
+            <strong>Container face reference</strong>
+            <label for="doorEndSide">Door end in this photo</label>
+            <select id="doorEndSide">
+              <option value="LEFT">Left side of photo</option>
+              <option value="RIGHT">Right side of photo</option>
+            </select>
+            <button id="markFaceBtn" class="secondary" type="button">Mark 4 container-face corners</button>
+            <span id="faceMarkHelp" class="message">Use when the container face is not detected automatically.</span>
+          </div>
           <label for="locationCodeInput">Surveyor-confirmed location code</label>
           <input id="locationCodeInput" type="text" maxlength="4" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. RT5N">
           <span class="message">LEFT/RIGHT side overviews are calculated deterministically from the confirmed damage position and container reference frame. Other faces use manual entry in this POC.</span>
