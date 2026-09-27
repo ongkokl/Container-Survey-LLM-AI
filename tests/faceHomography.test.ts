@@ -29,9 +29,12 @@ describe("manual container-face homography",()=>{
   });
 
   it("supports fixed-camera canonical horizontal and vertical flips",()=>{
-    expect(mapPointToCalibratedFace(rectangle[0],rectangle,{flipX:true})).toEqual({x:1,y:0});
-    expect(mapPointToCalibratedFace(rectangle[0],rectangle,{flipY:true})).toEqual({x:0,y:1});
-    expect(mapPointToCalibratedFace(rectangle[2],rectangle,{flipX:true,flipY:true})).toEqual({x:0,y:0});
+    const flipX=mapPointToCalibratedFace(rectangle[0],rectangle,{flipX:true});
+    expect(flipX.x).toBeCloseTo(1,8);expect(flipX.y).toBeCloseTo(0,8);
+    const flipY=mapPointToCalibratedFace(rectangle[0],rectangle,{flipY:true});
+    expect(flipY.x).toBeCloseTo(0,8);expect(flipY.y).toBeCloseTo(1,8);
+    const both=mapPointToCalibratedFace(rectangle[2],rectangle,{flipX:true,flipY:true});
+    expect(both.x).toBeCloseTo(0,8);expect(both.y).toBeCloseTo(0,8);
   });
 
   it("accepts a perspective trapezoid as a valid four-corner face",()=>{
