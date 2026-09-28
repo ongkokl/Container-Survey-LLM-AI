@@ -70,7 +70,7 @@ describe("close-up pinpoint targeting",()=>{
     }));
   });
 
-  it("requires positive Huckbolt evidence before preferring HWH on a GP door",async()=>{
+  it("narrows a high-confidence GP door locking-bar family before exact HWH/HWR classification",async()=>{
     const repo={
       findingContext:vi.fn(async()=>({
         id:"f-hw",survey_id:"s-hw",container_face:"DOOR",final_location_code:"DX2N",
@@ -80,7 +80,18 @@ describe("close-up pinpoint targeting",()=>{
       components:vi.fn(async()=>[
         {component_code:"HWH",component_name:"Hardware - Huckbolt",standard_version:"2025"},
         {component_code:"HWR",component_name:"Hardware",standard_version:"2025"},
-        {component_code:"LBB",component_name:"Locking Bar Bracket",standard_version:"2025"}
+        {component_code:"LBB",component_name:"Locking Bar Bracket",standard_version:"2025"},
+        {component_code:"LBG",component_name:"Locking Bar Guide",standard_version:"2025"},
+        {component_code:"LBR",component_name:"Locking Bar Rod",standard_version:"2025"},
+        {component_code:"PAA",component_name:"Panel Assembly",standard_version:"2025"},
+        {component_code:"HGA",component_name:"Hinge Assembly",standard_version:"2025"},
+        {component_code:"HGB",component_name:"Hinge Blade",standard_version:"2025"},
+        {component_code:"HGP",component_name:"Hinge Pin",standard_version:"2025"},
+        {component_code:"GTA",component_name:"Gasket Assembly",standard_version:"2025"},
+        {component_code:"GRS",component_name:"Gasket Retainer Strip",standard_version:"2025"},
+        {component_code:"DFA",component_name:"Door Frame Assembly",standard_version:"2025"},
+        {component_code:"CPA",component_name:"Corner Post Assembly",standard_version:"2025"},
+        {component_code:"MPD",component_name:"Consolidated Data Plate",standard_version:"2025"}
       ]),
       findingPhoto:vi.fn(async(_id:string,role:string)=>{
         if(role==="DAMAGE_CLOSEUP")return {id:"photo-hw",r2_key:"closeup-hw.jpg",content_type:"image/jpeg"};
@@ -107,21 +118,43 @@ describe("close-up pinpoint targeting",()=>{
       saveComponentPrediction:vi.fn(async()=>({predictionId:"pred-hw"}))
     } as unknown as CedexRepository;
 
-    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
-      const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
-      const prompt=String(request.messages[0].content[0].text??"");
-      expect(prompt).toContain("GP DOOR candidate-family narrowing");
-      expect(prompt).toContain("A round fastener head by itself is NOT enough evidence for HWH");
-      expect(prompt).toContain("prefer HWR");
-      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
-        selected_code:"HWR",confidence:0.82,needs_review:false,
-        reason:"The target is generic fastening hardware without positive Huckbolt-specific identification.",
-        candidates:[
-          {code:"HWR",confidence:0.82,reason:"Generic fastener."},
-          {code:"HWH",confidence:0.18,reason:"Huckbolt-specific construction is not established."}
-        ]
-      })}}]};
-    })};
+    const ai={run:vi.fn()
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
+        const prompt=String(request.messages[0].content[0].text??"");
+        expect(prompt).toContain("Identify the local GP dry-container DOOR assembly family");
+        expect(prompt).toContain("LOCKING_BAR_SUPPORT");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          family:"LOCKING_BAR_SUPPORT",confidence:0.94,
+          reason:"The reticle is on the locking-bar bracket/fastener support area."
+        })}}]};
+      })
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {
+          messages:Array<{content:Array<{type:string;text?:string}>}>,
+          response_format:{json_schema:{schema:{properties:{selected_code:{enum:string[]}}}}}
+        };
+        const prompt=String(request.messages[0].content[0].text??"");
+        expect(prompt).toContain("final AI candidate list was narrowed from 14 to 5 codes");
+        expect(prompt).toContain("A round fastener head by itself is NOT enough evidence for HWH");
+        expect(prompt).toContain("prefer HWR");
+        expect(prompt).not.toContain("PAA = Panel Assembly");
+        expect(prompt).not.toContain("HGA = Hinge Assembly");
+        const enumCodes=request.response_format.json_schema.schema.properties.selected_code.enum;
+        expect(enumCodes).toContain("HWR");
+        expect(enumCodes).toContain("HWH");
+        expect(enumCodes).toContain("LBB");
+        expect(enumCodes).not.toContain("PAA");
+        expect(enumCodes).not.toContain("HGA");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          selected_code:"HWR",confidence:0.82,needs_review:false,
+          reason:"The target is generic fastening hardware without positive Huckbolt-specific identification.",
+          candidates:[
+            {code:"HWR",confidence:0.82,reason:"Generic fastener."},
+            {code:"HWH",confidence:0.18,reason:"Huckbolt-specific construction is not established."}
+          ]
+        })}}]};
+      })};
 
     const result=await new CedexClassificationService(
       repo,
@@ -129,9 +162,72 @@ describe("close-up pinpoint targeting",()=>{
       ai
     ).analyseComponent("f-hw");
 
+    expect(ai.run).toHaveBeenCalledTimes(2);
     expect(result.selectedCode).toBe("HWR");
+    expect(result.fullAllowedCount).toBe(14);
+    expect(result.classificationAllowedCount).toBe(5);
+    expect(result.componentFamilyInferenceUsed).toBe(true);
+    expect(result.componentFamily).toBe("LOCKING_BAR_SUPPORT");
+    expect(result.componentFamilyConfidence).toBe(0.94);
     expect(result.componentFamilyNarrowingUsed).toBe(true);
+    expect(result.componentFamilyFallbackUsed).toBe(false);
     expect(result.hardwareSpecificityRuleUsed).toBe(true);
+  });
+
+  it("falls back to the full GP door component list when family confidence is low",async()=>{
+    const componentCodes=["HWH","HWR","LBB","LBG","LBR","PAA","HGA","HGB","HGP","GTA","GRS","DFA","CPA","MPD"];
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-low",survey_id:"s-low",container_face:"DOOR",final_location_code:"DX2N",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      equipmentForFinding:vi.fn(async()=>"GP"),
+      components:vi.fn(async()=>componentCodes.map(code=>({
+        component_code:code,component_name:code,standard_version:"2025"
+      }))),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-low",r2_key:"closeup-low.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {id:"target-low",r2_key:"target-low.jpg",content_type:"image/jpeg"};
+        return null;
+      }),
+      surveyorComponentPoint:vi.fn(async()=>({x:0.5,y:0.5})),
+      surveyorLocationPoint:vi.fn(async()=>null),
+      componentVisualRules:vi.fn(async()=>[]),
+      saveComponentPrediction:vi.fn(async()=>({predictionId:"pred-low"}))
+    } as unknown as CedexRepository;
+
+    const ai={run:vi.fn()
+      .mockImplementationOnce(async()=>({choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        family:"HINGE",confidence:0.61,reason:"The target is too ambiguous to narrow safely."
+      })}}]}))
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {
+          response_format:{json_schema:{schema:{properties:{selected_code:{enum:string[]}}}}}
+        };
+        const enumCodes=request.response_format.json_schema.schema.properties.selected_code.enum;
+        expect(enumCodes).toContain("PAA");
+        expect(enumCodes).toContain("HGA");
+        expect(enumCodes).toContain("HWH");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          selected_code:"PAA",confidence:0.86,needs_review:false,
+          reason:"The exact target lies on the door panel.",
+          candidates:[{code:"PAA",confidence:0.86,reason:"Door panel."}]
+        })}}]};
+      })};
+
+    const result=await new CedexClassificationService(
+      repo,
+      {get:vi.fn(async()=>imageObject())},
+      ai
+    ).analyseComponent("f-low");
+
+    expect(result.fullAllowedCount).toBe(14);
+    expect(result.classificationAllowedCount).toBe(14);
+    expect(result.componentFamilyInferenceUsed).toBe(true);
+    expect(result.componentFamily).toBe("HINGE");
+    expect(result.componentFamilyConfidence).toBe(0.61);
+    expect(result.componentFamilyNarrowingUsed).toBe(false);
+    expect(result.componentFamilyFallbackUsed).toBe(true);
   });
 
   it("uses the same pinpoint as the primary target for damage classification",async()=>{
