@@ -21,6 +21,7 @@ import { DamageClassificationService } from "./application/damageClassificationS
 import { RepairRecommendationService } from "./application/repairRecommendationService";
 import { LocationSuggestionService } from "./application/locationSuggestionService";
 import { FixedCameraCalibrationService } from "./application/fixedCameraCalibrationService";
+import { ComponentAccuracyService } from "./application/componentAccuracyService";
 import { fixedCameraProfile } from "./domain/container/fixedCameraProfile";
 
 export interface Env {
@@ -82,6 +83,21 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       visionModel: "@cf/qwen/qwen3.8-27b",
       time: new Date().toISOString()
     });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/qa/component-accuracy") {
+    try {
+      const requested=Number(url.searchParams.get("limit")??500);
+      const limit=Number.isFinite(requested)?Math.max(1,Math.min(2000,Math.trunc(requested))):500;
+      const result=await new ComponentAccuracyService(new CedexRepository(env.DB)).report(limit);
+      return json({ok:true,result});
+    } catch(error) {
+      return json({
+        ok:false,
+        error:"COMPONENT_ACCURACY_REPORT_FAILED",
+        message:error instanceof Error?error.message:"Unable to build component accuracy report."
+      },422);
+    }
   }
 
   if (request.method === "POST" && url.pathname === "/api/vision/mark-damage") {
