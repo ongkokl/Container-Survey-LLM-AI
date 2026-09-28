@@ -1324,12 +1324,14 @@ function drawTarget(canvas,point,isAi=false,clear=true){
   ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
 }
 
+const PRECISION_MARK_STROKE_WIDTH=1.5;
+
 function drawPrecisionTarget(canvas,point,isAi=false,clear=true){
   const mapped=annotationStagePoint(canvas,point),ctx=canvas.getContext("2d"),x=mapped.x,y=mapped.y;
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   const color=isAi?"#ffd54a":"#6ee7ff",gap=7,arm=18;
   ctx.save();
-  ctx.lineWidth=1.5;
+  ctx.lineWidth=PRECISION_MARK_STROKE_WIDTH;
   ctx.strokeStyle=color;
   ctx.fillStyle=color;
   ctx.shadowColor="rgba(0,0,0,.9)";
@@ -1347,8 +1349,8 @@ function drawPrecisionTarget(canvas,point,isAi=false,clear=true){
 function drawBox(canvas,box,isAi=false,clear=true){
   const ctx=canvas.getContext("2d");if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.save();
-  ctx.lineWidth=6;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
-  ctx.shadowColor="rgba(0,0,0,.85)";ctx.shadowBlur=4;
+  ctx.lineWidth=PRECISION_MARK_STROKE_WIDTH;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
+  ctx.shadowColor="rgba(0,0,0,.9)";ctx.shadowBlur=2;
   const mapped=annotationStageBox(canvas,box);
   ctx.strokeRect(mapped.x,mapped.y,mapped.width,mapped.height);
   ctx.restore();
