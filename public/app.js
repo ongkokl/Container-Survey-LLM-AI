@@ -1367,15 +1367,19 @@ window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)requestAnimationFrame(redrawAnnotations);});
 
 function overviewPointer(event){
-  const rect=overviewCanvas.getBoundingClientRect();
-  return {
-    x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
-    y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
-  };
+  const mapped=pointerToImageSpace(event,overviewCanvas,overviewPreview);
+  overviewPointerDebug=mapped.debug;
+  return mapped.point;
 }
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
   const point=overviewPointer(event);
+  if(!point){
+    if(endStructureMarkMode)endStructureHelp.textContent="Tap inside the visible photo, not the black margin.";
+    else if(faceMarkMode)faceMarkHelp.textContent="Tap inside the visible photo, not the black margin.";
+    else tapHelp.textContent="Tap inside the visible photo, not the black margin.";
+    return;
+  }
   if(endStructureMarkMode){
     if(endStructurePoints.length>=6)endStructurePoints=[];
     endStructurePoints.push(point);
@@ -1468,6 +1472,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 overviewCanvas.addEventListener("pointermove",(event)=>{
   if(faceMarkMode||endStructureMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
   const end=overviewPointer(event);
+  if(!end)return;
   const preview={
     x:Math.min(overviewDragStart.x,end.x),
     y:Math.min(overviewDragStart.y,end.y),
@@ -1483,6 +1488,13 @@ overviewCanvas.addEventListener("pointermove",(event)=>{
 overviewCanvas.addEventListener("pointerup",(event)=>{
   if(faceMarkMode||endStructureMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart)return;
   const end=overviewPointer(event);
+  if(!end){
+    overviewDragStart=null;
+    if(overviewCanvas.hasPointerCapture(event.pointerId))overviewCanvas.releasePointerCapture(event.pointerId);
+    tapHelp.textContent="Finish the damage box inside the visible photo.";
+    redrawAnnotations();
+    return;
+  }
   const area={
     x:Math.min(overviewDragStart.x,end.x),
     y:Math.min(overviewDragStart.y,end.y),
@@ -1539,14 +1551,16 @@ closeupPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupPhoto.files
 closeupGalleryPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupGalleryPhoto.files?.[0]??null,"gallery"));
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
+  const mapped=pointerToImageSpace(event,closeupCanvas,closeupPreview);
+  closeupPointerDebug=mapped.debug;
+  if(!mapped.point){
+    boxHelp.textContent="Tap inside the visible close-up photo, not the black margin.";
+    return;
+  }
   closeupEdited=true;
-  const r=closeupCanvas.getBoundingClientRect();
-  closeupTargetPoint={
-    x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)),
-    y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height))
-  };
+  closeupTargetPoint=mapped.point;
   drawPrecisionTarget(closeupCanvas,closeupTargetPoint,false);
-  boxHelp.textContent="Target pinpoint confirmed. Tap again to adjust.";
+  boxHelp.textContent="Target pinpoint confirmed in image coordinates. Tap again to adjust.";
   updateFindingReady();
 });
 
