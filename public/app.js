@@ -1067,7 +1067,7 @@ function drawOverviewComposite(){
   if(quad?.length)drawFaceReference(overviewCanvas,quad,quad.length===4,false);
   if(endStructureMarkMode&&endStructurePoints.length)drawEndStructureGuidePoints(overviewCanvas,endStructurePoints);
   if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited,false);
-  else if(locationPoint)drawTarget(overviewCanvas,locationPoint,!overviewEdited,false);
+  else if(locationPoint)drawPrecisionTarget(overviewCanvas,locationPoint,!overviewEdited,false);
 }
 
 function beginFaceMarking(){
