@@ -5,7 +5,6 @@ import type { ComponentAccuracyRow, CedexRepository } from "../src/infrastructur
 function row(input:Partial<ComponentAccuracyRow>&Pick<ComponentAccuracyRow,"final_value">):ComponentAccuracyRow{
   return {
     ai_value:null,
-    final_value:input.final_value,
     decision:"CORRECTED",
     confidence:null,
     candidate_codes:null,
@@ -13,7 +12,8 @@ function row(input:Partial<ComponentAccuracyRow>&Pick<ComponentAccuracyRow,"fina
     container_face:"DOOR",
     equipment_type:"GP",
     created_at:"2026-09-28T00:00:00.000Z",
-    ...input
+    ...input,
+    final_value:input.final_value
   };
 }
 
