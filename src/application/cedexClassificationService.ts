@@ -167,8 +167,15 @@ export class CedexClassificationService {
       visualRuleCount: visualRules.length,
       visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))]
     });
+    const gpDoorHardwareGuidance = equipment === "GP" && context.container_face === "DOOR"
+      ? `GP DOOR candidate-family narrowing:
+First identify the local assembly family from the close-up (for example locking-bar/hardware, hinge, panel/gasket, frame/post, or door-retainer), then compare the exact reticle-centre item mainly against plausible codes in that family and their D1 confusable alternatives. Do not let the surrounding assembly override the exact centre target.
+Special HWH/HWR rule: HWH is the specific Huckbolt code. A round fastener head by itself is NOT enough evidence for HWH. Select HWH only when the target is positively visually identifiable as the Huckbolt referenced by the visual rule. If the target is fastening/mounting hardware but that Huckbolt-specific identification cannot be established from the image, prefer HWR and keep needs_review true when uncertainty remains.`
+      : "";
+
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
+${gpDoorHardwareGuidance}
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
 ${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this as supporting structural-position context only. Do not choose a component from the location code alone. If the close-up visual evidence conflicts with the location context, set needs_review true or abstain rather than forcing a component code.` : "No confirmed CEDEX location code is available yet; rely on the recorded face, overview context and close-up evidence."}
 ${targetPoint ? `The surveyor pinpointed the target on the original close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
@@ -330,7 +337,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       locationContextUsed: Boolean(context.final_location_code),
       positionalConflict,
       visualKnowledgeUsed: visualRules.length > 0,
-      visualRuleCount: visualRules.length
+      visualRuleCount: visualRules.length,
+      componentFamilyNarrowingUsed: Boolean(gpDoorHardwareGuidance),
+      hardwareSpecificityRuleUsed: Boolean(gpDoorHardwareGuidance)
     };
     componentLog("PERSIST_START", {
       traceId,
@@ -364,6 +373,8 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         visualKnowledgeUsed: visualRules.length > 0,
         visualRuleCount: visualRules.length,
         visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))],
+        componentFamilyNarrowingUsed: Boolean(gpDoorHardwareGuidance),
+        hardwareSpecificityRuleUsed: Boolean(gpDoorHardwareGuidance),
         containerFace: context.container_face,
         allowedComponentCount: allowed.length,
         componentReviewThreshold: COMPONENT_REVIEW_THRESHOLD,

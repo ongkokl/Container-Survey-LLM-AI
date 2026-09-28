@@ -70,6 +70,70 @@ describe("close-up pinpoint targeting",()=>{
     }));
   });
 
+  it("requires positive Huckbolt evidence before preferring HWH on a GP door",async()=>{
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-hw",survey_id:"s-hw",container_face:"DOOR",final_location_code:"DX2N",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      equipmentForFinding:vi.fn(async()=>"GP"),
+      components:vi.fn(async()=>[
+        {component_code:"HWH",component_name:"Hardware - Huckbolt",standard_version:"2025"},
+        {component_code:"HWR",component_name:"Hardware",standard_version:"2025"},
+        {component_code:"LBB",component_name:"Locking Bar Bracket",standard_version:"2025"}
+      ]),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-hw",r2_key:"closeup-hw.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {id:"target-hw",r2_key:"target-hw.jpg",content_type:"image/jpeg"};
+        if(role==="FACE_OVERVIEW")return {id:"overview-hw",r2_key:"overview-hw.jpg",content_type:"image/jpeg"};
+        return null;
+      }),
+      surveyorComponentPoint:vi.fn(async()=>({x:0.5,y:0.5})),
+      surveyorLocationPoint:vi.fn(async()=>({x:0.5,y:0.5})),
+      componentVisualRules:vi.fn(async()=>[
+        {
+          equipment_type:"GP",component_code:"HWH",container_face:"DOOR",overview_zone:"ANY",
+          visual_definition:"Specific Huckbolt",positive_cues:"Positive Huckbolt identification",
+          negative_cues:"Round head alone is insufficient",confusable_with:"HWR,LBB",
+          force_review:0,source_reference:"test",priority:190,active:1
+        },
+        {
+          equipment_type:"GP",component_code:"HWR",container_face:"DOOR",overview_zone:"ANY",
+          visual_definition:"Generic hardware",positive_cues:"Generic fastener",
+          negative_cues:"Not positively identified HWH",confusable_with:"HWH,LBB",
+          force_review:0,source_reference:"test",priority:180,active:1
+        }
+      ]),
+      saveComponentPrediction:vi.fn(async()=>({predictionId:"pred-hw"}))
+    } as unknown as CedexRepository;
+
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
+      const prompt=String(request.messages[0].content[0].text??"");
+      expect(prompt).toContain("GP DOOR candidate-family narrowing");
+      expect(prompt).toContain("A round fastener head by itself is NOT enough evidence for HWH");
+      expect(prompt).toContain("prefer HWR");
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        selected_code:"HWR",confidence:0.82,needs_review:false,
+        reason:"The target is generic fastening hardware without positive Huckbolt-specific identification.",
+        candidates:[
+          {code:"HWR",confidence:0.82,reason:"Generic fastener."},
+          {code:"HWH",confidence:0.18,reason:"Huckbolt-specific construction is not established."}
+        ]
+      })}}]};
+    })};
+
+    const result=await new CedexClassificationService(
+      repo,
+      {get:vi.fn(async()=>imageObject())},
+      ai
+    ).analyseComponent("f-hw");
+
+    expect(result.selectedCode).toBe("HWR");
+    expect(result.componentFamilyNarrowingUsed).toBe(true);
+    expect(result.hardwareSpecificityRuleUsed).toBe(true);
+  });
+
   it("uses the same pinpoint as the primary target for damage classification",async()=>{
     const saveDamagePrediction=vi.fn(async()=>({predictionId:"pred-2"}));
     const repo={
