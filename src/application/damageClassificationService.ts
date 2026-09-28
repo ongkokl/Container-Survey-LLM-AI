@@ -105,8 +105,8 @@ Confirmed component: ${allowed.componentCode}. Container face: ${context.contain
 ${targetPoint?`The surveyor pinpointed the intended damage on the close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Treat the damage at this point as the PRIMARY target and use the surrounding close-up morphology as context. The coordinates are metadata only; no artificial marker is drawn on the pixels.`:"No close-up target point is available; classify cautiously."}
 
 Classify ONLY the visible physical damage affecting the confirmed component. Choose ONLY from the allowed codes below. Never invent a code.
-Use the physical morphology in the marked region. Do not classify unrelated dirt, stains, corrosion, marks or defects outside the marked region.
-Identify the PRIMARY damage represented by the marked region. Incidental paint chips, dirt, staining or discoloration caused by or adjacent to a clearer structural damage must not outrank the primary morphology.
+Use the physical morphology at the pinpointed target and its immediate surrounding close-up context. Do not classify unrelated dirt, stains, corrosion, marks or defects elsewhere in the image.
+Identify the PRIMARY damage at the pinpointed target. Incidental paint chips, dirt, staining or discoloration caused by or adjacent to a clearer structural damage must not outrank the primary morphology.
 Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code. Codes whose evidence requirement is MEASUREMENT or HISTORY_CONTEXT may be suggested only when visually plausible, but must set needs_review true because the photo alone cannot establish the required evidence. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
 
 ${visualGuidance}
