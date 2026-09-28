@@ -112,6 +112,7 @@ export class CedexClassificationService {
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
+${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this as supporting structural-position context only. Do not choose a component from the location code alone. If the close-up visual evidence conflicts with the location context, set needs_review true or abstain rather than forcing a component code.` : "No confirmed CEDEX location code is available yet; rely on the recorded face, overview context and close-up evidence."}
 ${targetPoint ? `The surveyor pinpointed the target on the close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context. These coordinates are metadata; no marker is drawn onto the image.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
 
 ${guidance}
@@ -129,7 +130,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       );
     }
     content.push(
-      { type: "text", text: "Close-up image: classify the physical component that actually contains the marked damage." },
+      { type: "text", text: "Close-up image: classify the physical component containing the surveyor-confirmed pinpoint target." },
       { type: "image_url", image_url: { url: image } }
     );
 
@@ -230,6 +231,8 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       targetPointUsed: Boolean(targetPoint),
       overviewUsed: Boolean(overviewImage && overviewPoint),
       overviewZone: zone,
+      confirmedLocationCode: context.final_location_code,
+      locationContextUsed: Boolean(context.final_location_code),
       positionalConflict,
       visualKnowledgeUsed: visualRules.length > 0,
       visualRuleCount: visualRules.length
@@ -245,6 +248,8 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         overviewPoint,
         overviewUsed: Boolean(overviewImage && overviewPoint),
         overviewZone: zone,
+        confirmedLocationCode: context.final_location_code,
+        locationContextUsed: Boolean(context.final_location_code),
         positionalConflict,
         visualKnowledgeUsed: visualRules.length > 0,
         visualRuleCount: visualRules.length,
