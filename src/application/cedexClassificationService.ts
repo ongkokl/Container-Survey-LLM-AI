@@ -106,6 +106,15 @@ export class CedexClassificationService {
     const targetPoint = await this.repo.surveyorComponentPoint(findingId, photo.id);
     const image = dataUri(await object.arrayBuffer(), photo.content_type);
 
+    const componentTargetPhoto = await this.repo.findingPhoto(findingId, "COMPONENT_CLOSEUP");
+    let componentTargetImage: string | null = null;
+    if (componentTargetPhoto) {
+      const componentTargetObject = await this.bucket.get(componentTargetPhoto.r2_key);
+      if (componentTargetObject) {
+        componentTargetImage = dataUri(await componentTargetObject.arrayBuffer(), componentTargetPhoto.content_type);
+      }
+    }
+
     const overviewPhoto = await this.repo.findingPhoto(findingId, "FACE_OVERVIEW");
     const overviewPoint = overviewPhoto ? await this.repo.surveyorLocationPoint(findingId, overviewPhoto.id) : null;
     const zone = overviewZone(overviewPoint);
@@ -128,6 +137,8 @@ export class CedexClassificationService {
       confirmedLocationCode: context.final_location_code,
       closeupPhotoId: photo.id,
       targetPoint,
+      componentTargetPhotoId: componentTargetPhoto?.id ?? null,
+      targetCropAvailable: Boolean(componentTargetImage),
       overviewPhotoId: overviewPhoto?.id ?? null,
       overviewPoint,
       overviewZone: zone,
@@ -141,7 +152,8 @@ export class CedexClassificationService {
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
 ${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this as supporting structural-position context only. Do not choose a component from the location code alone. If the close-up visual evidence conflicts with the location context, set needs_review true or abstain rather than forcing a component code.` : "No confirmed CEDEX location code is available yet; rely on the recorded face, overview context and close-up evidence."}
-${targetPoint ? `The surveyor pinpointed the target on the close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context. These coordinates are metadata; no marker is drawn onto the image.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
+${targetPoint ? `The surveyor pinpointed the target on the original close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
+${componentTargetImage ? "A second AI-only target crop is supplied after the full close-up. Its fine cyan laser reticle marks the exact surveyor-selected point. The reticle is an overlay, not part of the container. Give the reticle centre priority when deciding which adjacent physical component is targeted." : "No AI target crop is available; use the numeric pinpoint and full close-up."}
 
 ${guidance}
 
@@ -158,9 +170,15 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       );
     }
     content.push(
-      { type: "text", text: "Close-up image: classify the physical component containing the surveyor-confirmed pinpoint target." },
+      { type: "text", text: "Full close-up image: use this for surrounding assembly context." },
       { type: "image_url", image_url: { url: image } }
     );
+    if (componentTargetImage) {
+      content.push(
+        { type: "text", text: "AI-only pinpoint crop: the fine cyan laser reticle centre is the exact surveyor-selected target. Ignore the reticle as a physical object and classify the component directly beneath its centre." },
+        { type: "image_url", image_url: { url: componentTargetImage } }
+      );
+    }
 
     componentLog("AI_REQUEST", {
       traceId,
@@ -170,6 +188,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       maxCompletionTokens: MAX_COMPLETION_TOKENS,
       hasOverviewImage: Boolean(overviewImage),
       hasCloseupImage: true,
+      hasTargetCrop: Boolean(componentTargetImage),
       targetPointUsed: Boolean(targetPoint),
       locationContextUsed: Boolean(context.final_location_code)
     });
@@ -285,6 +304,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       allowedCount: allowed.length,
       model: MODEL,
       targetPointUsed: Boolean(targetPoint),
+      targetCropUsed: Boolean(componentTargetImage),
       overviewUsed: Boolean(overviewImage && overviewPoint),
       overviewZone: zone,
       confirmedLocationCode: context.final_location_code,
@@ -308,6 +328,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         debugTraceId: traceId,
         photoId: photo.id,
         targetPoint,
+        componentTargetPhotoId: componentTargetPhoto?.id ?? null,
+        targetCropUsed: Boolean(componentTargetImage),
+        targetCropReticle: componentTargetImage ? "FINE_LASER" : null,
         overviewPhotoId: overviewPhoto?.id ?? null,
         overviewPoint,
         overviewUsed: Boolean(overviewImage && overviewPoint),

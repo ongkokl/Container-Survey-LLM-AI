@@ -22,11 +22,11 @@ describe("component analysis structured logging",()=>{
         {component_code:"LBG",component_name:"Locking Bar Guide",standard_version:"2025-06-11"},
         {component_code:"HWR",component_name:"Hardware",standard_version:"2025-06-11"}
       ]),
-      findingPhoto:vi.fn(async(_findingId:string,role:string)=>
-        role==="DAMAGE_CLOSEUP"
-          ?{id:"close-1",r2_key:"closeup.jpg",content_type:"image/jpeg"}
-          :{id:"overview-1",r2_key:"overview.jpg",content_type:"image/jpeg"}
-      ),
+      findingPhoto:vi.fn(async(_findingId:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"close-1",r2_key:"closeup.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {id:"target-1",r2_key:"target.jpg",content_type:"image/jpeg"};
+        return {id:"overview-1",r2_key:"overview.jpg",content_type:"image/jpeg"};
+      }),
       surveyorComponentPoint:vi.fn(async()=>({x:0.43,y:0.28})),
       surveyorLocationPoint:vi.fn(async()=>({x:0.42,y:0.71})),
       componentVisualRules:vi.fn(async()=>[
@@ -79,6 +79,7 @@ describe("component analysis structured logging",()=>{
       containerFace:"DOOR",
       confirmedLocationCode:"DB12",
       targetPoint:{x:0.43,y:0.28},
+      targetCropAvailable:true,
       allowedCodes:["LBG","HWR"]
     });
     const response=parsed.find(entry=>entry.event==="AI_RESPONSE");
@@ -91,6 +92,7 @@ describe("component analysis structured logging",()=>{
     expect(entries.join("\n")).not.toContain("base64");
     expect(entries.join("\n")).not.toContain("closeup.jpg");
     expect(entries.join("\n")).not.toContain("overview.jpg");
+    expect(entries.join("\n")).not.toContain("target.jpg");
 
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
