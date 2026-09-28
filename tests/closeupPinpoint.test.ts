@@ -19,11 +19,11 @@ describe("close-up pinpoint targeting",()=>{
       components:vi.fn(async()=>[
         {component_code:"PAA",component_name:"Panel Assembly",standard_version:"2025"}
       ]),
-      findingPhoto:vi.fn(async(_id:string,role:string)=>
-        role==="DAMAGE_CLOSEUP"
-          ?{id:"photo-1",r2_key:"closeup.jpg",content_type:"image/jpeg"}
-          :null
-      ),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-1",r2_key:"closeup.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {id:"target-1",r2_key:"target.jpg",content_type:"image/jpeg"};
+        return null;
+      }),
       surveyorComponentPoint:vi.fn(async()=>({x:0.42,y:0.37})),
       surveyorLocationPoint:vi.fn(async()=>null),
       componentVisualRules:vi.fn(async()=>[]),
@@ -38,7 +38,11 @@ describe("close-up pinpoint targeting",()=>{
       expect(prompt).toContain("Confirmed CEDEX location from the overview workflow: RB24");
       expect(prompt).toContain("supporting structural-position context only");
       expect(prompt).toContain("Do not choose a component from the location code alone");
+      expect(prompt).toContain("fine cyan laser reticle");
+      expect(prompt).toContain("reticle is an overlay");
       expect(prompt).not.toContain("damage box");
+      const images=request.messages[0].content.filter(item=>item.type==="image_url");
+      expect(images).toHaveLength(2);
       return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
         selected_code:"PAA",confidence:0.95,needs_review:false,
         reason:"Target point lies on corrugated panel.",
@@ -53,9 +57,13 @@ describe("close-up pinpoint targeting",()=>{
     ).analyseComponent("f1");
 
     expect(result.targetPointUsed).toBe(true);
+    expect(result.targetCropUsed).toBe(true);
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         targetPoint:{x:0.42,y:0.37},
+        componentTargetPhotoId:"target-1",
+        targetCropUsed:true,
+        targetCropReticle:"FINE_LASER",
         confirmedLocationCode:"RB24",
         locationContextUsed:true
       })
