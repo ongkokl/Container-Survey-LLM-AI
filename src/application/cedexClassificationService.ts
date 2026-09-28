@@ -92,7 +92,8 @@ export class CedexClassificationService {
 
   async analyseComponent(findingId: string) {
     const startedAt = Date.now();
-    componentLog("START", { findingId, model: MODEL });
+    const traceId = crypto.randomUUID();
+    componentLog("START", { traceId, findingId, model: MODEL });
     const context = await this.repo.findingContext(findingId);
     if (!context) throw new Error("Finding not found.");
     const equipment = await this.repo.equipmentForFinding(findingId);
@@ -120,6 +121,7 @@ export class CedexClassificationService {
       .filter(rule => allowedSet.has(rule.component_code));
     const guidance = formatVisualGuidance(visualRules, zone);
     componentLog("CONTEXT", {
+      traceId,
       findingId,
       equipment,
       containerFace: context.container_face,
@@ -161,6 +163,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
     );
 
     componentLog("AI_REQUEST", {
+      traceId,
       findingId,
       model: MODEL,
       reasoningEffort: "low",
@@ -255,6 +258,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
     }
     const positionalConflict = visualRuleForcesReview(visualRules, selectedCode);
     componentLog("AI_RESPONSE", {
+      traceId,
       findingId,
       finishReason,
       analysisStatus,
@@ -290,6 +294,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       visualRuleCount: visualRules.length
     };
     componentLog("PERSIST_START", {
+      traceId,
       findingId,
       analysisStatus,
       selectedCode,
@@ -300,6 +305,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       response: raw,
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED",
       requestContext: {
+        debugTraceId: traceId,
         photoId: photo.id,
         targetPoint,
         overviewPhotoId: overviewPhoto?.id ?? null,
@@ -322,6 +328,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       }
     });
     componentLog("COMPLETE", {
+      traceId,
       findingId,
       selectedCode,
       confidence: selectedConfidence,
