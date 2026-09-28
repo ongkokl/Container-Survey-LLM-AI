@@ -181,7 +181,8 @@ export class CedexRepository {
 
   async findingContext(findingId:string){
     return this.db.prepare(`
-      SELECT f.id,f.survey_id,f.container_face,gc.observed_container_type AS equipment_type,
+      SELECT f.id,f.survey_id,f.container_face,f.final_location_code,
+             gc.observed_container_type AS equipment_type,
              gc.observed_length_ft AS length_ft,gc.observed_iso_code
       FROM findings f JOIN surveys s ON s.id=f.survey_id
       JOIN gate_cycles gc ON gc.id=s.gate_cycle_id WHERE f.id=?`
@@ -189,6 +190,7 @@ export class CedexRepository {
       id:string;
       survey_id:string;
       container_face:string;
+      final_location_code:string|null;
       equipment_type:string;
       length_ft:number;
       observed_iso_code:string;

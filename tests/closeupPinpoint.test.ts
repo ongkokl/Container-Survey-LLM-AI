@@ -12,7 +12,7 @@ describe("close-up pinpoint targeting",()=>{
     const saveComponentPrediction=vi.fn(async()=>({predictionId:"pred-1"}));
     const repo={
       findingContext:vi.fn(async()=>({
-        id:"f1",survey_id:"s1",container_face:"RIGHT",
+        id:"f1",survey_id:"s1",container_face:"RIGHT",final_location_code:"RB24",
         equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
       })),
       equipmentForFinding:vi.fn(async()=>"GP"),
@@ -35,6 +35,9 @@ describe("close-up pinpoint targeting",()=>{
       const prompt=String(request.messages[0].content[0].text??"");
       expect(prompt).toContain("surveyor pinpointed the target");
       expect(prompt).toContain("x=0.4200, y=0.3700");
+      expect(prompt).toContain("Confirmed CEDEX location from the overview workflow: RB24");
+      expect(prompt).toContain("supporting structural-position context only");
+      expect(prompt).toContain("Do not choose a component from the location code alone");
       expect(prompt).not.toContain("damage box");
       return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
         selected_code:"PAA",confidence:0.95,needs_review:false,
@@ -52,7 +55,9 @@ describe("close-up pinpoint targeting",()=>{
     expect(result.targetPointUsed).toBe(true);
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
-        targetPoint:{x:0.42,y:0.37}
+        targetPoint:{x:0.42,y:0.37},
+        confirmedLocationCode:"RB24",
+        locationContextUsed:true
       })
     }));
   });
