@@ -1487,7 +1487,7 @@ saveFindingBtn.addEventListener("click",async()=>{
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({findingId:currentFinding.id,finalCode:normalizedLocationCode(locationCodeInput.value)})
     });
-    findingMessage.textContent="Finding "+currentFinding.finding_sequence+" evidence saved · location "+locationDecision.finalCode+".";
+    findingMessage.textContent="Finding "+currentFinding.finding_sequence+" capture saved · overview + close-up + markings stored · location "+locationDecision.finalCode+".";
     locationSuggestion.textContent=locationDecision.decision==="APPROVED"
       ?"CEDEX location accepted: "+locationDecision.finalCode
       :"CEDEX location confirmed/corrected: "+locationDecision.finalCode;
