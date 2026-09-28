@@ -1614,9 +1614,11 @@ async function createComponentTargetCrop(file,point){
     return {
       file:new File([blob],"component-target.jpg",{type:"image/jpeg",lastModified:Date.now()}),
       metadata:{
-        version:"component_target_crop_v1",
+        version:"component_target_crop_v2",
         source:"DERIVED_FROM_DAMAGE_CLOSEUP",
+        coordinateSpace:"SOURCE_IMAGE_NORMALIZED",
         targetPoint:{x:point.x,y:point.y},
+        pointerMapping:closeupPointerDebug,
         crop:{
           x:cropX/sourceWidth,
           y:cropY/sourceHeight,
@@ -1647,12 +1649,20 @@ async function uploadFindingPhoto(file,role,img,captureMetadata){
 saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
+    if(overviewCaptureMeta){
+      overviewCaptureMeta.annotationCoordinateSpace="SOURCE_IMAGE_NORMALIZED";
+      overviewCaptureMeta.pointerMapping=overviewPointerDebug;
+    }
     const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewCaptureMeta);
     if(locationReferenceQuad?.length===4) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"CONTAINER_FACE",geometryType:"POLYGON",geometry:{corners:locationReferenceQuad,doorEnd:doorEndSide.value,source:"SURVEYOR_FACE_QUAD"},createdBy:"SURVEYOR"})});
     if(aiLocationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiLocationArea,createdBy:"AI"})});
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
     if(overviewMarkMode==="AREA"&&locationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:locationArea,createdBy:"SURVEYOR"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
+    if(closeupCaptureMeta){
+      closeupCaptureMeta.annotationCoordinateSpace="SOURCE_IMAGE_NORMALIZED";
+      closeupCaptureMeta.pointerMapping=closeupPointerDebug;
+    }
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
     if(aiCloseupTargetPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:aiCloseupTargetPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:closeupTargetPoint,createdBy:"SURVEYOR"})});
