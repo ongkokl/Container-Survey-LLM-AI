@@ -995,6 +995,74 @@ async function recalculateLocationFromMark(){
   updateFindingReady();
 }
 
+function annotationImageForCanvas(canvas){
+  if(canvas===overviewCanvas)return overviewPreview;
+  if(canvas===closeupCanvas)return closeupPreview;
+  return null;
+}
+
+function annotationImageRect(canvas){
+  const img=annotationImageForCanvas(canvas);
+  return containedImageRect(
+    canvas.width,
+    canvas.height,
+    img?.naturalWidth||canvas.width,
+    img?.naturalHeight||canvas.height
+  );
+}
+
+function annotationStagePoint(canvas,point){
+  return imageNormalizedToStagePixel(point,annotationImageRect(canvas))??{
+    x:point.x*canvas.width,
+    y:point.y*canvas.height
+  };
+}
+
+function annotationStageBox(canvas,box){
+  return imageNormalizedBoxToStageRect(box,annotationImageRect(canvas))??{
+    x:box.x*canvas.width,
+    y:box.y*canvas.height,
+    width:box.width*canvas.width,
+    height:box.height*canvas.height
+  };
+}
+
+function pointerToImageSpace(event,canvas,img){
+  const rect=canvas.getBoundingClientRect();
+  if(rect.width<=0||rect.height<=0)return {point:null,debug:null};
+  const scaleX=canvas.width/rect.width,scaleY=canvas.height/rect.height;
+  const stagePixel={
+    x:(event.clientX-rect.left)*scaleX,
+    y:(event.clientY-rect.top)*scaleY
+  };
+  const imageRect=containedImageRect(
+    canvas.width,
+    canvas.height,
+    img?.naturalWidth||canvas.width,
+    img?.naturalHeight||canvas.height
+  );
+  const point=stagePixelToImageNormalized(stagePixel,imageRect);
+  return {
+    point,
+    debug:{
+      coordinateSpace:"SOURCE_IMAGE_NORMALIZED",
+      stagePoint:{
+        x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
+        y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
+      },
+      imageNormalizedPoint:point,
+      imageContentBounds:{
+        x:imageRect.x/canvas.width,
+        y:imageRect.y/canvas.height,
+        width:imageRect.width/canvas.width,
+        height:imageRect.height/canvas.height
+      },
+      canvasSize:{width:canvas.width,height:canvas.height},
+      naturalImageSize:{width:img?.naturalWidth||0,height:img?.naturalHeight||0}
+    }
+  };
+}
+
 function drawFaceReference(canvas,points,complete=false,clear=false){
   const ctx=canvas.getContext("2d");
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -1007,7 +1075,7 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
   ctx.shadowBlur=4;
   ctx.beginPath();
   points.forEach((point,index)=>{
-    const x=point.x*canvas.width,y=point.y*canvas.height;
+    const mapped=annotationStagePoint(canvas,point),x=mapped.x,y=mapped.y;
     if(index===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
   });
   if(complete&&points.length===4)ctx.closePath();
@@ -1016,7 +1084,7 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
   ctx.textAlign="center";
   ctx.textBaseline="middle";
   points.forEach((point,index)=>{
-    const x=point.x*canvas.width,y=point.y*canvas.height;
+    const mapped=annotationStagePoint(canvas,point),x=mapped.x,y=mapped.y;
     ctx.beginPath();ctx.arc(x,y,11,0,Math.PI*2);ctx.fill();
     ctx.fillStyle="#08131f";ctx.fillText(String(index+1),x,y);ctx.fillStyle="#9c8cff";
   });
@@ -1026,7 +1094,7 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
 function drawDoorEndBox(canvas,box){
   if(!validNormalizedBox(box))return;
   const ctx=canvas.getContext("2d");
-  const x=box.x*canvas.width,y=box.y*canvas.height,w=box.width*canvas.width,h=box.height*canvas.height;
+  const mapped=annotationStageBox(canvas,box),x=mapped.x,y=mapped.y,w=mapped.width,h=mapped.height;
   ctx.save();
   ctx.setLineDash([10,7]);
   ctx.lineWidth=4;
@@ -1057,7 +1125,7 @@ function drawEndStructureGuidePoints(canvas,points){
   ctx.textAlign="left";
   ctx.textBaseline="middle";
   points.forEach((point,index)=>{
-    const x=point.x*canvas.width,y=point.y*canvas.height;
+    const mapped=annotationStagePoint(canvas,point),x=mapped.x,y=mapped.y;
     ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.stroke();
     ctx.fillText(labels[index]??String(index+1),x+14,y);
   });
@@ -1246,7 +1314,7 @@ overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.fi
 overviewGalleryPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewGalleryPhoto.files?.[0]??null,"gallery"));
 
 function drawTarget(canvas,point,isAi=false,clear=true){
-  const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height,r=14;
+  const mapped=annotationStagePoint(canvas,point),ctx=canvas.getContext("2d"),x=mapped.x,y=mapped.y,r=14;
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.lineWidth=5;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";ctx.fillStyle=isAi?"#ffd54a":"#6ee7ff";
   ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();
@@ -1255,7 +1323,7 @@ function drawTarget(canvas,point,isAi=false,clear=true){
 }
 
 function drawPrecisionTarget(canvas,point,isAi=false,clear=true){
-  const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height;
+  const mapped=annotationStagePoint(canvas,point),ctx=canvas.getContext("2d"),x=mapped.x,y=mapped.y;
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   const color=isAi?"#ffd54a":"#6ee7ff",gap=7,arm=18;
   ctx.save();
@@ -1279,7 +1347,8 @@ function drawBox(canvas,box,isAi=false,clear=true){
   ctx.save();
   ctx.lineWidth=6;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
   ctx.shadowColor="rgba(0,0,0,.85)";ctx.shadowBlur=4;
-  ctx.strokeRect(box.x*canvas.width,box.y*canvas.height,box.width*canvas.width,box.height*canvas.height);
+  const mapped=annotationStageBox(canvas,box);
+  ctx.strokeRect(mapped.x,mapped.y,mapped.width,mapped.height);
   ctx.restore();
 }
 function syncAnnotationCanvas(img,canvas){
