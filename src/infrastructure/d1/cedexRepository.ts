@@ -37,6 +37,10 @@ export interface ComponentAccuracyRow {
   created_at:string;
 }
 
+export interface DamageAccuracyRow extends ComponentAccuracyRow {
+  component_code:string|null;
+}
+
 export class CedexRepository {
   constructor(private readonly db:D1Database){}
 
@@ -770,6 +774,45 @@ export class CedexRepository {
       ORDER BY sd.created_at DESC
       LIMIT ?
     `).bind(safeLimit).all<ComponentAccuracyRow>();
+    return result.results;
+  }
+
+  async damageAccuracyRows(input:{equipment:"GP"|"RF";componentCode:string;limit?:number;}):Promise<DamageAccuracyRow[]>{
+    const safeLimit=Math.max(1,Math.min(2000,Math.trunc(input.limit??500)||500));
+    const componentCode=input.componentCode.trim().toUpperCase();
+    const result=await this.db.prepare(`
+      SELECT
+        sd.ai_value,
+        sd.final_value,
+        sd.decision,
+        ap.confidence,
+        (
+          SELECT GROUP_CONCAT(candidate_code,'|')
+          FROM (
+            SELECT pc.candidate_code
+            FROM prediction_candidates pc
+            WHERE pc.prediction_id=sd.prediction_id
+            ORDER BY pc.rank
+          )
+        ) AS candidate_codes,
+        ar.request_context_json,
+        f.container_face,
+        gc.observed_container_type AS equipment_type,
+        f.final_component_code AS component_code,
+        sd.created_at
+      FROM surveyor_decisions sd
+      JOIN ai_predictions ap ON ap.id=sd.prediction_id
+      JOIN ai_runs ar ON ar.id=ap.ai_run_id
+      JOIN findings f ON f.id=sd.finding_id
+      JOIN surveys s ON s.id=f.survey_id
+      JOIN gate_cycles gc ON gc.id=s.gate_cycle_id
+      WHERE sd.field_type='DAMAGE'
+        AND sd.prediction_id IS NOT NULL
+        AND gc.observed_container_type=?
+        AND f.final_component_code=?
+      ORDER BY sd.created_at DESC
+      LIMIT ?
+    `).bind(input.equipment,componentCode,safeLimit).all<DamageAccuracyRow>();
     return result.results;
   }
 
