@@ -3,6 +3,32 @@ import { CedexRepository, ComponentVisualRule } from "../infrastructure/d1/cedex
 const MODEL = "@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS = 2000;
 const COMPONENT_REVIEW_THRESHOLD = 0.8;
+const COMPONENT_FAMILY_MIN_CONFIDENCE = 0.8;
+const COMPONENT_FAMILY_MIN_ALLOWED = 12;
+const GP_DOOR_FAMILIES = [
+  "LOCKING_BAR_SUPPORT",
+  "LOCKING_BAR_CAM",
+  "LOCKING_BAR_HANDLE",
+  "HINGE",
+  "GASKET_SEAL",
+  "DOOR_PANEL_FRAME",
+  "CORNER_POST_RAIL",
+  "DOOR_ACCESSORY",
+  "UNKNOWN"
+] as const;
+type GpDoorFamily = typeof GP_DOOR_FAMILIES[number];
+
+const GP_DOOR_FAMILY_CODES: Record<Exclude<GpDoorFamily, "UNKNOWN">, readonly string[]> = {
+  LOCKING_BAR_SUPPORT: ["HWH","HWR","LBB","LBG","LBR"],
+  LOCKING_BAR_CAM: ["HWH","HWR","LBB","LBC","LBR","RCK"],
+  LOCKING_BAR_HANDLE: ["DHC","DHL","DHR","HWH","HWR","LBH","LBL","LBR","LHH"],
+  HINGE: ["CPL","HGA","HGB","HGP","HWH","HWR"],
+  GASKET_SEAL: ["GRS","GTA"],
+  DOOR_PANEL_FRAME: ["DFA","DSB","DSC","DSH","DST","PAA"],
+  CORNER_POST_RAIL: ["CFG","CPA","CPI","CPJ","CPL","CPO","HEP","RCG","RCI","RLA","RLG"],
+  DOOR_ACCESSORY: ["DHC","DHR","DPL","DRH","DRT","MPD"]
+};
+
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
@@ -63,22 +89,30 @@ function parseMetadataJson(value: string | null | undefined): Record<string, unk
 }
 
 // Only parse final answer content. Never promote unfinished reasoning into a prediction.
-function parseJson(raw: unknown): Record<string, unknown> | null {
+function parseStructuredJson(raw: unknown, requiredKey: string): Record<string, unknown> | null {
   const envelope = record(raw);
   const first = Array.isArray(envelope?.choices) ? record(envelope.choices[0]) : null;
   const message = record(first?.message);
   const values = first ? [message?.content] : [raw, envelope?.response, envelope?.result, envelope?.output_text];
   for (const value of values) {
     const object = record(value);
-    if (object && Object.hasOwn(object, "selected_code")) return object;
+    if (object && Object.hasOwn(object, requiredKey)) return object;
     if (typeof value !== "string") continue;
     const text = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     try {
       const parsed = record(JSON.parse(text));
-      if (parsed) return parsed;
+      if (parsed && Object.hasOwn(parsed, requiredKey)) return parsed;
     } catch { /* The caller returns an explicit invalid-response outcome. */ }
   }
   return null;
+}
+
+function parseJson(raw: unknown): Record<string, unknown> | null {
+  return parseStructuredJson(raw, "selected_code");
+}
+
+function parseFamilyJson(raw: unknown): Record<string, unknown> | null {
+  return parseStructuredJson(raw, "family");
 }
 
 function validConfidence(value: unknown): value is number | null {
@@ -86,6 +120,26 @@ function validConfidence(value: unknown): value is number | null {
 }
 function confidence(value: number | null): number | null {
   return value === null ? null : value > 1 ? value / 100 : value;
+}
+
+function isGpDoorFamily(value: unknown): value is GpDoorFamily {
+  return typeof value === "string" && (GP_DOOR_FAMILIES as readonly string[]).includes(value);
+}
+
+function gpDoorFamilyShortlist(
+  family: GpDoorFamily,
+  allowedCodes: string[],
+  rules: ComponentVisualRule[]
+) {
+  if (family === "UNKNOWN") return [];
+  const selected = new Set<string>(GP_DOOR_FAMILY_CODES[family]);
+  for (const rule of rules) {
+    if (!selected.has(rule.component_code)) continue;
+    for (const code of (rule.confusable_with ?? "").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean)) {
+      if (code.length === 3) selected.add(code);
+    }
+  }
+  return allowedCodes.filter(code => selected.has(code));
 }
 
 function componentLog(event: string, details: Record<string, unknown> = {}) {
@@ -138,11 +192,122 @@ export class CedexClassificationService {
       const overviewObject = await this.bucket.get(overviewPhoto.r2_key);
       if (overviewObject) overviewImage = dataUri(await overviewObject.arrayBuffer(), overviewPhoto.content_type);
     }
-    const allowedCodes = [...new Set(allowed.map(x => x.component_code))];
+    const fullAllowedCodes = [...new Set(allowed.map(x => x.component_code))];
+    const fullAllowedSet = new Set(fullAllowedCodes);
+    const allVisualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
+      .filter(rule => fullAllowedSet.has(rule.component_code));
+
+    const familyInferenceEligible =
+      equipment === "GP" &&
+      context.container_face === "DOOR" &&
+      fullAllowedCodes.length > COMPONENT_FAMILY_MIN_ALLOWED &&
+      Boolean(componentTargetImage || targetPoint);
+    let componentFamilyInferenceUsed = false;
+    let componentFamily: GpDoorFamily | null = null;
+    let componentFamilyConfidence: number | null = null;
+    let componentFamilyReason: string | null = null;
+    let componentFamilyNarrowingUsed = false;
+    let classificationAllowed = allowed;
+
+    if (familyInferenceEligible) {
+      componentFamilyInferenceUsed = true;
+      const familyPrompt = `Identify the local GP dry-container DOOR assembly family directly beneath the surveyor target.
+The exact reticle centre / numeric pinpoint is the target; surrounding structure is context only.
+Choose one family:
+- LOCKING_BAR_SUPPORT: locking-bar rod support area, bracket, guide, fastening/mounting hardware.
+- LOCKING_BAR_CAM: locking cam and keeper engagement area near the locking-bar end.
+- LOCKING_BAR_HANDLE: operating handle, hub, lug, handle catch/retainer/lock area.
+- HINGE: hinge assembly, blade, pin or hinge lug.
+- GASKET_SEAL: door gasket or gasket retainer strip.
+- DOOR_PANEL_FRAME: door leaf/panel, frame or door stiffeners.
+- CORNER_POST_RAIL: corner fitting/post/J-bar/header/rail/gusset structural edge.
+- DOOR_ACCESSORY: door stop/slam plate, holdback chain/cable, data plate or similar accessory.
+- UNKNOWN: target is unclear or lies between families.
+Do not identify the CEDEX component code yet. If the visual evidence is ambiguous, choose UNKNOWN rather than guessing.
+${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}.` : ""}`;
+
+      const familyContent: Array<Record<string, unknown>> = [
+        { type: "text", text: familyPrompt },
+        {
+          type: "text",
+          text: componentTargetImage
+            ? "Pinpoint crop: the fine cyan reticle centre is the exact target."
+            : "Full close-up: use the numeric pinpoint as the exact target."
+        },
+        { type: "image_url", image_url: { url: componentTargetImage ?? image } }
+      ];
+
+      try {
+        componentLog("FAMILY_REQUEST", {
+          traceId,
+          findingId,
+          model: MODEL,
+          fullAllowedCount: fullAllowedCodes.length,
+          hasTargetCrop: Boolean(componentTargetImage)
+        });
+        const familyRaw = await this.ai.run(MODEL, {
+          messages: [{ role: "user", content: familyContent }],
+          max_completion_tokens: 450,
+          reasoning_effort: "low",
+          temperature: 0,
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "gp_door_component_family",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  family: { type: "string", enum: GP_DOOR_FAMILIES },
+                  confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
+                  reason: { type: "string" }
+                },
+                required: ["family", "confidence", "reason"],
+                additionalProperties: false
+              }
+            }
+          }
+        });
+        const parsedFamily = parseFamilyJson(familyRaw);
+        if (parsedFamily && isGpDoorFamily(parsedFamily.family) && validConfidence(parsedFamily.confidence) && typeof parsedFamily.reason === "string") {
+          componentFamily = parsedFamily.family;
+          componentFamilyConfidence = confidence(parsedFamily.confidence);
+          componentFamilyReason = parsedFamily.reason.trim() || null;
+          if (
+            componentFamily !== "UNKNOWN" &&
+            componentFamilyConfidence !== null &&
+            componentFamilyConfidence >= COMPONENT_FAMILY_MIN_CONFIDENCE
+          ) {
+            const shortlistCodes = gpDoorFamilyShortlist(componentFamily, fullAllowedCodes, allVisualRules);
+            if (shortlistCodes.length >= 2 && shortlistCodes.length < fullAllowedCodes.length) {
+              const shortlistSet = new Set(shortlistCodes);
+              classificationAllowed = allowed.filter(item => shortlistSet.has(item.component_code));
+              componentFamilyNarrowingUsed = true;
+            }
+          }
+        }
+        componentLog("FAMILY_RESPONSE", {
+          traceId,
+          findingId,
+          componentFamily,
+          componentFamilyConfidence,
+          componentFamilyReason,
+          componentFamilyNarrowingUsed,
+          shortlistedCount: classificationAllowed.length
+        });
+      } catch (error) {
+        componentLog("FAMILY_FALLBACK", {
+          traceId,
+          findingId,
+          reason: error instanceof Error ? error.message : "Family classifier unavailable"
+        });
+      }
+    }
+
+    const allowedCodes = [...new Set(classificationAllowed.map(x => x.component_code))];
     const allowedSet = new Set(allowedCodes);
-    const allowedText = allowed.map(x => `${x.component_code} = ${x.component_name}`).join("\n");
-    const visualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
-      .filter(rule => allowedSet.has(rule.component_code));
+    const allowedText = classificationAllowed.map(x => `${x.component_code} = ${x.component_name}`).join("\n");
+    const visualRules = allVisualRules.filter(rule => allowedSet.has(rule.component_code));
     const guidance = formatVisualGuidance(visualRules, zone);
     componentLog("CONTEXT", {
       traceId,
@@ -162,14 +327,21 @@ export class CedexClassificationService {
       overviewPoint,
       overviewZone: zone,
       overviewImageAvailable: Boolean(overviewImage),
+      fullAllowedCount: fullAllowedCodes.length,
       allowedCount: allowedCodes.length,
       allowedCodes,
+      componentFamilyInferenceUsed,
+      componentFamily,
+      componentFamilyConfidence,
+      componentFamilyNarrowingUsed,
       visualRuleCount: visualRules.length,
       visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))]
     });
     const gpDoorHardwareGuidance = equipment === "GP" && context.container_face === "DOOR"
-      ? `GP DOOR candidate-family narrowing:
-First identify the local assembly family from the close-up (for example locking-bar/hardware, hinge, panel/gasket, frame/post, or door-retainer), then compare the exact reticle-centre item mainly against plausible codes in that family and their D1 confusable alternatives. Do not let the surrounding assembly override the exact centre target.
+      ? `GP DOOR family stage: ${componentFamilyNarrowingUsed
+          ? `the pinpoint family was classified as ${componentFamily} at confidence ${componentFamilyConfidence?.toFixed(2)}; the final AI candidate list was narrowed from ${fullAllowedCodes.length} to ${allowedCodes.length} codes.`
+          : "no high-confidence family shortlist was applied, so the full face-valid candidate list remains available."}
+The exact reticle centre still overrides the surrounding assembly.
 Special HWH/HWR rule: HWH is the specific Huckbolt code. A round fastener head by itself is NOT enough evidence for HWH. Select HWH only when the target is positively visually identifiable as the Huckbolt referenced by the visual rule. If the target is fastening/mounting hardware but that Huckbolt-specific identification cannot be established from the image, prefer HWR and keep needs_review true when uncertainty remains.`
       : "";
 
@@ -216,7 +388,12 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       hasCloseupImage: true,
       hasTargetCrop: Boolean(componentTargetImage),
       targetPointUsed: Boolean(targetPoint),
-      locationContextUsed: Boolean(context.final_location_code)
+      locationContextUsed: Boolean(context.final_location_code),
+      componentFamily,
+      componentFamilyConfidence,
+      componentFamilyNarrowingUsed,
+      fullAllowedCount: fullAllowedCodes.length,
+      classificationAllowedCount: allowedCodes.length
     });
     const aiStartedAt = Date.now();
     const raw = await this.ai.run(MODEL, {
@@ -328,6 +505,9 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       candidates,
       allowedComponents: allowed,
       allowedCount: allowed.length,
+      classificationAllowedComponents: classificationAllowed,
+      classificationAllowedCount: allowedCodes.length,
+      fullAllowedCount: fullAllowedCodes.length,
       model: MODEL,
       targetPointUsed: Boolean(targetPoint),
       targetCropUsed: Boolean(componentTargetImage),
@@ -338,8 +518,13 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       positionalConflict,
       visualKnowledgeUsed: visualRules.length > 0,
       visualRuleCount: visualRules.length,
-      componentFamilyNarrowingUsed: Boolean(gpDoorHardwareGuidance),
-      hardwareSpecificityRuleUsed: Boolean(gpDoorHardwareGuidance)
+      componentFamilyInferenceUsed,
+      componentFamily,
+      componentFamilyConfidence,
+      componentFamilyReason,
+      componentFamilyNarrowingUsed,
+      componentFamilyFallbackUsed: componentFamilyInferenceUsed && !componentFamilyNarrowingUsed,
+      hardwareSpecificityRuleUsed: equipment === "GP" && context.container_face === "DOOR"
     };
     componentLog("PERSIST_START", {
       traceId,
@@ -373,10 +558,17 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         visualKnowledgeUsed: visualRules.length > 0,
         visualRuleCount: visualRules.length,
         visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))],
-        componentFamilyNarrowingUsed: Boolean(gpDoorHardwareGuidance),
-        hardwareSpecificityRuleUsed: Boolean(gpDoorHardwareGuidance),
+        componentFamilyInferenceUsed,
+        componentFamily,
+        componentFamilyConfidence,
+        componentFamilyReason,
+        componentFamilyNarrowingUsed,
+        componentFamilyFallbackUsed: componentFamilyInferenceUsed && !componentFamilyNarrowingUsed,
+        hardwareSpecificityRuleUsed: equipment === "GP" && context.container_face === "DOOR",
         containerFace: context.container_face,
         allowedComponentCount: allowed.length,
+        classificationAllowedComponentCount: allowedCodes.length,
+        familyConfidenceThreshold: COMPONENT_FAMILY_MIN_CONFIDENCE,
         componentReviewThreshold: COMPONENT_REVIEW_THRESHOLD,
         max_completion_tokens: MAX_COMPLETION_TOKENS,
         reasoning_effort: "low",
