@@ -83,6 +83,14 @@ export class DamageClassificationService{
 
     const targetPoint=await this.repo.surveyorComponentPoint(findingId,photo.id);
     const image=dataUri(await object.arrayBuffer(),photo.content_type);
+
+    const targetCropPhoto=await this.repo.findingPhoto(findingId,"COMPONENT_CLOSEUP");
+    let targetCropImage:string|null=null;
+    if(targetCropPhoto){
+      const targetCropObject=await this.bucket.get(targetCropPhoto.r2_key);
+      if(targetCropObject)targetCropImage=dataUri(await targetCropObject.arrayBuffer(),targetCropPhoto.content_type);
+    }
+
     const allowedCodes=[...new Set(allowed.damages.map(x=>x.damage_code))];
     const allowedSet=new Set(allowedCodes);
     const allowedText=allowed.damages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
@@ -107,6 +115,11 @@ ${targetPoint?`The surveyor pinpointed the intended damage on the close-up image
 Classify ONLY the visible physical damage affecting the confirmed component. Choose ONLY from the allowed codes below. Never invent a code.
 Use the physical morphology at the pinpointed target and its immediate surrounding close-up context. Do not classify unrelated dirt, stains, corrosion, marks or defects elsewhere in the image.
 Identify the PRIMARY damage at the pinpointed target. Incidental paint chips, dirt, staining or discoloration caused by or adjacent to a clearer structural damage must not outrank the primary morphology.
+${equipment==="GP"&&allowed.componentCode==="PAA"?`For GP/PAA use this morphology priority when evidence overlaps:
+1. A true material discontinuity at the pinpoint (crack/fracture or sharp cut/opening) outranks generic dent/deformation. Use CK for a fracture/split line; use CU for a sharp incision, severed edge or cut penetration.
+2. If there is no true discontinuity but the panel profile is permanently displaced, buckled, bent or depressed, DT outranks incidental paint loss, rust staining, dirt or superficial abrasion.
+3. Use PF, CO, DY or GD as the primary code only when that surface condition is itself the dominant morphology and there is no stronger structural break or deformation at the target.
+Do not label CK/CU as DT merely because surrounding sheet metal is also bent. Do not label a clear DT as PF or CO merely because coating loss or corrosion appears on the deformed area.`:""}
 Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code. Codes whose evidence requirement is MEASUREMENT or HISTORY_CONTEXT may be suggested only when visually plausible, but must set needs_review true because the photo alone cannot establish the required evidence. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
 
 ${visualGuidance}
@@ -117,8 +130,20 @@ Codes requiring measurement, history or broader context remain available for man
 
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (maximum 20 words), and candidates (at most 3 objects with code, confidence and a maximum 15-word reason). Keep the answer concise. Do not explain your reasoning outside the JSON.`;
 
+    const content:Array<Record<string,unknown>>=[
+      {type:"text",text:prompt},
+      {type:"text",text:"Full close-up image: use this for the overall damage morphology and structural context."},
+      {type:"image_url",image_url:{url:image}}
+    ];
+    if(targetCropImage){
+      content.push(
+        {type:"text",text:"Fine-reticle target crop: the cyan reticle centre marks the exact surveyor-selected damage. Use this to inspect the local morphology at the target; the reticle is an overlay, not physical damage."},
+        {type:"image_url",image_url:{url:targetCropImage}}
+      );
+    }
+
     const raw=await this.ai.run(MODEL,{
-      messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:image}}]}],
+      messages:[{role:"user",content}],
       max_completion_tokens:MAX_COMPLETION_TOKENS,
       reasoning_effort:"low",
       temperature:0,
@@ -208,6 +233,8 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       componentCode:allowed.componentCode,
       analysisStatus,
       targetPointUsed:Boolean(targetPoint),
+      targetCropUsed:Boolean(targetCropImage),
+      morphologyPriorityUsed:equipment==="GP"&&allowed.componentCode==="PAA",
       selectedCode,
       confidence:selectedConfidence,
       needsReview,
@@ -239,6 +266,10 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       requestContext:{
         photoId:photo.id,
         targetPoint,
+        targetCropPhotoId:targetCropPhoto?.id??null,
+        targetCropUsed:Boolean(targetCropImage),
+        targetCropReticle:targetCropImage?"FINE_LASER":null,
+        morphologyPriorityUsed:equipment==="GP"&&allowed.componentCode==="PAA",
         damageReviewThreshold:DAMAGE_REVIEW_THRESHOLD,
         damageVisualKnowledgeUsed:visualRules.length>0,
         damageVisualRuleCount:visualRules.length,
