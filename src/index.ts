@@ -22,6 +22,7 @@ import { RepairRecommendationService } from "./application/repairRecommendationS
 import { LocationSuggestionService } from "./application/locationSuggestionService";
 import { FixedCameraCalibrationService } from "./application/fixedCameraCalibrationService";
 import { ComponentAccuracyService } from "./application/componentAccuracyService";
+import { DamageAccuracyService } from "./application/damageAccuracyService";
 import { fixedCameraProfile } from "./domain/container/fixedCameraProfile";
 
 export interface Env {
@@ -96,6 +97,21 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         ok:false,
         error:"COMPONENT_ACCURACY_REPORT_FAILED",
         message:error instanceof Error?error.message:"Unable to build component accuracy report."
+      },422);
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/qa/damage-accuracy") {
+    try {
+      const requested=Number(url.searchParams.get("limit")??500);
+      const limit=Number.isFinite(requested)?Math.max(1,Math.min(2000,Math.trunc(requested))):500;
+      const result=await new DamageAccuracyService(new CedexRepository(env.DB)).report(limit);
+      return json({ok:true,result});
+    } catch(error) {
+      return json({
+        ok:false,
+        error:"DAMAGE_ACCURACY_REPORT_FAILED",
+        message:error instanceof Error?error.message:"Unable to build damage accuracy report."
       },422);
     }
   }
