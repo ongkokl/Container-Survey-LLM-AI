@@ -156,9 +156,9 @@ export class CedexRepository {
 
   async findingPhoto(findingId:string,role:"FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP"){
     return this.db.prepare(`
-      SELECT id,r2_key,content_type FROM survey_photos
+      SELECT id,r2_key,content_type,capture_metadata_json FROM survey_photos
       WHERE finding_id=? AND photo_role=? ORDER BY created_at DESC LIMIT 1`
-    ).bind(findingId,role).first<{id:string;r2_key:string;content_type:string}>();
+    ).bind(findingId,role).first<{id:string;r2_key:string;content_type:string;capture_metadata_json:string|null}>();
   }
 
   async surveyorLocationPoint(findingId:string,photoId?:string){

@@ -1,4 +1,10 @@
 import { createGuidedCamera } from "./camera-guidance.js";
+import {
+  containedImageRect,
+  stagePixelToImageNormalized,
+  imageNormalizedToStagePixel,
+  imageNormalizedBoxToStageRect
+} from "./annotation-space.js";
 
 const input = document.querySelector("#doorPhoto");
 const galleryInput = document.querySelector("#doorGalleryPhoto");
@@ -506,6 +512,7 @@ let componentAiCode=null;
 let repairAiCode=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,closeupTargetPoint=null;
+let overviewPointerDebug=null,closeupPointerDebug=null;
 let aiLocationPoint=null,aiLocationArea=null,aiCloseupTargetPoint=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 let overviewMarkMode="AREA",overviewDragStart=null;
@@ -639,6 +646,7 @@ createFindingBtn.addEventListener("click",async()=>{
     locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
     locationReferenceQuad=null;faceMarkMode=false;faceMarkPoints=[];faceMarkResumeMode="AREA";
     locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
+    overviewPointerDebug=null;closeupPointerDebug=null;
     overviewMarkTools.hidden=true;overviewStage.dataset.markMode="AREA";
     markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
     markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
@@ -757,6 +765,7 @@ markAreaBtn.addEventListener("click",()=>setOverviewMarkMode("AREA"));
 markPointBtn.addEventListener("click",()=>setOverviewMarkMode("POINT"));
 
 function resetOverviewLocation(){
+  overviewPointerDebug=null;
   locationReferenceBox=null;
   locationReferenceQuad=null;
   faceReferenceTools.hidden=!fixedCameraDebug;
@@ -988,6 +997,74 @@ async function recalculateLocationFromMark(){
   updateFindingReady();
 }
 
+function annotationImageForCanvas(canvas){
+  if(canvas===overviewCanvas)return overviewPreview;
+  if(canvas===closeupCanvas)return closeupPreview;
+  return null;
+}
+
+function annotationImageRect(canvas){
+  const img=annotationImageForCanvas(canvas);
+  return containedImageRect(
+    canvas.width,
+    canvas.height,
+    img?.naturalWidth||canvas.width,
+    img?.naturalHeight||canvas.height
+  );
+}
+
+function annotationStagePoint(canvas,point){
+  return imageNormalizedToStagePixel(point,annotationImageRect(canvas))??{
+    x:point.x*canvas.width,
+    y:point.y*canvas.height
+  };
+}
+
+function annotationStageBox(canvas,box){
+  return imageNormalizedBoxToStageRect(box,annotationImageRect(canvas))??{
+    x:box.x*canvas.width,
+    y:box.y*canvas.height,
+    width:box.width*canvas.width,
+    height:box.height*canvas.height
+  };
+}
+
+function pointerToImageSpace(event,canvas,img){
+  const rect=canvas.getBoundingClientRect();
+  if(rect.width<=0||rect.height<=0)return {point:null,debug:null};
+  const scaleX=canvas.width/rect.width,scaleY=canvas.height/rect.height;
+  const stagePixel={
+    x:(event.clientX-rect.left)*scaleX,
+    y:(event.clientY-rect.top)*scaleY
+  };
+  const imageRect=containedImageRect(
+    canvas.width,
+    canvas.height,
+    img?.naturalWidth||canvas.width,
+    img?.naturalHeight||canvas.height
+  );
+  const point=stagePixelToImageNormalized(stagePixel,imageRect);
+  return {
+    point,
+    debug:{
+      coordinateSpace:"SOURCE_IMAGE_NORMALIZED",
+      stagePoint:{
+        x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
+        y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
+      },
+      imageNormalizedPoint:point,
+      imageContentBounds:{
+        x:imageRect.x/canvas.width,
+        y:imageRect.y/canvas.height,
+        width:imageRect.width/canvas.width,
+        height:imageRect.height/canvas.height
+      },
+      canvasSize:{width:canvas.width,height:canvas.height},
+      naturalImageSize:{width:img?.naturalWidth||0,height:img?.naturalHeight||0}
+    }
+  };
+}
+
 function drawFaceReference(canvas,points,complete=false,clear=false){
   const ctx=canvas.getContext("2d");
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -1000,7 +1077,7 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
   ctx.shadowBlur=4;
   ctx.beginPath();
   points.forEach((point,index)=>{
-    const x=point.x*canvas.width,y=point.y*canvas.height;
+    const mapped=annotationStagePoint(canvas,point),x=mapped.x,y=mapped.y;
     if(index===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
   });
   if(complete&&points.length===4)ctx.closePath();
@@ -1009,7 +1086,7 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
   ctx.textAlign="center";
   ctx.textBaseline="middle";
   points.forEach((point,index)=>{
-    const x=point.x*canvas.width,y=point.y*canvas.height;
+    const mapped=annotationStagePoint(canvas,point),x=mapped.x,y=mapped.y;
     ctx.beginPath();ctx.arc(x,y,11,0,Math.PI*2);ctx.fill();
     ctx.fillStyle="#08131f";ctx.fillText(String(index+1),x,y);ctx.fillStyle="#9c8cff";
   });
@@ -1019,7 +1096,7 @@ function drawFaceReference(canvas,points,complete=false,clear=false){
 function drawDoorEndBox(canvas,box){
   if(!validNormalizedBox(box))return;
   const ctx=canvas.getContext("2d");
-  const x=box.x*canvas.width,y=box.y*canvas.height,w=box.width*canvas.width,h=box.height*canvas.height;
+  const mapped=annotationStageBox(canvas,box),x=mapped.x,y=mapped.y,w=mapped.width,h=mapped.height;
   ctx.save();
   ctx.setLineDash([10,7]);
   ctx.lineWidth=4;
@@ -1050,7 +1127,7 @@ function drawEndStructureGuidePoints(canvas,points){
   ctx.textAlign="left";
   ctx.textBaseline="middle";
   points.forEach((point,index)=>{
-    const x=point.x*canvas.width,y=point.y*canvas.height;
+    const mapped=annotationStagePoint(canvas,point),x=mapped.x,y=mapped.y;
     ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.stroke();
     ctx.fillText(labels[index]??String(index+1),x+14,y);
   });
@@ -1239,7 +1316,7 @@ overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.fi
 overviewGalleryPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewGalleryPhoto.files?.[0]??null,"gallery"));
 
 function drawTarget(canvas,point,isAi=false,clear=true){
-  const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height,r=14;
+  const mapped=annotationStagePoint(canvas,point),ctx=canvas.getContext("2d"),x=mapped.x,y=mapped.y,r=14;
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.lineWidth=5;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";ctx.fillStyle=isAi?"#ffd54a":"#6ee7ff";
   ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.stroke();
@@ -1248,7 +1325,7 @@ function drawTarget(canvas,point,isAi=false,clear=true){
 }
 
 function drawPrecisionTarget(canvas,point,isAi=false,clear=true){
-  const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height;
+  const mapped=annotationStagePoint(canvas,point),ctx=canvas.getContext("2d"),x=mapped.x,y=mapped.y;
   if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   const color=isAi?"#ffd54a":"#6ee7ff",gap=7,arm=18;
   ctx.save();
@@ -1272,7 +1349,8 @@ function drawBox(canvas,box,isAi=false,clear=true){
   ctx.save();
   ctx.lineWidth=6;ctx.strokeStyle=isAi?"#ffd54a":"#6ee7ff";
   ctx.shadowColor="rgba(0,0,0,.85)";ctx.shadowBlur=4;
-  ctx.strokeRect(box.x*canvas.width,box.y*canvas.height,box.width*canvas.width,box.height*canvas.height);
+  const mapped=annotationStageBox(canvas,box);
+  ctx.strokeRect(mapped.x,mapped.y,mapped.width,mapped.height);
   ctx.restore();
 }
 function syncAnnotationCanvas(img,canvas){
@@ -1289,15 +1367,19 @@ window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)requestAnimationFrame(redrawAnnotations);});
 
 function overviewPointer(event){
-  const rect=overviewCanvas.getBoundingClientRect();
-  return {
-    x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),
-    y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))
-  };
+  const mapped=pointerToImageSpace(event,overviewCanvas,overviewPreview);
+  overviewPointerDebug=mapped.debug;
+  return mapped.point;
 }
 
 overviewCanvas.addEventListener("pointerdown",(event)=>{
   const point=overviewPointer(event);
+  if(!point){
+    if(endStructureMarkMode)endStructureHelp.textContent="Tap inside the visible photo, not the black margin.";
+    else if(faceMarkMode)faceMarkHelp.textContent="Tap inside the visible photo, not the black margin.";
+    else tapHelp.textContent="Tap inside the visible photo, not the black margin.";
+    return;
+  }
   if(endStructureMarkMode){
     if(endStructurePoints.length>=6)endStructurePoints=[];
     endStructurePoints.push(point);
@@ -1390,6 +1472,7 @@ overviewCanvas.addEventListener("pointerdown",(event)=>{
 overviewCanvas.addEventListener("pointermove",(event)=>{
   if(faceMarkMode||endStructureMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart||!overviewCanvas.hasPointerCapture(event.pointerId))return;
   const end=overviewPointer(event);
+  if(!end)return;
   const preview={
     x:Math.min(overviewDragStart.x,end.x),
     y:Math.min(overviewDragStart.y,end.y),
@@ -1405,6 +1488,13 @@ overviewCanvas.addEventListener("pointermove",(event)=>{
 overviewCanvas.addEventListener("pointerup",(event)=>{
   if(faceMarkMode||endStructureMarkMode||overviewMarkMode!=="AREA"||!overviewDragStart)return;
   const end=overviewPointer(event);
+  if(!end){
+    overviewDragStart=null;
+    if(overviewCanvas.hasPointerCapture(event.pointerId))overviewCanvas.releasePointerCapture(event.pointerId);
+    tapHelp.textContent="Finish the damage box inside the visible photo.";
+    redrawAnnotations();
+    return;
+  }
   const area={
     x:Math.min(overviewDragStart.x,end.x),
     y:Math.min(overviewDragStart.y,end.y),
@@ -1432,7 +1522,7 @@ overviewCanvas.addEventListener("pointercancel",(event)=>{
 });
 
 function selectCloseupPhoto(file,source,captureMetadata=null){
-  closeupFile=file??null;closeupTargetPoint=null;aiCloseupTargetPoint=null;closeupEdited=false;
+  closeupFile=file??null;closeupTargetPoint=null;aiCloseupTargetPoint=null;closeupEdited=false;closeupPointerDebug=null;
   closeupCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"closeup"),"closeup");
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
@@ -1461,14 +1551,16 @@ closeupPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupPhoto.files
 closeupGalleryPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupGalleryPhoto.files?.[0]??null,"gallery"));
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
+  const mapped=pointerToImageSpace(event,closeupCanvas,closeupPreview);
+  closeupPointerDebug=mapped.debug;
+  if(!mapped.point){
+    boxHelp.textContent="Tap inside the visible close-up photo, not the black margin.";
+    return;
+  }
   closeupEdited=true;
-  const r=closeupCanvas.getBoundingClientRect();
-  closeupTargetPoint={
-    x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)),
-    y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height))
-  };
+  closeupTargetPoint=mapped.point;
   drawPrecisionTarget(closeupCanvas,closeupTargetPoint,false);
-  boxHelp.textContent="Target pinpoint confirmed. Tap again to adjust.";
+  boxHelp.textContent="Target pinpoint confirmed in image coordinates. Tap again to adjust.";
   updateFindingReady();
 });
 
@@ -1522,9 +1614,11 @@ async function createComponentTargetCrop(file,point){
     return {
       file:new File([blob],"component-target.jpg",{type:"image/jpeg",lastModified:Date.now()}),
       metadata:{
-        version:"component_target_crop_v1",
+        version:"component_target_crop_v2",
         source:"DERIVED_FROM_DAMAGE_CLOSEUP",
+        coordinateSpace:"SOURCE_IMAGE_NORMALIZED",
         targetPoint:{x:point.x,y:point.y},
+        pointerMapping:closeupPointerDebug,
         crop:{
           x:cropX/sourceWidth,
           y:cropY/sourceHeight,
@@ -1555,12 +1649,20 @@ async function uploadFindingPhoto(file,role,img,captureMetadata){
 saveFindingBtn.addEventListener("click",async()=>{
   setBusy(saveFindingBtn,true,"Saving…","Save finding evidence");findingMessage.textContent="Uploading finding evidence…";
   try{
+    if(overviewCaptureMeta){
+      overviewCaptureMeta.annotationCoordinateSpace="SOURCE_IMAGE_NORMALIZED";
+      overviewCaptureMeta.pointerMapping=overviewPointerDebug;
+    }
     const overview=await uploadFindingPhoto(overviewFile,"FACE_OVERVIEW",overviewPreview,overviewCaptureMeta);
     if(locationReferenceQuad?.length===4) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"CONTAINER_FACE",geometryType:"POLYGON",geometry:{corners:locationReferenceQuad,doorEnd:doorEndSide.value,source:"SURVEYOR_FACE_QUAD"},createdBy:"SURVEYOR"})});
     if(aiLocationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiLocationArea,createdBy:"AI"})});
     if(aiLocationPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:aiLocationPoint,createdBy:"AI"})});
     if(overviewMarkMode==="AREA"&&locationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:locationArea,createdBy:"SURVEYOR"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
+    if(closeupCaptureMeta){
+      closeupCaptureMeta.annotationCoordinateSpace="SOURCE_IMAGE_NORMALIZED";
+      closeupCaptureMeta.pointerMapping=closeupPointerDebug;
+    }
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
     if(aiCloseupTargetPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:aiCloseupTargetPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:closeupTargetPoint,createdBy:"SURVEYOR"})});

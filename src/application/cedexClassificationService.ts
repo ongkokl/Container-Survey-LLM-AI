@@ -53,6 +53,15 @@ function record(value: unknown): Record<string, unknown> | null {
     ? value as Record<string, unknown> : null;
 }
 
+function parseMetadataJson(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    return record(JSON.parse(value));
+  } catch {
+    return null;
+  }
+}
+
 // Only parse final answer content. Never promote unfinished reasoning into a prediction.
 function parseJson(raw: unknown): Record<string, unknown> | null {
   const envelope = record(raw);
@@ -115,6 +124,12 @@ export class CedexClassificationService {
       }
     }
 
+    const componentTargetMetadata = parseMetadataJson(componentTargetPhoto?.capture_metadata_json);
+    const pointerMapping = record(componentTargetMetadata?.pointerMapping);
+    const pointerStagePoint = record(pointerMapping?.stagePoint);
+    const imageNormalizedPoint = record(pointerMapping?.imageNormalizedPoint);
+    const imageContentBounds = record(pointerMapping?.imageContentBounds);
+
     const overviewPhoto = await this.repo.findingPhoto(findingId, "FACE_OVERVIEW");
     const overviewPoint = overviewPhoto ? await this.repo.surveyorLocationPoint(findingId, overviewPhoto.id) : null;
     const zone = overviewZone(overviewPoint);
@@ -139,6 +154,10 @@ export class CedexClassificationService {
       targetPoint,
       componentTargetPhotoId: componentTargetPhoto?.id ?? null,
       targetCropAvailable: Boolean(componentTargetImage),
+      coordinateSpace: componentTargetMetadata?.coordinateSpace ?? null,
+      pointerStagePoint,
+      imageNormalizedPoint,
+      imageContentBounds,
       overviewPhotoId: overviewPhoto?.id ?? null,
       overviewPoint,
       overviewZone: zone,
@@ -331,6 +350,10 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         componentTargetPhotoId: componentTargetPhoto?.id ?? null,
         targetCropUsed: Boolean(componentTargetImage),
         targetCropReticle: componentTargetImage ? "FINE_LASER" : null,
+        coordinateSpace: componentTargetMetadata?.coordinateSpace ?? null,
+        pointerStagePoint,
+        imageNormalizedPoint,
+        imageContentBounds,
         overviewPhotoId: overviewPhoto?.id ?? null,
         overviewPoint,
         overviewUsed: Boolean(overviewImage && overviewPoint),
