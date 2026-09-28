@@ -81,7 +81,7 @@ export class DamageClassificationService{
     const object=await this.bucket.get(photo.r2_key);
     if(!object)throw new Error("Damage close-up photo is unavailable.");
 
-    const roi=await this.repo.surveyorDamageBox(findingId,photo.id);
+    const targetPoint=await this.repo.surveyorComponentPoint(findingId,photo.id);
     const image=dataUri(await object.arrayBuffer(),photo.content_type);
     const allowedCodes=[...new Set(allowed.damages.map(x=>x.damage_code))];
     const allowedSet=new Set(allowedCodes);
@@ -102,7 +102,7 @@ export class DamageClassificationService{
 
     const prompt=`You are assisting a shipping-container surveyor using the verified IICL damage-code list supplied by the application.
 Confirmed component: ${allowed.componentCode}. Container face: ${context.container_face}.
-${roi?`The surveyor marked the intended damage region on the close-up image using normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Treat this region as the PRIMARY target. The coordinates are metadata only; no artificial box is drawn on the pixels.`:"No surveyor damage region is available; classify cautiously."}
+${targetPoint?`The surveyor pinpointed the intended damage on the close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Treat the damage at this point as the PRIMARY target and use the surrounding close-up morphology as context. The coordinates are metadata only; no artificial marker is drawn on the pixels.`:"No close-up target point is available; classify cautiously."}
 
 Classify ONLY the visible physical damage affecting the confirmed component. Choose ONLY from the allowed codes below. Never invent a code.
 Use the physical morphology in the marked region. Do not classify unrelated dirt, stains, corrosion, marks or defects outside the marked region.
@@ -207,7 +207,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
     const result={
       componentCode:allowed.componentCode,
       analysisStatus,
-      roiUsed:Boolean(roi),
+      targetPointUsed:Boolean(targetPoint),
       selectedCode,
       confidence:selectedConfidence,
       needsReview,
@@ -238,7 +238,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       status:analysisStatus==="INCOMPLETE"||analysisStatus==="INVALID_RESPONSE"?"FAILED":needsReview?"REVIEW_REQUIRED":"SUGGESTED",
       requestContext:{
         photoId:photo.id,
-        roi,
+        targetPoint,
         damageReviewThreshold:DAMAGE_REVIEW_THRESHOLD,
         damageVisualKnowledgeUsed:visualRules.length>0,
         damageVisualRuleCount:visualRules.length,
