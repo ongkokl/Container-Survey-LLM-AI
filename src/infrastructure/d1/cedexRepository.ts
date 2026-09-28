@@ -154,7 +154,7 @@ export class CedexRepository {
   }
 
 
-  async findingPhoto(findingId:string,role:"FACE_OVERVIEW"|"DAMAGE_CLOSEUP"){
+  async findingPhoto(findingId:string,role:"FACE_OVERVIEW"|"COMPONENT_CLOSEUP"|"DAMAGE_CLOSEUP"){
     return this.db.prepare(`
       SELECT id,r2_key,content_type FROM survey_photos
       WHERE finding_id=? AND photo_role=? ORDER BY created_at DESC LIMIT 1`
