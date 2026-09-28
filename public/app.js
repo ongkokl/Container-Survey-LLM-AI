@@ -1246,6 +1246,27 @@ function drawTarget(canvas,point,isAi=false,clear=true){
   ctx.beginPath();ctx.moveTo(x-r-10,y);ctx.lineTo(x+r+10,y);ctx.moveTo(x,y-r-10);ctx.lineTo(x,y+r+10);ctx.stroke();
   ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();
 }
+
+function drawPrecisionTarget(canvas,point,isAi=false,clear=true){
+  const ctx=canvas.getContext("2d"),x=point.x*canvas.width,y=point.y*canvas.height;
+  if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
+  const color=isAi?"#ffd54a":"#6ee7ff",gap=7,arm=18;
+  ctx.save();
+  ctx.lineWidth=1.5;
+  ctx.strokeStyle=color;
+  ctx.fillStyle=color;
+  ctx.shadowColor="rgba(0,0,0,.9)";
+  ctx.shadowBlur=2;
+  ctx.beginPath();
+  ctx.moveTo(x-arm,y);ctx.lineTo(x-gap,y);
+  ctx.moveTo(x+gap,y);ctx.lineTo(x+arm,y);
+  ctx.moveTo(x,y-arm);ctx.lineTo(x,y-gap);
+  ctx.moveTo(x,y+gap);ctx.lineTo(x,y+arm);
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.beginPath();ctx.arc(x,y,1.75,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
 function drawBox(canvas,box,isAi=false,clear=true){
   const ctx=canvas.getContext("2d");if(clear)ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.save();
@@ -1261,7 +1282,7 @@ function syncAnnotationCanvas(img,canvas){
 function redrawAnnotations(){
   if(!overviewStage.hidden&&overviewPreview.complete)drawOverviewComposite();
   if(!closeupStage.hidden&&closeupPreview.complete&&closeupTargetPoint){
-    syncAnnotationCanvas(closeupPreview,closeupCanvas);drawTarget(closeupCanvas,closeupTargetPoint,!closeupEdited);
+    syncAnnotationCanvas(closeupPreview,closeupCanvas);drawPrecisionTarget(closeupCanvas,closeupTargetPoint,!closeupEdited);
   }
 }
 window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
@@ -1425,7 +1446,7 @@ function selectCloseupPhoto(file,source,captureMetadata=null){
       const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
       if(requestId!==closeupAiRequest||closeupEdited)return;
       if(result.found&&result.geometry){
-        aiCloseupTargetPoint={...result.geometry};closeupTargetPoint={...result.geometry};drawTarget(closeupCanvas,closeupTargetPoint,true);
+        aiCloseupTargetPoint={...result.geometry};closeupTargetPoint={...result.geometry};drawPrecisionTarget(closeupCanvas,closeupTargetPoint,true);
         boxHelp.textContent="AI proposed this target point. Tap the exact damaged component to correct it if needed.";
       }else{
         boxHelp.textContent="AI could not pinpoint the target confidently. Tap the damaged component.";
@@ -1446,7 +1467,7 @@ closeupCanvas.addEventListener("pointerdown",(event)=>{
     x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)),
     y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height))
   };
-  drawTarget(closeupCanvas,closeupTargetPoint,false);
+  drawPrecisionTarget(closeupCanvas,closeupTargetPoint,false);
   boxHelp.textContent="Target pinpoint confirmed. Tap again to adjust.";
   updateFindingReady();
 });
@@ -1457,6 +1478,66 @@ function updateFindingReady(){
   const overviewMarkReady=overviewMarkMode==="AREA"?validNormalizedBox(locationArea):Boolean(locationPoint);
   if(locationCodeInput.value)locationCodeInput.setAttribute("aria-invalid",locationValid?"false":"true");
   saveFindingBtn.disabled=!(overviewFile&&closeupFile&&overviewMarkReady&&locationPoint&&closeupTargetPoint&&locationValid);
+}
+
+async function createComponentTargetCrop(file,point){
+  if(!file||!point)return null;
+  try{
+    const source=await compressForOcr(file);
+    const bitmap=await createImageBitmap(source);
+    const minDimension=Math.min(bitmap.width,bitmap.height);
+    const cropSide=Math.max(280,Math.min(900,Math.round(minDimension*0.42)));
+    const targetX=point.x*bitmap.width,targetY=point.y*bitmap.height;
+    const cropX=Math.max(0,Math.min(bitmap.width-cropSide,targetX-cropSide/2));
+    const cropY=Math.max(0,Math.min(bitmap.height-cropSide,targetY-cropSide/2));
+    const localX=(targetX-cropX)/cropSide,localY=(targetY-cropY)/cropSide;
+    const outputSize=768,canvas=document.createElement("canvas");
+    canvas.width=outputSize;canvas.height=outputSize;
+    const ctx=canvas.getContext("2d");
+    if(!ctx){bitmap.close();return null;}
+    const sourceWidth=bitmap.width,sourceHeight=bitmap.height;
+    ctx.drawImage(bitmap,cropX,cropY,cropSide,cropSide,0,0,outputSize,outputSize);
+    bitmap.close();
+
+    const x=localX*outputSize,y=localY*outputSize,gap=12,arm=34;
+    ctx.save();
+    ctx.lineWidth=2;
+    ctx.strokeStyle="#6ee7ff";
+    ctx.fillStyle="#6ee7ff";
+    ctx.shadowColor="rgba(0,0,0,.95)";
+    ctx.shadowBlur=2;
+    ctx.beginPath();
+    ctx.moveTo(x-arm,y);ctx.lineTo(x-gap,y);
+    ctx.moveTo(x+gap,y);ctx.lineTo(x+arm,y);
+    ctx.moveTo(x,y-arm);ctx.lineTo(x,y-gap);
+    ctx.moveTo(x,y+gap);ctx.lineTo(x,y+arm);
+    ctx.stroke();
+    ctx.shadowBlur=0;
+    ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.92));
+    if(!blob)return null;
+    return {
+      file:new File([blob],"component-target.jpg",{type:"image/jpeg",lastModified:Date.now()}),
+      metadata:{
+        version:"component_target_crop_v1",
+        source:"DERIVED_FROM_DAMAGE_CLOSEUP",
+        targetPoint:{x:point.x,y:point.y},
+        crop:{
+          x:cropX/sourceWidth,
+          y:cropY/sourceHeight,
+          width:cropSide/sourceWidth,
+          height:cropSide/sourceHeight
+        },
+        targetPointInCrop:{x:localX,y:localY},
+        reticle:{style:"FINE_LASER",lineWidthPx:2,centreGapPx:12,armLengthPx:34,centreDotPx:2},
+        output:{width:outputSize,height:outputSize}
+      }
+    };
+  }catch{
+    return null;
+  }
 }
 
 async function uploadFindingPhoto(file,role,img,captureMetadata){
@@ -1482,6 +1563,10 @@ saveFindingBtn.addEventListener("click",async()=>{
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
     if(aiCloseupTargetPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:aiCloseupTargetPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:closeupTargetPoint,createdBy:"SURVEYOR"})});
+    const componentTarget=await createComponentTargetCrop(closeupFile,closeupTargetPoint);
+    if(componentTarget){
+      await uploadFindingPhoto(componentTarget.file,"COMPONENT_CLOSEUP",closeupPreview,componentTarget.metadata);
+    }
     const locationDecision=await apiJson("/api/cedex/location-decision",{
       method:"POST",
       headers:{"Content-Type":"application/json"},
