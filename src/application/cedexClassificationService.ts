@@ -295,7 +295,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       selectedCode,
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED"
     });
-    await this.repo.saveComponentPrediction({
+    const persisted = await this.repo.saveComponentPrediction({
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
       response: raw,
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED",
@@ -327,6 +327,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       confidence: selectedConfidence,
       needsReview,
       analysisStatus,
+      predictionId: persisted.predictionId,
       totalDurationMs: Date.now() - startedAt
     });
     return result;
