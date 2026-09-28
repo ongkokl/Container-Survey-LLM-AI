@@ -1,4 +1,10 @@
 import { createGuidedCamera } from "./camera-guidance.js";
+import {
+  containedImageRect,
+  stagePixelToImageNormalized,
+  imageNormalizedToStagePixel,
+  imageNormalizedBoxToStageRect
+} from "./annotation-space.js";
 
 const input = document.querySelector("#doorPhoto");
 const galleryInput = document.querySelector("#doorGalleryPhoto");
@@ -506,6 +512,7 @@ let componentAiCode=null;
 let repairAiCode=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,closeupTargetPoint=null;
+let overviewPointerDebug=null,closeupPointerDebug=null;
 let aiLocationPoint=null,aiLocationArea=null,aiCloseupTargetPoint=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 let overviewMarkMode="AREA",overviewDragStart=null;
