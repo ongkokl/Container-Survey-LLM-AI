@@ -646,6 +646,7 @@ createFindingBtn.addEventListener("click",async()=>{
     locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
     locationReferenceQuad=null;faceMarkMode=false;faceMarkPoints=[];faceMarkResumeMode="AREA";
     locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
+    overviewPointerDebug=null;closeupPointerDebug=null;
     overviewMarkTools.hidden=true;overviewStage.dataset.markMode="AREA";
     markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
     markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
@@ -764,6 +765,7 @@ markAreaBtn.addEventListener("click",()=>setOverviewMarkMode("AREA"));
 markPointBtn.addEventListener("click",()=>setOverviewMarkMode("POINT"));
 
 function resetOverviewLocation(){
+  overviewPointerDebug=null;
   locationReferenceBox=null;
   locationReferenceQuad=null;
   faceReferenceTools.hidden=!fixedCameraDebug;
@@ -1508,7 +1510,7 @@ overviewCanvas.addEventListener("pointercancel",(event)=>{
 });
 
 function selectCloseupPhoto(file,source,captureMetadata=null){
-  closeupFile=file??null;closeupTargetPoint=null;aiCloseupTargetPoint=null;closeupEdited=false;
+  closeupFile=file??null;closeupTargetPoint=null;aiCloseupTargetPoint=null;closeupEdited=false;closeupPointerDebug=null;
   closeupCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"closeup"),"closeup");
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
