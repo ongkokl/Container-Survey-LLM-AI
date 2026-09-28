@@ -285,14 +285,37 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (request.method === "POST" && url.pathname === "/api/cedex/component-suggest") {
+    const startedAt=Date.now();
+    let findingId="";
     try {
       const body=await readJson<{findingId?:string}>(request);
-      const result=await cedexService(env).analyseComponent(body.findingId??"");
+      findingId=body.findingId??"";
+      console.log(JSON.stringify({
+        scope:"COMPONENT_ANALYSIS",
+        event:"HTTP_REQUEST",
+        findingId
+      }));
+      const result=await cedexService(env).analyseComponent(findingId);
       if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
+        console.warn(JSON.stringify({
+          scope:"COMPONENT_ANALYSIS",
+          event:"HTTP_422",
+          findingId,
+          analysisStatus:result.analysisStatus,
+          selectedCode:result.selectedCode,
+          totalDurationMs:Date.now()-startedAt
+        }));
         return json({ok:false,error:"CEDEX_COMPONENT_"+result.analysisStatus,message:result.reason,result},422);
       }
       return json({ok:true,result});
     } catch(error) {
+      console.error(JSON.stringify({
+        scope:"COMPONENT_ANALYSIS",
+        event:"ERROR",
+        findingId,
+        message:error instanceof Error?error.message:"Unable to classify component.",
+        totalDurationMs:Date.now()-startedAt
+      }));
       return json({ok:false,error:"CEDEX_COMPONENT_FAILED",message:error instanceof Error?error.message:"Unable to classify component."},422);
     }
   }

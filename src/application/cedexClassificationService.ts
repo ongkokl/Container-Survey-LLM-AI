@@ -79,10 +79,21 @@ function confidence(value: number | null): number | null {
   return value === null ? null : value > 1 ? value / 100 : value;
 }
 
+function componentLog(event: string, details: Record<string, unknown> = {}) {
+  console.log(JSON.stringify({
+    scope: "COMPONENT_ANALYSIS",
+    event,
+    ...details
+  }));
+}
+
 export class CedexClassificationService {
   constructor(private readonly repo: CedexRepository, private readonly bucket: Bucket, private readonly ai: AiRunner) {}
 
   async analyseComponent(findingId: string) {
+    const startedAt = Date.now();
+    const traceId = crypto.randomUUID();
+    componentLog("START", { traceId, findingId, model: MODEL });
     const context = await this.repo.findingContext(findingId);
     if (!context) throw new Error("Finding not found.");
     const equipment = await this.repo.equipmentForFinding(findingId);
@@ -109,6 +120,23 @@ export class CedexClassificationService {
     const visualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
       .filter(rule => allowedSet.has(rule.component_code));
     const guidance = formatVisualGuidance(visualRules, zone);
+    componentLog("CONTEXT", {
+      traceId,
+      findingId,
+      equipment,
+      containerFace: context.container_face,
+      confirmedLocationCode: context.final_location_code,
+      closeupPhotoId: photo.id,
+      targetPoint,
+      overviewPhotoId: overviewPhoto?.id ?? null,
+      overviewPoint,
+      overviewZone: zone,
+      overviewImageAvailable: Boolean(overviewImage),
+      allowedCount: allowedCodes.length,
+      allowedCodes,
+      visualRuleCount: visualRules.length,
+      visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))]
+    });
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
@@ -134,6 +162,18 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       { type: "image_url", image_url: { url: image } }
     );
 
+    componentLog("AI_REQUEST", {
+      traceId,
+      findingId,
+      model: MODEL,
+      reasoningEffort: "low",
+      maxCompletionTokens: MAX_COMPLETION_TOKENS,
+      hasOverviewImage: Boolean(overviewImage),
+      hasCloseupImage: true,
+      targetPointUsed: Boolean(targetPoint),
+      locationContextUsed: Boolean(context.final_location_code)
+    });
+    const aiStartedAt = Date.now();
     const raw = await this.ai.run(MODEL, {
       messages: [{ role: "user", content }],
       max_completion_tokens: MAX_COMPLETION_TOKENS,
@@ -217,6 +257,22 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       }
     }
     const positionalConflict = visualRuleForcesReview(visualRules, selectedCode);
+    componentLog("AI_RESPONSE", {
+      traceId,
+      findingId,
+      finishReason,
+      analysisStatus,
+      selectedCode,
+      confidence: selectedConfidence,
+      needsReview,
+      positionalConflict,
+      candidates: candidates.map(candidate => ({
+        code: candidate.code,
+        confidence: candidate.confidence,
+        reason: candidate.reason
+      })),
+      aiDurationMs: Date.now() - aiStartedAt
+    });
     const result = {
       equipment,
       analysisStatus,
@@ -237,11 +293,19 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       visualKnowledgeUsed: visualRules.length > 0,
       visualRuleCount: visualRules.length
     };
-    await this.repo.saveComponentPrediction({
+    componentLog("PERSIST_START", {
+      traceId,
+      findingId,
+      analysisStatus,
+      selectedCode,
+      status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED"
+    });
+    const persisted = await this.repo.saveComponentPrediction({
       findingId, surveyId: context.survey_id, modelName: MODEL, selectedCode, confidence: selectedConfidence, candidates,
       response: raw,
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED",
       requestContext: {
+        debugTraceId: traceId,
         photoId: photo.id,
         targetPoint,
         overviewPhotoId: overviewPhoto?.id ?? null,
@@ -262,6 +326,16 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         analysisStatus,
         finishReason
       }
+    });
+    componentLog("COMPLETE", {
+      traceId,
+      findingId,
+      selectedCode,
+      confidence: selectedConfidence,
+      needsReview,
+      analysisStatus,
+      predictionId: persisted.predictionId,
+      totalDurationMs: Date.now() - startedAt
     });
     return result;
   }
