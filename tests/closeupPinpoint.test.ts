@@ -261,7 +261,17 @@ describe("close-up pinpoint targeting",()=>{
       const prompt=String(request.messages[0].content[0].text??"");
       expect(prompt).toContain("surveyor pinpointed the intended damage");
       expect(prompt).toContain("x=0.5100, y=0.4800");
+      expect(prompt).toContain("A true material discontinuity at the pinpoint");
+      expect(prompt).toContain("Do not label CK/CU as DT");
+      expect(prompt).toContain("Do not label a clear DT as PF or CO");
       expect(prompt).not.toContain("marked region");
+      const images=request.messages[0].content.filter(item=>item.type==="image_url");
+      expect(images).toHaveLength(2);
+      const targetCropText=request.messages[0].content
+        .filter(item=>item.type==="text")
+        .map(item=>item.text??"")
+        .join("\n");
+      expect(targetCropText).toContain("Fine-reticle target crop");
       return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
         selected_code:"DT",confidence:0.93,needs_review:false,
         reason:"Visible local dent deformation.",
@@ -276,9 +286,14 @@ describe("close-up pinpoint targeting",()=>{
     ).analyse("f1");
 
     expect(result.targetPointUsed).toBe(true);
+    expect(result.targetCropUsed).toBe(true);
+    expect(result.morphologyPriorityUsed).toBe(true);
     expect(saveDamagePrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
-        targetPoint:{x:0.51,y:0.48}
+        targetPoint:{x:0.51,y:0.48},
+        targetCropUsed:true,
+        targetCropReticle:"FINE_LASER",
+        morphologyPriorityUsed:true
       })
     }));
   });
