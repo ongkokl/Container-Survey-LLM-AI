@@ -407,6 +407,24 @@ export class CedexRepository {
   }
 
 
+  async surveyorComponentPoint(findingId:string,photoId?:string){
+    const row=await this.db.prepare(`
+      SELECT a.geometry_json
+      FROM annotations a
+      JOIN survey_photos p ON p.id=a.photo_id
+      WHERE p.finding_id=? AND p.photo_role='DAMAGE_CLOSEUP' AND (? IS NULL OR p.id=?)
+        AND a.annotation_type='COMPONENT' AND a.geometry_type='POINT' AND a.created_by='SURVEYOR'
+      ORDER BY a.created_at DESC LIMIT 1`
+    ).bind(findingId,photoId??null,photoId??null).first<{geometry_json:string}>();
+    if(!row)return null;
+    try{
+      const g=JSON.parse(row.geometry_json) as {x?:number;y?:number};
+      if(typeof g.x!=="number"||typeof g.y!=="number")return null;
+      if([g.x,g.y].every(Number.isFinite) && g.x>=0 && g.x<=1 && g.y>=0 && g.y<=1)return {x:g.x,y:g.y};
+    }catch{}
+    return null;
+  }
+
   async surveyorDamageBox(findingId:string,photoId?:string){
     const row=await this.db.prepare(`
       SELECT a.geometry_json

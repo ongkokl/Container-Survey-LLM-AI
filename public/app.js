@@ -505,8 +505,8 @@ let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
 
-let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,damageBox=null;
-let aiLocationPoint=null,aiLocationArea=null,aiDamageBox=null;
+let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,closeupTargetPoint=null;
+let aiLocationPoint=null,aiLocationArea=null,aiCloseupTargetPoint=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
 let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
@@ -1260,8 +1260,8 @@ function syncAnnotationCanvas(img,canvas){
 }
 function redrawAnnotations(){
   if(!overviewStage.hidden&&overviewPreview.complete)drawOverviewComposite();
-  if(!closeupStage.hidden&&closeupPreview.complete&&damageBox){
-    syncAnnotationCanvas(closeupPreview,closeupCanvas);drawBox(closeupCanvas,damageBox,!closeupEdited);
+  if(!closeupStage.hidden&&closeupPreview.complete&&closeupTargetPoint){
+    syncAnnotationCanvas(closeupPreview,closeupCanvas);drawTarget(closeupCanvas,closeupTargetPoint,!closeupEdited);
   }
 }
 window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
@@ -1410,29 +1410,28 @@ overviewCanvas.addEventListener("pointercancel",(event)=>{
   redrawAnnotations();
 });
 
-let dragStart=null;
 function selectCloseupPhoto(file,source,captureMetadata=null){
-  closeupFile=file??null;damageBox=null;aiDamageBox=null;closeupEdited=false;
+  closeupFile=file??null;closeupTargetPoint=null;aiCloseupTargetPoint=null;closeupEdited=false;
   closeupCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"closeup"),"closeup");
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
   findingMessage.textContent="Optical-zoom close-up loaded from fixed Camera "+(selectedFixedCamera()?.id??"—")+". The overview damage mark remains the CEDEX location reference.";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
-    boxHelp.hidden=false;boxHelp.textContent="AI is locating the damaged area…";
+    boxHelp.hidden=false;boxHelp.textContent="AI is pinpointing the target damage…";
     try{
       const upload=await compressForOcr(closeupFile),form=new FormData();
-      form.append("photo",upload,upload.name||"closeup.jpg");form.append("mode","box");
+      form.append("photo",upload,upload.name||"closeup.jpg");form.append("mode","point");
       const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
       if(requestId!==closeupAiRequest||closeupEdited)return;
       if(result.found&&result.geometry){
-        aiDamageBox={...result.geometry};damageBox={...result.geometry};drawBox(closeupCanvas,damageBox,true);
-        boxHelp.textContent="AI proposed this damage box. Drag to redraw it if needed.";
+        aiCloseupTargetPoint={...result.geometry};closeupTargetPoint={...result.geometry};drawTarget(closeupCanvas,closeupTargetPoint,true);
+        boxHelp.textContent="AI proposed this target point. Tap the exact damaged component to correct it if needed.";
       }else{
-        boxHelp.textContent="AI could not locate damage confidently. Drag a box around the damage.";
+        boxHelp.textContent="AI could not pinpoint the target confidently. Tap the damaged component.";
       }
     }catch{
-      boxHelp.textContent="AI marking unavailable. Drag a box around the damage.";
+      boxHelp.textContent="AI marking unavailable. Tap the damaged component.";
     }
     updateFindingReady();
   });
@@ -1442,15 +1441,14 @@ closeupGalleryPhoto.addEventListener("change",()=>selectCloseupPhoto(closeupGall
 
 closeupCanvas.addEventListener("pointerdown",(event)=>{
   closeupEdited=true;
-  const r=closeupCanvas.getBoundingClientRect();dragStart={x:(event.clientX-r.left)/r.width,y:(event.clientY-r.top)/r.height};closeupCanvas.setPointerCapture(event.pointerId);
-});
-closeupCanvas.addEventListener("pointerup",(event)=>{
-  if(!dragStart)return;
-  const r=closeupCanvas.getBoundingClientRect(),end={x:(event.clientX-r.left)/r.width,y:(event.clientY-r.top)/r.height};
-  damageBox={x:Math.min(dragStart.x,end.x),y:Math.min(dragStart.y,end.y),width:Math.abs(end.x-dragStart.x),height:Math.abs(end.y-dragStart.y)};
-  dragStart=null;
-  drawBox(closeupCanvas,damageBox,false);
-  boxHelp.textContent="Damage area marked. Drag again to adjust.";updateFindingReady();
+  const r=closeupCanvas.getBoundingClientRect();
+  closeupTargetPoint={
+    x:Math.max(0,Math.min(1,(event.clientX-r.left)/r.width)),
+    y:Math.max(0,Math.min(1,(event.clientY-r.top)/r.height))
+  };
+  drawTarget(closeupCanvas,closeupTargetPoint,false);
+  boxHelp.textContent="Target pinpoint confirmed. Tap again to adjust.";
+  updateFindingReady();
 });
 
 function updateFindingReady(){
@@ -1458,7 +1456,7 @@ function updateFindingReady(){
   const locationValid=validLocationCode();
   const overviewMarkReady=overviewMarkMode==="AREA"?validNormalizedBox(locationArea):Boolean(locationPoint);
   if(locationCodeInput.value)locationCodeInput.setAttribute("aria-invalid",locationValid?"false":"true");
-  saveFindingBtn.disabled=!(overviewFile&&closeupFile&&overviewMarkReady&&locationPoint&&damageBox&&locationValid);
+  saveFindingBtn.disabled=!(overviewFile&&closeupFile&&overviewMarkReady&&locationPoint&&closeupTargetPoint&&locationValid);
 }
 
 async function uploadFindingPhoto(file,role,img,captureMetadata){
@@ -1482,8 +1480,8 @@ saveFindingBtn.addEventListener("click",async()=>{
     if(overviewMarkMode==="AREA"&&locationArea) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:locationArea,createdBy:"SURVEYOR"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:overview.photoId,annotationType:"LOCATION_POINT",geometryType:"POINT",geometry:locationPoint,createdBy:"SURVEYOR"})});
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
-    if(aiDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiDamageBox,createdBy:"AI"})});
-    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:damageBox,createdBy:"SURVEYOR"})});
+    if(aiCloseupTargetPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:aiCloseupTargetPoint,createdBy:"AI"})});
+    await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:closeupTargetPoint,createdBy:"SURVEYOR"})});
     const locationDecision=await apiJson("/api/cedex/location-decision",{
       method:"POST",
       headers:{"Content-Type":"application/json"},

@@ -98,9 +98,9 @@ A container number identifies the physical equipment. A gate-cycle ID identifies
 ### Phase 3 — finding capture
 - Overview photo
 - Container-face annotation
-- Damage location annotation
-- Close-up photo
-- Component and damage boxes/polygons
+- Overview damage area / point for CEDEX location and planar size
+- Optical-zoom close-up photo
+- Close-up pinpoint marking on the exact damaged component for component/damage classification
 
 ### Phase 4 — CEDEX AI
 - Component candidate prediction
