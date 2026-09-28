@@ -1486,7 +1486,8 @@ async function createComponentTargetCrop(file,point){
     const source=await compressForOcr(file);
     const bitmap=await createImageBitmap(source);
     const minDimension=Math.min(bitmap.width,bitmap.height);
-    const cropSide=Math.max(280,Math.min(900,Math.round(minDimension*0.42)));
+    const desiredSide=Math.max(280,Math.min(900,Math.round(minDimension*0.42)));
+    const cropSide=Math.min(minDimension,desiredSide);
     const targetX=point.x*bitmap.width,targetY=point.y*bitmap.height;
     const cropX=Math.max(0,Math.min(bitmap.width-cropSide,targetX-cropSide/2));
     const cropY=Math.max(0,Math.min(bitmap.height-cropSide,targetY-cropSide/2));
@@ -1565,6 +1566,7 @@ saveFindingBtn.addEventListener("click",async()=>{
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:closeupTargetPoint,createdBy:"SURVEYOR"})});
     const componentTarget=await createComponentTargetCrop(closeupFile,closeupTargetPoint);
     if(componentTarget){
+      componentTarget.metadata.derivedFromPhotoId=closeup.photoId;
       await uploadFindingPhoto(componentTarget.file,"COMPONENT_CLOSEUP",closeupPreview,componentTarget.metadata);
     }
     const locationDecision=await apiJson("/api/cedex/location-decision",{
