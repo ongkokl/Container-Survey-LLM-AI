@@ -92,7 +92,7 @@ export class CedexClassificationService {
     if (!photo) throw new Error("Save the damage close-up photo before AI classification.");
     const object = await this.bucket.get(photo.r2_key);
     if (!object) throw new Error("Damage close-up photo is unavailable.");
-    const roi = await this.repo.surveyorDamageBox(findingId, photo.id);
+    const targetPoint = await this.repo.surveyorComponentPoint(findingId, photo.id);
     const image = dataUri(await object.arrayBuffer(), photo.content_type);
 
     const overviewPhoto = await this.repo.findingPhoto(findingId, "FACE_OVERVIEW");
@@ -112,7 +112,7 @@ export class CedexClassificationService {
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
-${roi ? `The target on the close-up image is the surveyor's damage box in normalized coordinates from the top-left: x=${roi.x.toFixed(4)}, y=${roi.y.toFixed(4)}, width=${roi.width.toFixed(4)}, height=${roi.height.toFixed(4)}. Identify the physical component inside this region, using surrounding structure as context. These coordinates are metadata; no box is drawn onto the image.` : "No damage box is available. If the target component is ambiguous, abstain."}
+${targetPoint ? `The surveyor pinpointed the target on the close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context. These coordinates are metadata; no marker is drawn onto the image.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
 
 ${guidance}
 
@@ -227,7 +227,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       allowedComponents: allowed,
       allowedCount: allowed.length,
       model: MODEL,
-      roiUsed: Boolean(roi),
+      targetPointUsed: Boolean(targetPoint),
       overviewUsed: Boolean(overviewImage && overviewPoint),
       overviewZone: zone,
       positionalConflict,
@@ -240,7 +240,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       status: analysisStatus === "INCOMPLETE" || analysisStatus === "INVALID_RESPONSE" ? "FAILED" : needsReview ? "REVIEW_REQUIRED" : "SUGGESTED",
       requestContext: {
         photoId: photo.id,
-        roi,
+        targetPoint,
         overviewPhotoId: overviewPhoto?.id ?? null,
         overviewPoint,
         overviewUsed: Boolean(overviewImage && overviewPoint),
