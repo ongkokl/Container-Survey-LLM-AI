@@ -6,6 +6,10 @@ import {
   type FaceQuad
 } from "../domain/container/faceHomography";
 import {
+  alignedCalibrationCorners,
+  assessFixedCameraAlignment
+} from "../domain/container/fixedCameraAlignment";
+import {
   isValidEndFaceStructureCalibration,
   suggestCedexLocationOnNormalizedFace,
   type EndFaceStructureCalibration,
@@ -270,11 +274,35 @@ export class FixedCameraCalibrationService {
     return this.get(input.findingId,input.cameraId);
   }
 
+  async alignment(findingId:string,cameraId:string,referenceBox:unknown){
+    const calibration=await this.get(findingId,cameraId);
+    if(!calibration.available||!calibration.corners){
+      return {
+        status:"UNAVAILABLE" as const,
+        verified:false,
+        compensationAllowed:false,
+        reason:"Fixed Camera "+calibration.cameraId+" calibration is not configured for this container geometry."
+      };
+    }
+    const detectedBox=validBox(referenceBox);
+    if(!detectedBox){
+      return {
+        status:"RED" as const,
+        verified:false,
+        compensationAllowed:false,
+        reason:"Container alignment could not be verified from this overview. Reposition/retake the overview before automatic CEDEX location."
+      };
+    }
+    return assessFixedCameraAlignment(calibration.corners,detectedBox);
+  }
+
   async calculate(input:{
     findingId:string;
     cameraId:string;
     damageBox?:unknown;
     damagePoint?:unknown;
+    alignmentReferenceBox?:unknown;
+    requireAlignment?:boolean;
   }){
     const calibration=await this.get(input.findingId,input.cameraId);
     if(!calibration.available||!calibration.corners){
@@ -283,6 +311,29 @@ export class FixedCameraCalibrationService {
         calibration.lengthFt+" ft / "+calibration.heightMm+" mm container geometry."
       );
     }
+
+    const alignment=(input.alignmentReferenceBox!==undefined&&input.alignmentReferenceBox!==null)||input.requireAlignment
+      ?await this.alignment(input.findingId,input.cameraId,input.alignmentReferenceBox)
+      :null;
+    if(alignment&&(alignment.status==="RED"||(input.requireAlignment&&alignment.status==="UNAVAILABLE"))){
+      return {
+        code:null,
+        reviewRequired:true,
+        reason:alignment.reason,
+        referenceSource:"FIXED_CAMERA_CALIBRATION",
+        markType:null,
+        calibration,
+        alignment,
+        normalizedDamageBox:null,
+        normalizedPoint:null,
+        physicalMeasurement:null
+      };
+    }
+    const alignedBox=validBox(input.alignmentReferenceBox);
+    const activeCorners=
+      alignment&&alignment.status!=="UNAVAILABLE"&&alignment.compensationAllowed&&alignedBox
+        ?alignedCalibrationCorners(calibration.corners,alignedBox)
+        :calibration.corners;
 
     const orientation={
       flipX:calibration.canonicalFlipX,
@@ -295,7 +346,7 @@ export class FixedCameraCalibrationService {
     const box=validBox(input.damageBox);
     let physicalMeasurement:null|ReturnType<typeof measurePhysicalDamage>=null;
     if(box){
-      normalizedDamage=mapBoxToCalibratedFace(box,calibration.corners,orientation);
+      normalizedDamage=mapBoxToCalibratedFace(box,activeCorners,orientation);
       normalizedPoint={
         x:normalizedDamage.x+normalizedDamage.width/2,
         y:normalizedDamage.y+normalizedDamage.height/2
@@ -303,7 +354,7 @@ export class FixedCameraCalibrationService {
       const ctx=await this.context(input.findingId,input.cameraId);
       physicalMeasurement=ctx.geometry?measurePhysicalDamage({
         box,
-        corners:calibration.corners,
+        corners:activeCorners,
         orientation,
         face:calibration.face,
         geometry:{
@@ -316,7 +367,7 @@ export class FixedCameraCalibrationService {
     }else{
       const point=validPoint(input.damagePoint);
       if(!point)throw new Error("Mark the damage area or damage point first.");
-      normalizedPoint=mapPointToCalibratedFace(point,calibration.corners,orientation);
+      normalizedPoint=mapPointToCalibratedFace(point,activeCorners,orientation);
       const tiny=1e-6;
       normalizedDamage={
         x:Math.max(0,normalizedPoint.x-tiny/2),
@@ -339,11 +390,17 @@ export class FixedCameraCalibrationService {
       damageBox:normalizedDamage,
       endFaceStructure:structure
     });
+    const alignmentReason=alignment?.status==="AMBER"?alignment.reason:null;
     return {
       ...result,
+      reviewRequired:Boolean(result.reviewRequired)||Boolean(alignmentReason),
+      reason:alignmentReason
+        ?(result.reason?result.reason+" ":"")+alignmentReason
+        :result.reason,
       referenceSource:"FIXED_CAMERA_CALIBRATION",
       markType,
       calibration,
+      alignment,
       normalizedDamageBox:normalizedDamage,
       normalizedPoint,
       physicalMeasurement

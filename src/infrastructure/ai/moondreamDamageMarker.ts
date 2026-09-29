@@ -121,7 +121,16 @@ export class MoondreamDamageMarker {
       };
     }
 
-    const referenceTarget="entire visible "+faceName+" side face of the shipping container including its outer structural frame; exclude the door-end plane, front-end plane and background containers";
+    const faceKey=String(face||"").toUpperCase();
+    const referenceTarget=faceKey==="DOOR"
+      ?"entire visible shipping container cargo door-end plane including the complete outer frame; exclude side panels and background containers"
+      :faceKey==="FRONT"
+        ?"entire visible shipping container front-end plane including the complete outer frame; exclude side panels and background containers"
+        :faceKey==="ROOF"
+          ?"entire visible shipping container roof/top plane including the top side rails and both end rails; exclude side walls and background containers"
+          :faceKey==="FLOOR"
+            ?"entire visible shipping container floor/bottom plane including the bottom side rails and both end rails; exclude side walls and background containers"
+            :"entire visible "+faceName+" side face of the shipping container including its outer structural frame; exclude the door-end plane, front-end plane and background containers";
     const [damageRaw,referenceRaw]=await Promise.all([
       this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3}),
       this.ai.run(MODEL,{task:"detect",image,target:referenceTarget,max_objects:3})

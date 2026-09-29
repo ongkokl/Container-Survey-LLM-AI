@@ -814,6 +814,23 @@ function resetOverviewLocation(){
   locationGeometryMessage.textContent="";
 }
 
+function fixedAlignmentText(alignment){
+  if(!alignment)return "";
+  if(alignment.status==="GREEN"){
+    return " · Alignment GREEN: container matches the calibrated position.";
+  }
+  if(alignment.status==="AMBER"){
+    return " · Alignment AMBER: small position difference automatically compensated; verify the suggested location.";
+  }
+  if(alignment.status==="RED"){
+    return " · Alignment RED: container is outside the calibrated tolerance; reposition/retake before automatic location.";
+  }
+  if(alignment.status==="UNAVAILABLE"){
+    return " · Alignment unavailable until this camera/geometry profile is calibrated.";
+  }
+  return "";
+}
+
 function renderLocationResult(result){
   locationReferenceBox=result?.referenceBox??null;
   locationAutoUsable=Boolean(result?.autoUsable);
@@ -889,7 +906,8 @@ function renderLocationResult(result){
       ?isEndFaceCamera(camera)&&!calibration.endFaceStructure?.available
         ?"Camera "+(camera?.id??"—")+" perspective calibration is loaded, but physical Door/Front CEDEX structure calibration is still required."
         :"Camera "+(camera?.id??"—")+" calibration loaded · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+
-          " · damage coordinates are mapped through stored physical calibration."
+          " · damage coordinates are mapped through stored physical calibration."+
+          fixedAlignmentText(result?.alignment??location?.alignment)
       :"Camera "+(camera?.id??"—")+" face/orientation is known, but no stored calibration exists for this container size."+
         (fixedCameraDebug?" Use Calibrate fixed camera with 4 corners once.":" Admin calibration is required.");
   }else if(result?.referenceSource==="FIXED_CAMERA_PROFILE"){
@@ -947,7 +965,8 @@ async function recalculateLocationFromMark(){
             findingId:currentFinding.id,
             cameraId:fixedCamera.id,
             damageBox:usingArea?locationArea:null,
-            damagePoint:usingArea?null:locationPoint
+            damagePoint:usingArea?null:locationPoint,
+            alignmentReferenceBox:locationReferenceBox
           })
         })
       :hasFaceQuad
@@ -982,13 +1001,16 @@ async function recalculateLocationFromMark(){
       locationSuggestion.textContent=(usingArea?"Marked area":"Marked point")+" location: "+result.code+
         (result.reviewRequired?" · close to a CEDEX zone boundary; verify before saving":"");
       if(fixedCalibratedCamera&&result?.calibration?.available){
-        locationGeometryMessage.textContent="Reference: stored fixed Camera "+fixedCamera.id+" calibration · "+result.calibration.lengthFt+" ft · "+result.calibration.heightMm+" mm · version "+result.calibration.calibrationVersion+".";
+        locationGeometryMessage.textContent="Reference: stored fixed Camera "+fixedCamera.id+" calibration · "+result.calibration.lengthFt+" ft · "+result.calibration.heightMm+" mm · version "+result.calibration.calibrationVersion+"."+fixedAlignmentText(result?.alignment);
       }else if(hasFaceQuad){
         locationGeometryMessage.textContent="Reference: surveyor-marked 4-corner perspective · door end at image "+doorEndSide.value.toLowerCase();
       }
     }else{
       locationCodeInput.value="";
       locationSuggestion.textContent=result?.reason||"Unable to calculate a location code from this mark. Enter it manually.";
+      if(fixedCalibratedCamera&&result?.alignment){
+        locationGeometryMessage.textContent="Reference: stored fixed Camera "+fixedCamera.id+" calibration."+fixedAlignmentText(result.alignment);
+      }
     }
   }catch(e){
     if(requestId!==locationRecalcRequest)return;

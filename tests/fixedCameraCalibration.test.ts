@@ -215,4 +215,64 @@ describe("fixed camera calibration service",()=>{
     });
     expect(result.code).toBe("BL1N");
   });
+
+  it("uses GREEN alignment evidence before automatic fixed-camera location",async()=>{
+    const service=new FixedCameraCalibrationService(
+      repoWithCalibration(stored("R","RIGHT","LEFT"),"RIGHT")
+    );
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"R",
+      damagePoint:{x:0.50,y:0.50},
+      alignmentReferenceBox:{x:0.10,y:0.10,width:0.80,height:0.80},
+      requireAlignment:true
+    });
+    expect(result.alignment?.status).toBe("GREEN");
+    expect(result.code?.startsWith("R")).toBe(true);
+  });
+
+  it("applies AMBER translation compensation and keeps surveyor review",async()=>{
+    const service=new FixedCameraCalibrationService(
+      repoWithCalibration(stored("R","RIGHT","LEFT"),"RIGHT")
+    );
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"R",
+      damagePoint:{x:0.54,y:0.50},
+      alignmentReferenceBox:{x:0.14,y:0.10,width:0.80,height:0.80},
+      requireAlignment:true
+    });
+    expect(result.alignment?.status).toBe("AMBER");
+    expect(result.reviewRequired).toBe(true);
+    expect(result.normalizedPoint?.x).toBeCloseTo(0.5,3);
+  });
+
+  it("blocks automatic CEDEX location when alignment is RED",async()=>{
+    const service=new FixedCameraCalibrationService(
+      repoWithCalibration(stored("R","RIGHT","LEFT"),"RIGHT")
+    );
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"R",
+      damagePoint:{x:0.50,y:0.50},
+      alignmentReferenceBox:{x:0.28,y:0.10,width:0.65,height:0.80},
+      requireAlignment:true
+    });
+    expect(result.alignment?.status).toBe("RED");
+    expect(result.code).toBeNull();
+    expect(result.reason).toMatch(/outside the calibrated tolerance/i);
+  });
+
+  it("blocks automatic CEDEX location when required alignment cannot be detected",async()=>{
+    const service=new FixedCameraCalibrationService(
+      repoWithCalibration(stored("R","RIGHT","LEFT"),"RIGHT")
+    );
+    const result=await service.calculate({
+      findingId:"f1",cameraId:"R",
+      damagePoint:{x:0.50,y:0.50},
+      alignmentReferenceBox:null,
+      requireAlignment:true
+    });
+    expect(result.alignment?.status).toBe("RED");
+    expect(result.code).toBeNull();
+    expect(result.reason).toMatch(/could not be verified/i);
+  });
+
 });
