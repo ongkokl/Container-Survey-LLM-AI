@@ -390,12 +390,12 @@ export class FixedCameraCalibrationService {
       damageBox:normalizedDamage,
       endFaceStructure:structure
     });
-    const alignmentReview=alignment?.status==="AMBER";
+    const alignmentReason=alignment?.status==="AMBER"?alignment.reason:null;
     return {
       ...result,
-      reviewRequired:Boolean(result.reviewRequired)||alignmentReview,
-      reason:alignmentReview
-        ?(result.reason?result.reason+" ":"")+alignment.reason
+      reviewRequired:Boolean(result.reviewRequired)||Boolean(alignmentReason),
+      reason:alignmentReason
+        ?(result.reason?result.reason+" ":"")+alignmentReason
         :result.reason,
       referenceSource:"FIXED_CAMERA_CALIBRATION",
       markType,
