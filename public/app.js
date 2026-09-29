@@ -510,6 +510,7 @@ const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=
 let damageAiCode=null;
 let componentAiCode=null;
 let repairAiCode=null;
+let repairRecommendationGenerated=false,repairRecommendationStale=true,currentRepairContext=null;
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,closeupTargetPoint=null;
 let overviewPointerDebug=null,closeupPointerDebug=null;
@@ -669,6 +670,7 @@ createFindingBtn.addEventListener("click",async()=>{
       }
     }catch{}
     repairReview.hidden=true;analyseRepairBtn.hidden=true;repairAiCode=null;
+    repairRecommendationGenerated=false;repairRecommendationStale=true;currentRepairContext=null;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
   finally{setBusy(createFindingBtn,false,"Creating…","Create finding");}
 });
@@ -1823,7 +1825,7 @@ confirmDamageBtn.addEventListener("click",async()=>{
     const result=await apiJson("/api/cedex/damage-decision",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id,finalCode:damageSelect.value})});
     damageDecisionMessage.textContent=result.decision==="APPROVED"?"Damage accepted: "+result.finalCode:"AI corrected from "+(result.aiCode??"none")+" to "+result.finalCode;
     damageSelect.disabled=true;confirmDamageBtn.disabled=true;confirmDamageBtn.textContent="Damage confirmed ✓";
-    analyseRepairBtn.hidden=false;
+    prepareRepairReasoning(result.componentCode,result.finalCode);
   }catch(e){damageDecisionMessage.textContent=e instanceof Error?e.message:"Unable to save damage decision.";setBusy(confirmDamageBtn,false,"Saving…","Accept damage");}
 });
 
@@ -1836,13 +1838,25 @@ function dentDepthLimitMm(direction){
   return null;
 }
 
+function repairMeasurementsPayload(){
+  const numberOrNull=value=>value===""?null:Number(value);
+  return {
+    damageLengthCm:numberOrNull(repairLengthCm.value),
+    damageWidthCm:numberOrNull(repairWidthCm.value),
+    damageDepthCm:numberOrNull(repairDepthCm.value),
+    corrugationsAffected:repairCorrugations.value===""?null:Number(repairCorrugations.value),
+    deformationDirection:repairDentDirectionWrap.hidden?"UNKNOWN":repairDirection.value,
+    notes:repairNotes.value.trim()||null
+  };
+}
+
 function updateDentCriterionHint(){
   if(repairDentDirectionWrap.hidden)return;
   const direction=repairDirection.value;
   const depth=repairDepthCm.value===""?null:Number(repairDepthCm.value);
   const limit=dentDepthLimitMm(direction);
   if(depth!==null&&direction==="UNKNOWN"){
-    repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
+    repairDepthCriterion.textContent="Select inward or outward before using a measured dent depth.";
     return;
   }
   if(limit===null){
@@ -1852,7 +1866,7 @@ function updateDentCriterionHint(){
     return;
   }
   if(depth===null||!Number.isFinite(depth)){
-    repairDepthCriterion.textContent="Dimensional reference: "+limit+" mm. Enter the manually measured depth to assess it.";
+    repairDepthCriterion.textContent="Dimensional reference: "+limit+" mm. Enter the manually measured depth if available.";
     return;
   }
   const depthMm=depth*10;
@@ -1864,28 +1878,84 @@ function updateDentCriterionHint(){
 function updateRepairConfirmState(){
   const depthEntered=repairDepthCm.value!=="";
   const missingDirection=!repairDentDirectionWrap.hidden&&depthEntered&&repairDirection.value==="UNKNOWN";
-  confirmRepairBtn.disabled=!repairSelect.value||missingDirection;
-  if(missingDirection)repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
+  confirmRepairBtn.disabled=!repairSelect.value||missingDirection||repairRecommendationStale;
+  if(missingDirection)repairDepthCriterion.textContent="Select inward or outward before using a measured dent depth.";
 }
 
-repairDirection.addEventListener("change",()=>{updateDentCriterionHint();updateRepairConfirmState();});
-repairDepthCm.addEventListener("input",()=>{updateDentCriterionHint();updateRepairConfirmState();});
+function markRepairRecommendationStale(){
+  updateDentCriterionHint();
+  if(!repairRecommendationGenerated){
+    updateRepairConfirmState();
+    return;
+  }
+  repairRecommendationStale=true;
+  repairAiCode=null;
+  repairSelect.value="";
+  repairDecisionMessage.textContent="Measurements changed. Re-run the repair recommendation before confirming.";
+  analyseRepairBtn.textContent="Re-run repair recommendation";
+  analyseRepairBtn.disabled=false;
+  updateRepairConfirmState();
+}
+
+for(const input of [repairLengthCm,repairWidthCm,repairDepthCm,repairCorrugations,repairNotes]){
+  input.addEventListener("input",markRepairRecommendationStale);
+}
+repairDirection.addEventListener("change",markRepairRecommendationStale);
+
+function prepareRepairReasoning(componentCode,damageCode){
+  currentRepairContext={componentCode,damageCode};
+  repairReview.hidden=false;
+  repairDecision.hidden=false;
+  repairAiCode=null;
+  repairRecommendationGenerated=false;
+  repairRecommendationStale=true;
+
+  repairLengthCm.value=currentAutoDamageMeasurement?.majorCm??"";
+  repairWidthCm.value=currentAutoDamageMeasurement?.minorCm??"";
+  repairDepthCm.value="";
+  repairDirection.value="UNKNOWN";
+  repairCorrugations.value="";
+  repairNotes.value=currentAutoDamageMeasurement
+    ?"Length/width prefilled from fixed-camera plane-projected measurement; surveyor verified/adjusted before recommendation."
+    :"";
+
+  const mappedDent=componentCode==="PAA"&&damageCode==="DT"&&["LEFT","RIGHT","FRONT"].includes(findingFace.value);
+  repairDentDirectionWrap.hidden=!mappedDent;
+  repairDepthCriterion.textContent="";
+  if(mappedDent)updateDentCriterionHint();
+
+  repairSelect.innerHTML='<option value="">Run recommendation first…</option>';
+  repairSelect.disabled=true;
+  confirmRepairBtn.disabled=true;
+  confirmRepairBtn.textContent="Confirm repair method";
+  repairDecisionMessage.textContent="";
+  repairSuggestion.textContent=mappedDent
+    ?"Verify damage length/width, add depth/corrugations if available, then run the repair recommendation."
+    :"Run the verified repair-method recommendation.";
+  repairCandidates.textContent="";
+  analyseRepairBtn.hidden=false;
+  analyseRepairBtn.disabled=false;
+  analyseRepairBtn.textContent="Recommend repair method";
+}
 
 function renderRepairResult(result){
   const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result.analysisStatus);
   repairAiCode=result.selectedCode??null;
+  repairRecommendationGenerated=!failed;
+  repairRecommendationStale=failed;
+
   repairSuggestion.textContent=failed
     ? result.reason
-    : result.recommendationMode==="RULES_ONLY_UNTIL_MEASUREMENTS"
-      ? "Repair method requires measurement · surveyor selection required"
-      : result.selectedCode
-        ? result.selectedCode+" · "+(typeof result.confidence==="number"?Math.round(result.confidence*100)+"% model score":"score unavailable")+" · surveyor review required"
-        : "No reliable repair method selected · surveyor review required";
-  repairCandidates.textContent=result.recommendationMode==="RULES_ONLY_UNTIL_MEASUREMENTS"
-    ? "Allowed by GP.xlsx: "+(result.allowedRepairs??[]).map(x=>x.repair_code+" — "+x.repair_name).join(" | ")+" · "+result.reason
-    : result.candidates?.length
-      ? "Alternatives: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"% score":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
-      : failed ? "No completed AI repair recommendation is available." : result.reason || "Select a verified repair method manually.";
+    : result.selectedCode
+      ? result.selectedCode+" · "+(typeof result.confidence==="number"?Math.round(result.confidence*100)+"% reasoning score":"score unavailable")+" · surveyor confirmation required"
+      : result.reason || "No reliable repair method selected · surveyor selection required";
+
+  const historyNote=typeof result.historicalCaseCount==="number"
+    ?" · comparable confirmed repairs found: "+result.historicalCaseCount
+    :"";
+  repairCandidates.textContent=result.candidates?.length
+    ? "Alternatives: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"% score":"—")+(x.reason?" · "+x.reason:"")).join(" | ")+historyNote
+    : "Allowed by GP.xlsx: "+(result.allowedRepairs??[]).map(x=>x.repair_code+" — "+x.repair_name).join(" | ")+historyNote;
 
   repairSelect.innerHTML="";
   const placeholder=document.createElement("option");
@@ -1898,21 +1968,10 @@ function renderRepairResult(result){
     repairSelect.appendChild(option);
   }
   repairSelect.value=result.selectedCode??"";
-  repairLengthCm.value=currentAutoDamageMeasurement?.majorCm??"";
-  repairWidthCm.value=currentAutoDamageMeasurement?.minorCm??"";
-  repairDepthCm.value="";
-  repairDirection.value="UNKNOWN";
-  const mappedDent=result.equipment==="GP"&&result.componentCode==="PAA"&&result.damageCode==="DT"&&["LEFT","RIGHT","FRONT"].includes(findingFace.value);
-  repairDentDirectionWrap.hidden=!mappedDent;
-  repairDepthCriterion.textContent="";
-  if(mappedDent)updateDentCriterionHint();
-  repairCorrugations.value="";
-  repairNotes.value=currentAutoDamageMeasurement
-    ?"Length/width prefilled from fixed-camera plane-projected measurement; surveyor verified/adjusted before save."
-    :"";
   repairSelect.disabled=false;
-  repairDecision.hidden=repairSelect.options.length<=1;
+  repairDecision.hidden=false;
   repairDecisionMessage.textContent="";
+  analyseRepairBtn.textContent="Re-run repair recommendation";
   updateRepairConfirmState();
   confirmRepairBtn.textContent=repairAiCode&&repairSelect.value===repairAiCode
     ?"Accept "+repairAiCode
@@ -1921,25 +1980,42 @@ function renderRepairResult(result){
 
 analyseRepairBtn.addEventListener("click",async()=>{
   if(!currentFinding)return;
-  setBusy(analyseRepairBtn,true,"Loading methods…","Load verified repair methods");
+  const measurements=repairMeasurementsPayload();
+  if(currentRepairContext?.componentCode==="PAA"&&currentRepairContext?.damageCode==="DT"){
+    if(measurements.damageLengthCm===null||measurements.damageWidthCm===null){
+      repairSuggestion.textContent="Damage length and width are required before GP/PAA dent repair reasoning.";
+      return;
+    }
+    if(measurements.damageDepthCm!==null&&measurements.deformationDirection==="UNKNOWN"){
+      repairDepthCriterion.textContent="Select inward or outward before using a measured dent depth.";
+      return;
+    }
+  }
+
+  setBusy(analyseRepairBtn,true,"Reasoning…","Recommend repair method");
   repairReview.hidden=false;
-  repairDecision.hidden=true;
+  repairDecision.hidden=false;
   repairSelect.disabled=true;
   confirmRepairBtn.disabled=true;
   repairAiCode=null;
-  repairSuggestion.textContent="Loading verified repair methods from GP.xlsx…";
+  repairSuggestion.textContent="Applying GP.xlsx constraints, measurements and comparable confirmed repair history…";
   repairCandidates.textContent="";
   try{
-    const result=await apiJson("/api/cedex/repair-suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({findingId:currentFinding.id})});
+    const result=await apiJson("/api/cedex/repair-suggest",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({findingId:currentFinding.id,measurements})
+    });
     renderRepairResult(result);
   }catch(e){
     if(["CEDEX_REPAIR_INCOMPLETE","CEDEX_REPAIR_INVALID_RESPONSE"].includes(e?.code)&&e.result){
       renderRepairResult(e.result);
     }else{
+      repairRecommendationStale=true;
       repairSuggestion.textContent=e instanceof Error?e.message:"Unable to recommend repair method.";
     }
   }finally{
-    setBusy(analyseRepairBtn,false,"Loading methods…","Load verified repair methods");
+    setBusy(analyseRepairBtn,false,"Reasoning…","Recommend repair method");
   }
 });
 
@@ -1951,7 +2027,7 @@ repairSelect.addEventListener("change",()=>{
 });
 
 confirmRepairBtn.addEventListener("click",async()=>{
-  if(!currentFinding||!repairSelect.value)return;
+  if(!currentFinding||!repairSelect.value||repairRecommendationStale)return;
   if(!repairDentDirectionWrap.hidden&&repairDepthCm.value!==""&&repairDirection.value==="UNKNOWN"){
     repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
     updateRepairConfirmState();

@@ -41,6 +41,37 @@ export interface DamageAccuracyRow extends ComponentAccuracyRow {
   component_code:string|null;
 }
 
+export interface RepairMeasurementInput {
+  damageLengthCm?:number|null;
+  damageWidthCm?:number|null;
+  damageDepthCm?:number|null;
+  corrugationsAffected?:number|null;
+  deformationDirection?:DeformationDirection|null;
+  notes?:string|null;
+}
+
+export interface RepairMeasurementRecord {
+  findingId:string;
+  damageLengthCm:number|null;
+  damageWidthCm:number|null;
+  damageDepthCm:number|null;
+  corrugationsAffected:number|null;
+  deformationDirection:DeformationDirection;
+  geometryIsoCode:string|null;
+  measurementMethod:string|null;
+  applicableIiclLimitMm:number|null;
+  iiclDepthStatus:string|null;
+  iiclCriterionSource:string|null;
+  notes:string|null;
+}
+
+export interface HistoricalRepairCase extends RepairMeasurementRecord {
+  repairCode:string;
+  locationCode:string|null;
+  containerFace:string|null;
+  decisionDate:string;
+}
+
 export class CedexRepository {
   constructor(private readonly db:D1Database){}
 
@@ -499,6 +530,171 @@ export class CedexRepository {
     return {decisionId,aiCode:prediction.selected_code,finalCode,decision,componentCode:allowed.componentCode};
   }
 
+
+  async saveRepairMeasurements(input:{findingId:string;measurements?:RepairMeasurementInput;}){
+    const context=await this.findingContext(input.findingId);
+    if(!context) throw new Error("Finding not found.");
+    const allowed=await this.repairCodesForFinding(input.findingId);
+    const m=input.measurements??{};
+    const numeric=(value:number|null|undefined)=>typeof value==="number"&&Number.isFinite(value)&&value>=0?value:null;
+    const lengthCm=numeric(m.damageLengthCm);
+    const widthCm=numeric(m.damageWidthCm);
+    const depthCm=numeric(m.damageDepthCm);
+    const corr=typeof m.corrugationsAffected==="number"&&Number.isInteger(m.corrugationsAffected)&&m.corrugationsAffected>=0?m.corrugationsAffected:null;
+    const direction:DeformationDirection=["INWARD","OUTWARD"].includes(m.deformationDirection??"")
+      ? m.deformationDirection as DeformationDirection
+      : "UNKNOWN";
+    const notes=m.notes?.trim()||null;
+    const depthAssessment=assessDentDepth({
+      equipment:allowed.equipment as "GP"|"RF",
+      componentCode:allowed.componentCode,
+      damageCode:allowed.damageCode,
+      containerFace:context.container_face,
+      depthCm,
+      direction
+    });
+    const now=new Date().toISOString();
+    await this.db.prepare(`
+      INSERT INTO repair_measurements
+        (
+          finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,
+          measurement_source,deformation_direction,geometry_iso_code,measurement_method,
+          applicable_iicl_limit_mm,iicl_depth_status,iicl_criterion_source,notes,created_at,updated_at
+        )
+      VALUES (?,?,?,?,?,'SURVEYOR',?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(finding_id) DO UPDATE SET
+        damage_length_cm=excluded.damage_length_cm,
+        damage_width_cm=excluded.damage_width_cm,
+        damage_depth_cm=excluded.damage_depth_cm,
+        corrugations_affected=excluded.corrugations_affected,
+        measurement_source='SURVEYOR',
+        deformation_direction=excluded.deformation_direction,
+        geometry_iso_code=excluded.geometry_iso_code,
+        measurement_method=excluded.measurement_method,
+        applicable_iicl_limit_mm=excluded.applicable_iicl_limit_mm,
+        iicl_depth_status=excluded.iicl_depth_status,
+        iicl_criterion_source=excluded.iicl_criterion_source,
+        notes=excluded.notes,
+        updated_at=excluded.updated_at
+    `).bind(
+      input.findingId,lengthCm,widthCm,depthCm,corr,direction,context.observed_iso_code,
+      "SURVEYOR_MANUAL",depthAssessment.limitMm,depthAssessment.status,
+      depthAssessment.sourceReference,notes,now,now
+    ).run();
+    return {
+      findingId:input.findingId,
+      damageLengthCm:lengthCm,
+      damageWidthCm:widthCm,
+      damageDepthCm:depthCm,
+      corrugationsAffected:corr,
+      deformationDirection:direction,
+      geometryIsoCode:context.observed_iso_code,
+      measurementMethod:"SURVEYOR_MANUAL",
+      applicableIiclLimitMm:depthAssessment.limitMm,
+      iiclDepthStatus:depthAssessment.status,
+      iiclCriterionSource:depthAssessment.sourceReference,
+      notes
+    } satisfies RepairMeasurementRecord;
+  }
+
+  async repairMeasurementsForFinding(findingId:string):Promise<RepairMeasurementRecord|null>{
+    const row=await this.db.prepare(`
+      SELECT finding_id,damage_length_cm,damage_width_cm,damage_depth_cm,corrugations_affected,
+             deformation_direction,geometry_iso_code,measurement_method,applicable_iicl_limit_mm,
+             iicl_depth_status,iicl_criterion_source,notes
+      FROM repair_measurements WHERE finding_id=?`
+    ).bind(findingId).first<{
+      finding_id:string;damage_length_cm:number|null;damage_width_cm:number|null;damage_depth_cm:number|null;
+      corrugations_affected:number|null;deformation_direction:DeformationDirection|null;geometry_iso_code:string|null;
+      measurement_method:string|null;applicable_iicl_limit_mm:number|null;iicl_depth_status:string|null;
+      iicl_criterion_source:string|null;notes:string|null;
+    }>();
+    if(!row)return null;
+    return {
+      findingId:row.finding_id,
+      damageLengthCm:row.damage_length_cm,
+      damageWidthCm:row.damage_width_cm,
+      damageDepthCm:row.damage_depth_cm,
+      corrugationsAffected:row.corrugations_affected,
+      deformationDirection:row.deformation_direction??"UNKNOWN",
+      geometryIsoCode:row.geometry_iso_code,
+      measurementMethod:row.measurement_method,
+      applicableIiclLimitMm:row.applicable_iicl_limit_mm,
+      iiclDepthStatus:row.iicl_depth_status,
+      iiclCriterionSource:row.iicl_criterion_source,
+      notes:row.notes
+    };
+  }
+
+  async historicalRepairCases(input:{
+    findingId:string;
+    equipment:"GP"|"RF";
+    componentCode:string;
+    damageCode:string;
+    allowedRepairCodes:string[];
+    limit?:number;
+  }):Promise<HistoricalRepairCase[]>{
+    if(!input.allowedRepairCodes.length)return [];
+    const safeLimit=Math.max(1,Math.min(100,Math.trunc(input.limit??40)||40));
+    const placeholders=input.allowedRepairCodes.map(()=>"?").join(",");
+    const result=await this.db.prepare(`
+      SELECT
+        f.id AS finding_id,
+        f.final_repair_code AS repair_code,
+        f.final_location_code AS location_code,
+        f.container_face,
+        rm.damage_length_cm,rm.damage_width_cm,rm.damage_depth_cm,rm.corrugations_affected,
+        rm.deformation_direction,rm.geometry_iso_code,rm.measurement_method,
+        rm.applicable_iicl_limit_mm,rm.iicl_depth_status,rm.iicl_criterion_source,rm.notes,
+        sd.created_at AS decision_date
+      FROM findings f
+      JOIN surveys s ON s.id=f.survey_id
+      JOIN gate_cycles gc ON gc.id=s.gate_cycle_id
+      JOIN repair_measurements rm ON rm.finding_id=f.id
+      JOIN surveyor_decisions sd ON sd.finding_id=f.id
+        AND sd.field_type='REPAIR'
+        AND sd.final_value=f.final_repair_code
+      WHERE f.id<>?
+        AND gc.observed_container_type=?
+        AND f.final_component_code=?
+        AND f.final_damage_code=?
+        AND f.final_repair_code IN (${placeholders})
+        AND sd.id=(
+          SELECT sd2.id FROM surveyor_decisions sd2
+          WHERE sd2.finding_id=f.id AND sd2.field_type='REPAIR'
+          ORDER BY sd2.created_at DESC LIMIT 1
+        )
+      ORDER BY sd.created_at DESC
+      LIMIT ?
+    `).bind(
+      input.findingId,input.equipment,input.componentCode,input.damageCode,
+      ...input.allowedRepairCodes,safeLimit
+    ).all<{
+      finding_id:string;repair_code:string;location_code:string|null;container_face:string|null;
+      damage_length_cm:number|null;damage_width_cm:number|null;damage_depth_cm:number|null;
+      corrugations_affected:number|null;deformation_direction:DeformationDirection|null;
+      geometry_iso_code:string|null;measurement_method:string|null;applicable_iicl_limit_mm:number|null;
+      iicl_depth_status:string|null;iicl_criterion_source:string|null;notes:string|null;decision_date:string;
+    }>();
+    return result.results.map(row=>({
+      findingId:row.finding_id,
+      repairCode:row.repair_code,
+      locationCode:row.location_code,
+      containerFace:row.container_face,
+      decisionDate:row.decision_date,
+      damageLengthCm:row.damage_length_cm,
+      damageWidthCm:row.damage_width_cm,
+      damageDepthCm:row.damage_depth_cm,
+      corrugationsAffected:row.corrugations_affected,
+      deformationDirection:row.deformation_direction??"UNKNOWN",
+      geometryIsoCode:row.geometry_iso_code,
+      measurementMethod:row.measurement_method,
+      applicableIiclLimitMm:row.applicable_iicl_limit_mm,
+      iiclDepthStatus:row.iicl_depth_status,
+      iiclCriterionSource:row.iicl_criterion_source,
+      notes:row.notes
+    }));
+  }
 
   async saveRepairPrediction(input:{findingId:string;surveyId:string;modelName:string;selectedCode:string|null;confidence:number|null;candidates:Array<{code:string;confidence:number|null;reason?:string}>;response:unknown;status?:"REVIEW_REQUIRED"|"FAILED";requestContext?:Record<string,unknown>;}){
     const now=new Date().toISOString(),runId=crypto.randomUUID(),predictionId=crypto.randomUUID();
