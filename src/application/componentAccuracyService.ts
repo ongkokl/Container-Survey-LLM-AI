@@ -1,7 +1,8 @@
 import type { CedexRepository, ComponentAccuracyRow } from "../infrastructure/d1/cedexRepository";
 
 export const COMPONENT_ACCURACY_FOCUS_CODES = [
-  "LBB","LBR","LBG","LBC","HWR","HWH","HGA","HGB","HGP","PAA"
+  "LBB","LBR","LBG","LBC","HWR","HWH","HGA","HGB","HGP","PAA",
+  "CFG","CPO","CPA"
 ] as const;
 
 const MIN_CASES_PER_CODE = 5;
