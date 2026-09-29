@@ -399,9 +399,23 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (request.method === "POST" && url.pathname === "/api/cedex/repair-suggest") {
     try {
-      const body=await readJson<{findingId?:string}>(request);
-      const service=new RepairRecommendationService(new CedexRepository(env.DB));
-      const result=await service.analyse(body.findingId??"");
+      const body=await readJson<{
+        findingId?:string;
+        measurements?:{
+          damageLengthCm?:number|null;
+          damageWidthCm?:number|null;
+          damageDepthCm?:number|null;
+          corrugationsAffected?:number|null;
+          deformationDirection?:"INWARD"|"OUTWARD"|"UNKNOWN"|null;
+          notes?:string|null;
+        };
+      }>(request);
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const service=new RepairRecommendationService(new CedexRepository(env.DB),ai);
+      const result=await service.analyse(body.findingId??"",body.measurements);
+      if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
+        return json({ok:false,error:"CEDEX_REPAIR_"+result.analysisStatus,message:result.reason,result},422);
+      }
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"CEDEX_REPAIR_FAILED",message:error instanceof Error?error.message:"Unable to recommend repair method."},422);
