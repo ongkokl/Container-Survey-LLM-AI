@@ -32,6 +32,7 @@ const GP_DOOR_FAMILY_CODES: Record<Exclude<GpDoorFamily, "UNKNOWN">, readonly st
 const GP_STRUCTURAL_FAMILIES = [
   "CORNER_FITTING",
   "CORNER_POST",
+  "FORKLIFT_POCKET",
   "PANEL_SURFACE",
   "RAIL_EDGE",
   "FITTED_COMPONENT",
@@ -43,6 +44,7 @@ type ComponentFamily = GpDoorFamily | GpStructuralFamily;
 const GP_STRUCTURAL_FAMILY_CODES: Record<Exclude<GpStructuralFamily, "UNKNOWN"|"PANEL_SURFACE"|"FITTED_COMPONENT">, readonly string[]> = {
   CORNER_FITTING: ["CFG"],
   CORNER_POST: ["CPA","CPI","CPJ","CPL","CPO"],
+  FORKLIFT_POCKET: ["FLA","FLT","FLP","FLS"],
   RAIL_EDGE: ["RLA","RLG","RDP","RCI","HEP","RCG","RTL"]
 };
 
@@ -269,8 +271,9 @@ Use the local target evidence only. The crosshair centre is authoritative; a lar
 Choose one family:
 - CORNER_FITTING: the block-like ISO corner casting/fitting at a container corner.
 - CORNER_POST: the vertical corner-post assembly or one of its inner/outer/J-bar/hinge-lug pieces.
+- FORKLIFT_POCKET: the fork-entry pocket/opening and its dedicated pocket structure in the lower side/underframe. Choose this when the reticle is on the forklift-pocket opening or one of its dedicated pocket members; do NOT collapse it into a general rail.
 - PANEL_SURFACE: broad corrugated sheet/panel surface.
-- RAIL_EDGE: a distinct structural rail, rail gusset/doubling/recess, header extension or roof-corner gusset.
+- RAIL_EDGE: a distinct structural rail, rail gusset/doubling/recess, header extension or roof-corner gusset. Do NOT use this for a visible forklift-pocket opening or dedicated pocket member.
 - FITTED_COMPONENT: a fitted item such as a ventilator, marking/stripe or another local accessory.
 - UNKNOWN: the local target is unclear or lies between families.
 Do not identify the exact CEDEX component code yet. If the local evidence is ambiguous, choose UNKNOWN rather than guessing.
@@ -417,6 +420,17 @@ The exact reticle centre still overrides the surrounding assembly.
 Special HWH/HWR rule: HWH is the specific Huckbolt code. A round fastener head by itself is NOT enough evidence for HWH. Select HWH only when the target is positively visually identifiable as the Huckbolt referenced by the visual rule. If the target is fastening/mounting hardware but that Huckbolt-specific identification cannot be established from the image, prefer HWR and keep needs_review true when uncertainty remains.`
       : "";
 
+    const gpStructuralSpecificityGuidance =
+      equipment === "GP" && componentFamilyScope === "GP_STRUCTURAL" && componentFamily === "FORKLIFT_POCKET"
+        ? `GP forklift-pocket family stage: the crosshair is on a dedicated forklift-pocket structure, so general PAA/RLA/RDP interpretations must not override the pocket-specific evidence.
+Choose the most specific allowed forklift-pocket code visible at the reticle:
+- FLA = Forklift Pocket Assembly: use when the target is the pocket/opening or assembly generally and a more specific member cannot be established.
+- FLT = Forklift Pocket Whole Transverse Section: use when the target is specifically the transverse pocket/channel section.
+- FLP = Forklift Pocket Top Plate: use only when the reticle is on the top plate of the pocket.
+- FLS = Forklift Pocket Strap: use only when the reticle is on the pocket strap.
+If the local crop does not distinguish the exact sub-part, prefer FLA and keep needs_review true rather than guessing FLT/FLP/FLS.`
+        : "";
+
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
 Classify ONLY the physical component directly beneath the surveyor crosshair. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
 
@@ -429,6 +443,7 @@ Evidence priority is strict:
 
 A damage-area box or damage extent is for damage size/location and must NEVER be used as the component target. A large panel occupying most of the full image must not override a smaller component directly under the crosshair.
 ${gpDoorHardwareGuidance}
+${gpStructuralSpecificityGuidance}
 ${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}. This is weak context only.` : "No confirmed overview position is available."}
 ${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this only as weak structural-position context. Do not choose a component from the location code alone.` : "No confirmed CEDEX location code is available yet."}
 ${targetPoint ? `The surveyor pinpointed the component target on the original close-up at normalized coordinates x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
