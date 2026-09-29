@@ -5,7 +5,6 @@ import type { CedexRepository, DamageAccuracyRow } from "../src/infrastructure/d
 function row(input:Partial<DamageAccuracyRow>&Pick<DamageAccuracyRow,"final_value">):DamageAccuracyRow{
   return {
     ai_value:null,
-    final_value:input.final_value,
     decision:"CORRECTED",
     confidence:null,
     candidate_codes:null,
@@ -14,7 +13,8 @@ function row(input:Partial<DamageAccuracyRow>&Pick<DamageAccuracyRow,"final_valu
     equipment_type:"GP",
     component_code:"PAA",
     created_at:"2026-09-28T00:00:00.000Z",
-    ...input
+    ...input,
+    final_value:input.final_value
   };
 }
 
