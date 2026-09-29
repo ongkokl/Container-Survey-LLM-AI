@@ -218,6 +218,103 @@ function blobFromCanvas(canvas,type="image/jpeg",quality=.92){
   return new Promise((resolve,reject)=>canvas.toBlob((blob)=>blob?resolve(blob):reject(new Error("Unable to capture image.")),type,quality));
 }
 
+
+function normalizedBoundsFromCorners(corners){
+  if(!Array.isArray(corners)||corners.length!==4)return null;
+  const points=corners.map(p=>({x:Number(p?.x),y:Number(p?.y)}));
+  if(points.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y)))return null;
+  const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+  const box={x:Math.min(...xs),y:Math.min(...ys),width:Math.max(...xs)-Math.min(...xs),height:Math.max(...ys)-Math.min(...ys)};
+  if(box.x<0||box.y<0||box.width<=0||box.height<=0||box.x+box.width>1.001||box.y+box.height>1.001)return null;
+  return box;
+}
+
+function bestEdgePosition(gray,width,height,axis,expectedPx,startPx,endPx,marginPx){
+  const low=Math.max(2,Math.floor(expectedPx-marginPx));
+  const high=Math.min((axis==="x"?width:height)-3,Math.ceil(expectedPx+marginPx));
+  const alongStart=Math.max(2,Math.floor(startPx));
+  const alongEnd=Math.min((axis==="x"?height:width)-3,Math.ceil(endPx));
+  if(high<=low||alongEnd<=alongStart)return null;
+  let best=null;
+  for(let p=low;p<=high;p++){
+    let sum=0,count=0;
+    for(let q=alongStart;q<=alongEnd;q+=2){
+      let grad;
+      if(axis==="x"){
+        const idx=q*width+p;
+        grad=Math.abs(gray[idx+1]-gray[idx-1]);
+      }else{
+        const idx=p*width+q;
+        grad=Math.abs(gray[idx+width]-gray[idx-width]);
+      }
+      sum+=grad;count++;
+    }
+    const raw=count?sum/count:0;
+    const distance=Math.abs(p-expectedPx)/Math.max(1,marginPx);
+    const score=raw*(1-Math.min(0.35,distance*0.35));
+    if(!best||score>best.score)best={position:p,score,raw};
+  }
+  return best;
+}
+
+export function estimateFixedFaceBoundsFromGray(gray,width,height,corners){
+  const expected=normalizedBoundsFromCorners(corners);
+  if(!expected||!gray||gray.length!==width*height||width<40||height<40)return null;
+
+  const x0=expected.x*width,x1=(expected.x+expected.width)*width;
+  const y0=expected.y*height,y1=(expected.y+expected.height)*height;
+  const xMargin=Math.max(4,expected.width*width*0.08);
+  const yMargin=Math.max(4,expected.height*height*0.08);
+  const yPad=Math.max(3,(y1-y0)*0.08);
+  const xPad=Math.max(3,(x1-x0)*0.08);
+
+  const left=bestEdgePosition(gray,width,height,"x",x0,y0+yPad,y1-yPad,xMargin);
+  const right=bestEdgePosition(gray,width,height,"x",x1,y0+yPad,y1-yPad,xMargin);
+  const top=bestEdgePosition(gray,width,height,"y",y0,x0+xPad,x1-xPad,yMargin);
+  const bottom=bestEdgePosition(gray,width,height,"y",y1,x0+xPad,x1-xPad,yMargin);
+  if(!left||!right||!top||!bottom)return null;
+
+  const minStrength=Math.min(left.raw,right.raw,top.raw,bottom.raw);
+  const confidence=clamp((minStrength-3)/14);
+  if(confidence<0.18)return null;
+
+  const lx=Math.min(left.position,right.position)/width;
+  const rx=Math.max(left.position,right.position)/width;
+  const ty=Math.min(top.position,bottom.position)/height;
+  const by=Math.max(top.position,bottom.position)/height;
+  if(rx-lx<expected.width*0.72||by-ty<expected.height*0.72)return null;
+
+  return {
+    box:{
+      x:Number(lx.toFixed(6)),
+      y:Number(ty.toFixed(6)),
+      width:Number((rx-lx).toFixed(6)),
+      height:Number((by-ty).toFixed(6))
+    },
+    confidence:Number(confidence.toFixed(3)),
+    source:"FIXED_GEOMETRY_EDGE"
+  };
+}
+
+export function estimateFixedFaceAlignment(image,corners){
+  const naturalWidth=Number(image?.naturalWidth||image?.videoWidth||0);
+  const naturalHeight=Number(image?.naturalHeight||image?.videoHeight||0);
+  if(!naturalWidth||!naturalHeight)return null;
+  const maxWidth=640,maxHeight=480;
+  const scale=Math.min(1,maxWidth/naturalWidth,maxHeight/naturalHeight);
+  const width=Math.max(40,Math.round(naturalWidth*scale));
+  const height=Math.max(40,Math.round(naturalHeight*scale));
+  const canvas=document.createElement("canvas");
+  canvas.width=width;canvas.height=height;
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});
+  if(!ctx)return null;
+  ctx.drawImage(image,0,0,width,height);
+  const data=ctx.getImageData(0,0,width,height).data;
+  const gray=new Uint8Array(width*height);
+  for(let i=0,p=0;i<data.length;i+=4,p++)gray[p]=luminance(data[i],data[i+1],data[i+2]);
+  return estimateFixedFaceBoundsFromGray(gray,width,height,corners);
+}
+
 export function createGuidedCamera(elements){
   const {
     modal,viewport,video,overlay,statusText,qualityBadge,

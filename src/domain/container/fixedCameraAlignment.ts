@@ -1,7 +1,7 @@
 import type { FaceQuad } from "./faceHomography";
 import type { NormalizedBox } from "./locationCode";
 
-export type FixedCameraAlignmentStatus="GREEN"|"AMBER"|"RED";
+export type FixedCameraAlignmentStatus="GREEN"|"AMBER"|"RED"|"UNVERIFIED";
 
 export interface FixedCameraAlignmentResult {
   status:FixedCameraAlignmentStatus;

@@ -287,10 +287,10 @@ export class FixedCameraCalibrationService {
     const detectedBox=validBox(referenceBox);
     if(!detectedBox){
       return {
-        status:"RED" as const,
+        status:"UNVERIFIED" as const,
         verified:false,
         compensationAllowed:false,
-        reason:"Container alignment could not be verified from this overview. Reposition/retake the overview before automatic CEDEX location."
+        reason:"Container alignment could not be independently verified from this overview. Stored fixed-camera calibration will be used and surveyor confirmation is required."
       };
     }
     return assessFixedCameraAlignment(calibration.corners,detectedBox);
@@ -390,7 +390,10 @@ export class FixedCameraCalibrationService {
       damageBox:normalizedDamage,
       endFaceStructure:structure
     });
-    const alignmentReason=alignment?.status==="AMBER"?alignment.reason:null;
+    const alignmentReason=
+      alignment?.status==="AMBER"||alignment?.status==="UNVERIFIED"
+        ?alignment.reason
+        :null;
     return {
       ...result,
       reviewRequired:Boolean(result.reviewRequired)||Boolean(alignmentReason),

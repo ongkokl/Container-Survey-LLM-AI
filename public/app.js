@@ -1,4 +1,4 @@
-import { createGuidedCamera } from "./camera-guidance.js";
+import { createGuidedCamera, estimateFixedFaceAlignment } from "./camera-guidance.js";
 import {
   containedImageRect,
   stagePixelToImageNormalized,
@@ -643,7 +643,7 @@ createFindingBtn.addEventListener("click",async()=>{
     findingMessage.textContent="Finding created from fixed Camera "+camera.id+". Capture the overview reference image.";
     geometryReference.hidden=true;
     geometryReferenceText.textContent="";
-    currentGeometry=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
+    currentGeometry=null;currentFixedCalibration=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
     locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
     locationReferenceQuad=null;faceMarkMode=false;faceMarkPoints=[];faceMarkResumeMode="AREA";
     locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
@@ -669,6 +669,13 @@ createFindingBtn.addEventListener("click",async()=>{
         geometryReference.hidden=false;
       }
     }catch{}
+    try{
+      currentFixedCalibration=await apiJson(
+        "/api/fixed-camera/calibration?findingId="+encodeURIComponent(currentFinding.id)+"&cameraId="+encodeURIComponent(camera.id)
+      );
+    }catch{
+      currentFixedCalibration=null;
+    }
     repairReview.hidden=true;analyseRepairBtn.hidden=true;repairAiCode=null;
     repairRecommendationGenerated=false;repairRecommendationStale=true;currentRepairContext=null;
   }catch(e){findingMessage.textContent=e instanceof Error?e.message:"Unable to create finding.";}
@@ -823,7 +830,10 @@ function fixedAlignmentText(alignment){
     return " · Alignment AMBER: small position difference automatically compensated; verify the suggested location.";
   }
   if(alignment.status==="RED"){
-    return " · Alignment RED: container is outside the calibrated tolerance; reposition/retake before automatic location.";
+    return " · Alignment RED: a container face was detected outside the calibrated tolerance; reposition/retake before automatic location.";
+  }
+  if(alignment.status==="UNVERIFIED"){
+    return " · Alignment UNVERIFIED: face position could not be independently confirmed; stored calibration is used and surveyor confirmation is required.";
   }
   if(alignment.status==="UNAVAILABLE"){
     return " · Alignment unavailable until this camera/geometry profile is calibrated.";
@@ -1288,6 +1298,17 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
     setOverviewMarkMode("AREA");
     tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible structural damage area…";
     try{
+      if(currentFixedCalibration?.available&&Array.isArray(currentFixedCalibration.corners)){
+        const edgeAlignment=estimateFixedFaceAlignment(overviewPreview,currentFixedCalibration.corners);
+        if(edgeAlignment?.box){
+          overviewCaptureMeta={
+            ...(overviewCaptureMeta??{}),
+            fixedAlignmentReferenceBox:edgeAlignment.box,
+            fixedAlignmentConfidence:edgeAlignment.confidence,
+            fixedAlignmentSource:edgeAlignment.source
+          };
+        }
+      }
       const upload=await compressForOcr(overviewFile);
       const dimensions=await imageDimensions(upload,overviewPreview);
       const form=new FormData();
