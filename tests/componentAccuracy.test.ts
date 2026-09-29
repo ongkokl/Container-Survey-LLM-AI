@@ -55,6 +55,24 @@ describe("component accuracy benchmark",()=>{
           classificationAllowedComponentCount:39,
           allowedComponentCount:39
         })
+      }),
+      row({
+        ai_value:"PAA",final_value:"CFG",decision:"CORRECTED",confidence:0.85,
+        candidate_codes:"PAA|RLA|CPA",
+        request_context_json:JSON.stringify({
+          componentFamilyFallbackUsed:true,
+          classificationAllowedComponentCount:39,
+          allowedComponentCount:39
+        })
+      }),
+      row({
+        ai_value:"PAA",final_value:"CPO",decision:"CORRECTED",confidence:0.82,
+        candidate_codes:"PAA|RLA|RDP",
+        request_context_json:JSON.stringify({
+          componentFamilyFallbackUsed:true,
+          classificationAllowedComponentCount:39,
+          allowedComponentCount:39
+        })
       })
     ];
     const repo={
@@ -64,18 +82,23 @@ describe("component accuracy benchmark",()=>{
     const report=await new ComponentAccuracyService(repo).report();
 
     expect(report.source).toBe("SURVEYOR_CONFIRMED_COMPONENT_DECISIONS");
-    expect(report.focus.samples).toBe(4);
-    expect(report.focus.top1Accuracy).toBe(0.5);
-    expect(report.focus.top3HitRate).toBe(1);
+    expect(report.focus.samples).toBe(6);
+    expect(report.focus.top1Accuracy).toBe(0.3333);
+    expect(report.focus.top3HitRate).toBe(0.6667);
     expect(report.familyShortlist.narrowed.samples).toBe(2);
     expect(report.familyShortlist.narrowed.top1Accuracy).toBe(0.5);
-    expect(report.familyShortlist.fallback.samples).toBe(2);
-    expect(report.familyShortlist.fallback.top1Accuracy).toBe(0.5);
-    expect(report.familyShortlist.averageClassificationAllowedCount).toBe(22);
+    expect(report.familyShortlist.fallback.samples).toBe(4);
+    expect(report.familyShortlist.fallback.top1Accuracy).toBe(0.25);
+    expect(report.familyShortlist.averageClassificationAllowedCount).toBeCloseTo(27.6667,4);
     expect(report.familyShortlist.averageFullAllowedCount).toBe(39);
     expect(report.confusions).toContainEqual({expectedCode:"HWR",aiCode:"HWH",count:1});
     expect(report.confusions).toContainEqual({expectedCode:"LBR",aiCode:"LBG",count:1});
+    expect(report.confusions).toContainEqual({expectedCode:"CFG",aiCode:"PAA",count:1});
+    expect(report.confusions).toContainEqual({expectedCode:"CPO",aiCode:"PAA",count:1});
     expect(report.perCode.find(item=>item.code==="PAA")?.samples).toBe(1);
+    expect(report.perCode.find(item=>item.code==="CFG")?.samples).toBe(1);
+    expect(report.perCode.find(item=>item.code==="CPO")?.samples).toBe(1);
+    expect(report.perCode.find(item=>item.code==="CPA")?.samples).toBe(0);
     expect(report.benchmarkReady).toBe(false);
   });
 
