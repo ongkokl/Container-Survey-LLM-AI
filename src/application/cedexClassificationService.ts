@@ -43,7 +43,7 @@ type ComponentFamily = GpDoorFamily | GpStructuralFamily;
 const GP_STRUCTURAL_FAMILY_CODES: Record<Exclude<GpStructuralFamily, "UNKNOWN"|"PANEL_SURFACE"|"FITTED_COMPONENT">, readonly string[]> = {
   CORNER_FITTING: ["CFG"],
   CORNER_POST: ["CPA","CPI","CPJ","CPL","CPO"],
-  RAIL_EDGE: ["RLA","RLG","RDP","RCI","HEP","RCG"]
+  RAIL_EDGE: ["RLA","RLG","RDP","RCI","HEP","RCG","RTL"]
 };
 
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
@@ -227,7 +227,7 @@ export class CedexClassificationService {
     const allVisualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
       .filter(rule => fullAllowedSet.has(rule.component_code));
 
-    const structuralFace=["LEFT","RIGHT","FRONT","ROOF","FLOOR"].includes(context.container_face);
+    const structuralFace=["LEFT","RIGHT","FRONT","ROOF"].includes(context.container_face);
     const componentFamilyScope: "GP_DOOR"|"GP_STRUCTURAL"|null =
       equipment === "GP"
         ? context.container_face === "DOOR"
@@ -239,7 +239,7 @@ export class CedexClassificationService {
     const familyInferenceEligible =
       Boolean(componentFamilyScope) &&
       fullAllowedCodes.length > (componentFamilyScope === "GP_DOOR" ? COMPONENT_FAMILY_MIN_ALLOWED : 3) &&
-      Boolean(componentTargetImage || targetPoint);
+      Boolean(componentTargetImage || (componentFamilyScope === "GP_DOOR" && targetPoint));
     let componentFamilyInferenceUsed = false;
     let componentFamily: ComponentFamily | null = null;
     let componentFamilyConfidence: number | null = null;
@@ -473,6 +473,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       localEvidencePriorityUsed: Boolean(componentTargetImage),
       targetPointUsed: Boolean(targetPoint),
       locationContextUsed: Boolean(context.final_location_code),
+      componentFamilyScope,
       componentFamily,
       componentFamilyConfidence,
       componentFamilyNarrowingUsed,
