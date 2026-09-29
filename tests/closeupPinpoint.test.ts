@@ -33,16 +33,20 @@ describe("close-up pinpoint targeting",()=>{
     const ai={run:vi.fn(async(_model:string,input:unknown)=>{
       const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
       const prompt=String(request.messages[0].content[0].text??"");
-      expect(prompt).toContain("surveyor pinpointed the target");
+      expect(prompt).toContain("surveyor pinpointed the component target");
       expect(prompt).toContain("x=0.4200, y=0.3700");
       expect(prompt).toContain("Confirmed CEDEX location from the overview workflow: RB24");
-      expect(prompt).toContain("supporting structural-position context only");
+      expect(prompt).toContain("weak structural-position context");
       expect(prompt).toContain("Do not choose a component from the location code alone");
-      expect(prompt).toContain("fine cyan laser reticle");
+      expect(prompt).toContain("fine cyan reticle");
       expect(prompt).toContain("reticle is an overlay");
-      expect(prompt).not.toContain("damage box");
-      const images=request.messages[0].content.filter(item=>item.type==="image_url");
+      expect(prompt).toContain("damage-area box or damage extent is for damage size/location");
+      expect(prompt).toContain("must NEVER be used as the component target");
+      const content=request.messages[0].content;
+      const images=content.filter(item=>item.type==="image_url");
       expect(images).toHaveLength(2);
+      expect(String(content[1]?.text??"")).toContain("PRIMARY LOCAL TARGET");
+      expect(String(content[3]?.text??"")).toContain("SECONDARY CONTEXT");
       return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
         selected_code:"PAA",confidence:0.95,needs_review:false,
         reason:"Target point lies on corrugated panel.",
@@ -58,12 +62,15 @@ describe("close-up pinpoint targeting",()=>{
 
     expect(result.targetPointUsed).toBe(true);
     expect(result.targetCropUsed).toBe(true);
+    expect(result.localEvidencePriorityUsed).toBe(true);
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         targetPoint:{x:0.42,y:0.37},
         componentTargetPhotoId:"target-1",
         targetCropUsed:true,
         targetCropReticle:"FINE_LASER",
+        localEvidencePriorityUsed:true,
+        damageAreaUsedForComponent:false,
         confirmedLocationCode:"RB24",
         locationContextUsed:true
       })
@@ -167,6 +174,7 @@ describe("close-up pinpoint targeting",()=>{
     expect(result.fullAllowedCount).toBe(14);
     expect(result.classificationAllowedCount).toBe(5);
     expect(result.componentFamilyInferenceUsed).toBe(true);
+    expect(result.componentFamilyScope).toBe("GP_DOOR");
     expect(result.componentFamily).toBe("LOCKING_BAR_SUPPORT");
     expect(result.componentFamilyConfidence).toBe(0.94);
     expect(result.componentFamilyNarrowingUsed).toBe(true);
@@ -224,10 +232,170 @@ describe("close-up pinpoint targeting",()=>{
     expect(result.fullAllowedCount).toBe(14);
     expect(result.classificationAllowedCount).toBe(14);
     expect(result.componentFamilyInferenceUsed).toBe(true);
+    expect(result.componentFamilyScope).toBe("GP_DOOR");
     expect(result.componentFamily).toBe("HINGE");
     expect(result.componentFamilyConfidence).toBe(0.61);
     expect(result.componentFamilyNarrowingUsed).toBe(false);
     expect(result.componentFamilyFallbackUsed).toBe(true);
+  });
+
+  it("uses local structural family evidence to suppress PAA when the crosshair is on a corner fitting",async()=>{
+    const componentCodes=[
+      ["PAA","Panel Assembly"],["CFG","Corner Fitting"],["CPO","Corner Post Outer Piece"],
+      ["CPA","Corner Post Assembly"],["RLA","Rail Assembly"],["RLG","Rail Gusset"],
+      ["RDP","Rail Doubling Plate"],["RCI","Rail Corner Protector Recess"],["VRA","Ventilator"],
+      ["FLP","Forklift Pocket Top Plate"],["FLS","Forklift Pocket Strap"],["FLT","Forklift Pocket Whole Transverse Section"],
+      ["FLA","Forklift Pocket Assembly"],["DRH","Door Chain Hook"]
+    ];
+    const saveComponentPrediction=vi.fn(async()=>({predictionId:"pred-cfg"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-cfg",survey_id:"s-cfg",container_face:"RIGHT",final_location_code:"RT1N",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      equipmentForFinding:vi.fn(async()=>"GP"),
+      components:vi.fn(async()=>componentCodes.map(([component_code,component_name])=>({
+        component_code,component_name,standard_version:"2025"
+      }))),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-cfg",r2_key:"closeup-cfg.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {
+          id:"target-cfg",r2_key:"target-cfg.jpg",content_type:"image/jpeg",
+          capture_metadata_json:JSON.stringify({version:"component_target_crop_v3",targetEvidenceMode:"DUAL_SCALE_LOCAL"})
+        };
+        if(role==="FACE_OVERVIEW")return {id:"overview-cfg",r2_key:"overview-cfg.jpg",content_type:"image/jpeg"};
+        return null;
+      }),
+      surveyorComponentPoint:vi.fn(async()=>({x:0.88,y:0.10})),
+      surveyorLocationPoint:vi.fn(async()=>({x:0.92,y:0.10})),
+      componentVisualRules:vi.fn(async()=>[]),
+      saveComponentPrediction
+    } as unknown as CedexRepository;
+
+    const ai={run:vi.fn()
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
+        const prompt=String(request.messages[0].content[0].text??"");
+        expect(prompt).toContain("GP dry-container structural family");
+        expect(prompt).toContain("CORNER_FITTING");
+        expect(prompt).toContain("overall image must not override");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          family:"CORNER_FITTING",confidence:0.96,
+          reason:"The reticle is centred on the block-like ISO corner casting."
+        })}}]};
+      })
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {
+          messages:Array<{content:Array<{type:string;text?:string}>}>,
+          response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}
+        };
+        const prompt=String(request.messages[0].content[0].text??"");
+        expect(prompt).not.toContain("PAA = Panel Assembly");
+        expect(prompt).toContain("CFG = Corner Fitting");
+        const enumCodes=request.response_format.json_schema.schema.properties.selected_code.enum;
+        expect(enumCodes).toEqual(["CFG",null]);
+        const content=request.messages[0].content;
+        expect(String(content[1]?.text??"")).toContain("PRIMARY LOCAL TARGET");
+        expect(String(content[3]?.text??"")).toContain("SECONDARY CONTEXT");
+        expect(content.filter(item=>item.type==="image_url")).toHaveLength(2);
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          selected_code:"CFG",confidence:0.96,needs_review:false,
+          reason:"The crosshair centre is on the corner fitting.",
+          candidates:[{code:"CFG",confidence:0.96,reason:"Block-like corner fitting at the target."}]
+        })}}]};
+      })};
+
+    const result=await new CedexClassificationService(
+      repo,
+      {get:vi.fn(async()=>imageObject())},
+      ai
+    ).analyseComponent("f-cfg");
+
+    expect(ai.run).toHaveBeenCalledTimes(2);
+    expect(result.selectedCode).toBe("CFG");
+    expect(result.componentFamilyScope).toBe("GP_STRUCTURAL");
+    expect(result.componentFamily).toBe("CORNER_FITTING");
+    expect(result.componentFamilyNarrowingUsed).toBe(true);
+    expect(result.classificationAllowedCount).toBe(1);
+    expect(result.classificationAllowedComponents.map(x=>x.component_code)).toEqual(["CFG"]);
+    expect(result.overviewImageUsed).toBe(false);
+    expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      requestContext:expect.objectContaining({
+        componentFamilyScope:"GP_STRUCTURAL",
+        componentFamily:"CORNER_FITTING",
+        componentFamilyNarrowingUsed:true,
+        targetEvidenceMode:"DUAL_SCALE_LOCAL",
+        localEvidencePriorityUsed:true,
+        damageAreaUsedForComponent:false
+      })
+    }));
+  });
+
+  it("narrows a side corner-post target to CPO/CPA instead of the dominant PAA panel",async()=>{
+    const componentCodes=[
+      ["PAA","Panel Assembly"],["CFG","Corner Fitting"],["CPO","Corner Post Outer Piece"],
+      ["CPA","Corner Post Assembly"],["RLA","Rail Assembly"],["RLG","Rail Gusset"],
+      ["RDP","Rail Doubling Plate"],["RCI","Rail Corner Protector Recess"],["VRA","Ventilator"],
+      ["FLP","Forklift Pocket Top Plate"],["FLS","Forklift Pocket Strap"],["FLT","Forklift Pocket Whole Transverse Section"],
+      ["FLA","Forklift Pocket Assembly"],["DRH","Door Chain Hook"]
+    ];
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-cpo",survey_id:"s-cpo",container_face:"RIGHT",final_location_code:"RB1N",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      equipmentForFinding:vi.fn(async()=>"GP"),
+      components:vi.fn(async()=>componentCodes.map(([component_code,component_name])=>({
+        component_code,component_name,standard_version:"2025"
+      }))),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-cpo",r2_key:"closeup-cpo.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {
+          id:"target-cpo",r2_key:"target-cpo.jpg",content_type:"image/jpeg",
+          capture_metadata_json:JSON.stringify({version:"component_target_crop_v3",targetEvidenceMode:"DUAL_SCALE_LOCAL"})
+        };
+        return null;
+      }),
+      surveyorComponentPoint:vi.fn(async()=>({x:0.86,y:0.46})),
+      surveyorLocationPoint:vi.fn(async()=>null),
+      componentVisualRules:vi.fn(async()=>[]),
+      saveComponentPrediction:vi.fn(async()=>({predictionId:"pred-cpo"}))
+    } as unknown as CedexRepository;
+
+    const ai={run:vi.fn()
+      .mockImplementationOnce(async()=>({choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        family:"CORNER_POST",confidence:0.93,
+        reason:"The reticle is centred on the vertical corner-post structure."
+      })}}]}))
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {
+          response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}
+        };
+        const enumCodes=request.response_format.json_schema.schema.properties.selected_code.enum;
+        expect(enumCodes).toContain("CPO");
+        expect(enumCodes).toContain("CPA");
+        expect(enumCodes).not.toContain("PAA");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          selected_code:"CPO",confidence:0.9,needs_review:false,
+          reason:"The crosshair centre is on the outer vertical corner-post piece.",
+          candidates:[
+            {code:"CPO",confidence:0.9,reason:"Outer post surface."},
+            {code:"CPA",confidence:0.1,reason:"Assembly-level alternative."}
+          ]
+        })}}]};
+      })};
+
+    const result=await new CedexClassificationService(
+      repo,
+      {get:vi.fn(async()=>imageObject())},
+      ai
+    ).analyseComponent("f-cpo");
+
+    expect(result.selectedCode).toBe("CPO");
+    expect(result.componentFamilyScope).toBe("GP_STRUCTURAL");
+    expect(result.componentFamily).toBe("CORNER_POST");
+    expect(result.componentFamilyNarrowingUsed).toBe(true);
+    expect(result.classificationAllowedComponents.map(x=>x.component_code).sort()).toEqual(["CPA","CPO"]);
   });
 
   it("uses the same pinpoint as the primary target for damage classification",async()=>{
