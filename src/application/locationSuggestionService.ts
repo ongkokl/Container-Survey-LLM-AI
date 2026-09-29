@@ -102,7 +102,7 @@ export class LocationSuggestionService{
         input.file,
         context.container_face,
         null,
-        {skipDoorDetection:true,skipReferenceDetection:false}
+        {skipDoorDetection:true,skipReferenceDetection:!calibration.available}
       );
       const alignment=await calibrationService.alignment(
         input.findingId,
