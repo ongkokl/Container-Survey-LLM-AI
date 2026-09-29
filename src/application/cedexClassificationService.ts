@@ -29,6 +29,23 @@ const GP_DOOR_FAMILY_CODES: Record<Exclude<GpDoorFamily, "UNKNOWN">, readonly st
   DOOR_ACCESSORY: ["DHC","DHR","DPL","DRH","DRT","MPD"]
 };
 
+const GP_STRUCTURAL_FAMILIES = [
+  "CORNER_FITTING",
+  "CORNER_POST",
+  "PANEL_SURFACE",
+  "RAIL_EDGE",
+  "FITTED_COMPONENT",
+  "UNKNOWN"
+] as const;
+type GpStructuralFamily = typeof GP_STRUCTURAL_FAMILIES[number];
+type ComponentFamily = GpDoorFamily | GpStructuralFamily;
+
+const GP_STRUCTURAL_FAMILY_CODES: Record<Exclude<GpStructuralFamily, "UNKNOWN"|"PANEL_SURFACE"|"FITTED_COMPONENT">, readonly string[]> = {
+  CORNER_FITTING: ["CFG"],
+  CORNER_POST: ["CPA","CPI","CPJ","CPL","CPO"],
+  RAIL_EDGE: ["RLA","RLG","RDP","RCI","HEP","RCG","RTL"]
+};
+
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
@@ -126,6 +143,10 @@ function isGpDoorFamily(value: unknown): value is GpDoorFamily {
   return typeof value === "string" && (GP_DOOR_FAMILIES as readonly string[]).includes(value);
 }
 
+function isGpStructuralFamily(value: unknown): value is GpStructuralFamily {
+  return typeof value === "string" && (GP_STRUCTURAL_FAMILIES as readonly string[]).includes(value);
+}
+
 function gpDoorFamilyShortlist(
   family: GpDoorFamily,
   allowedCodes: string[],
@@ -139,6 +160,15 @@ function gpDoorFamilyShortlist(
       if (code.length === 3) selected.add(code);
     }
   }
+  return allowedCodes.filter(code => selected.has(code));
+}
+
+function gpStructuralFamilyShortlist(
+  family: GpStructuralFamily,
+  allowedCodes: string[]
+) {
+  if (family === "UNKNOWN" || family === "PANEL_SURFACE" || family === "FITTED_COMPONENT") return [];
+  const selected = new Set<string>(GP_STRUCTURAL_FAMILY_CODES[family]);
   return allowedCodes.filter(code => selected.has(code));
 }
 
@@ -197,21 +227,30 @@ export class CedexClassificationService {
     const allVisualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
       .filter(rule => fullAllowedSet.has(rule.component_code));
 
+    const structuralFace=["LEFT","RIGHT","FRONT","ROOF"].includes(context.container_face);
+    const componentFamilyScope: "GP_DOOR"|"GP_STRUCTURAL"|null =
+      equipment === "GP"
+        ? context.container_face === "DOOR"
+          ? "GP_DOOR"
+          : structuralFace
+            ? "GP_STRUCTURAL"
+            : null
+        : null;
     const familyInferenceEligible =
-      equipment === "GP" &&
-      context.container_face === "DOOR" &&
-      fullAllowedCodes.length > COMPONENT_FAMILY_MIN_ALLOWED &&
-      Boolean(componentTargetImage || targetPoint);
+      Boolean(componentFamilyScope) &&
+      fullAllowedCodes.length > (componentFamilyScope === "GP_DOOR" ? COMPONENT_FAMILY_MIN_ALLOWED : 3) &&
+      Boolean(componentTargetImage || (componentFamilyScope === "GP_DOOR" && targetPoint));
     let componentFamilyInferenceUsed = false;
-    let componentFamily: GpDoorFamily | null = null;
+    let componentFamily: ComponentFamily | null = null;
     let componentFamilyConfidence: number | null = null;
     let componentFamilyReason: string | null = null;
     let componentFamilyNarrowingUsed = false;
     let classificationAllowed = allowed;
 
-    if (familyInferenceEligible) {
+    if (familyInferenceEligible && componentFamilyScope) {
       componentFamilyInferenceUsed = true;
-      const familyPrompt = `Identify the local GP dry-container DOOR assembly family directly beneath the surveyor target.
+      const familyPrompt = componentFamilyScope === "GP_DOOR"
+        ? `Identify the local GP dry-container DOOR assembly family directly beneath the surveyor target.
 The exact reticle centre / numeric pinpoint is the target; surrounding structure is context only.
 Choose one family:
 - LOCKING_BAR_SUPPORT: locking-bar rod support area, bracket, guide, fastening/mounting hardware.
@@ -224,6 +263,17 @@ Choose one family:
 - DOOR_ACCESSORY: door stop/slam plate, holdback chain/cable, data plate or similar accessory.
 - UNKNOWN: target is unclear or lies between families.
 Do not identify the CEDEX component code yet. If the visual evidence is ambiguous, choose UNKNOWN rather than guessing.
+${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}.` : ""}`
+        : `Identify the local GP dry-container structural family directly beneath the surveyor crosshair on the ${context.container_face} view.
+Use the local target evidence only. The crosshair centre is authoritative; a large nearby panel or the overall image must not override the object directly under the crosshair.
+Choose one family:
+- CORNER_FITTING: the block-like ISO corner casting/fitting at a container corner.
+- CORNER_POST: the vertical corner-post assembly or one of its inner/outer/J-bar/hinge-lug pieces.
+- PANEL_SURFACE: broad corrugated sheet/panel surface.
+- RAIL_EDGE: a distinct structural rail, rail gusset/doubling/recess, header extension or roof-corner gusset.
+- FITTED_COMPONENT: a fitted item such as a ventilator, marking/stripe or another local accessory.
+- UNKNOWN: the local target is unclear or lies between families.
+Do not identify the exact CEDEX component code yet. If the local evidence is ambiguous, choose UNKNOWN rather than guessing.
 ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}.` : ""}`;
 
       const familyContent: Array<Record<string, unknown>> = [
@@ -231,19 +281,24 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
         {
           type: "text",
           text: componentTargetImage
-            ? "Pinpoint crop: the fine cyan reticle centre is the exact target."
-            : "Full close-up: use the numeric pinpoint as the exact target."
+            ? "Local target image: LEFT half is a tight crop and RIGHT half is a medium crop. The fine cyan reticle centre in both halves marks the same exact physical target. Decide from the reticle centre first."
+            : "Full close-up fallback: use the numeric pinpoint as the exact target and ignore dominant surrounding objects."
         },
         { type: "image_url", image_url: { url: componentTargetImage ?? image } }
       ];
+      const familyEnum = componentFamilyScope === "GP_DOOR"
+        ? GP_DOOR_FAMILIES
+        : GP_STRUCTURAL_FAMILIES;
 
       try {
         componentLog("FAMILY_REQUEST", {
           traceId,
           findingId,
           model: MODEL,
+          componentFamilyScope,
           fullAllowedCount: fullAllowedCodes.length,
-          hasTargetCrop: Boolean(componentTargetImage)
+          hasTargetCrop: Boolean(componentTargetImage),
+          targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null
         });
         const familyRaw = await this.ai.run(MODEL, {
           messages: [{ role: "user", content: familyContent }],
@@ -253,12 +308,14 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
           response_format: {
             type: "json_schema",
             json_schema: {
-              name: "gp_door_component_family",
+              name: componentFamilyScope === "GP_DOOR"
+                ? "gp_door_component_family"
+                : "gp_structural_component_family",
               strict: true,
               schema: {
                 type: "object",
                 properties: {
-                  family: { type: "string", enum: GP_DOOR_FAMILIES },
+                  family: { type: "string", enum: familyEnum },
                   confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
                   reason: { type: "string" }
                 },
@@ -269,17 +326,27 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
           }
         });
         const parsedFamily = parseFamilyJson(familyRaw);
-        if (parsedFamily && isGpDoorFamily(parsedFamily.family) && validConfidence(parsedFamily.confidence) && typeof parsedFamily.reason === "string") {
-          componentFamily = parsedFamily.family;
+        const familyValid = componentFamilyScope === "GP_DOOR"
+          ? isGpDoorFamily(parsedFamily?.family)
+          : isGpStructuralFamily(parsedFamily?.family);
+        if (parsedFamily && familyValid && validConfidence(parsedFamily.confidence) && typeof parsedFamily.reason === "string") {
+          componentFamily = parsedFamily.family as ComponentFamily;
           componentFamilyConfidence = confidence(parsedFamily.confidence);
           componentFamilyReason = parsedFamily.reason.trim() || null;
+          const minConfidence =
+            componentFamilyScope === "GP_STRUCTURAL" && componentFamily === "CORNER_FITTING"
+              ? 0.9
+              : COMPONENT_FAMILY_MIN_CONFIDENCE;
           if (
             componentFamily !== "UNKNOWN" &&
             componentFamilyConfidence !== null &&
-            componentFamilyConfidence >= COMPONENT_FAMILY_MIN_CONFIDENCE
+            componentFamilyConfidence >= minConfidence
           ) {
-            const shortlistCodes = gpDoorFamilyShortlist(componentFamily, fullAllowedCodes, allVisualRules);
-            if (shortlistCodes.length >= 2 && shortlistCodes.length < fullAllowedCodes.length) {
+            const shortlistCodes = componentFamilyScope === "GP_DOOR"
+              ? gpDoorFamilyShortlist(componentFamily as GpDoorFamily, fullAllowedCodes, allVisualRules)
+              : gpStructuralFamilyShortlist(componentFamily as GpStructuralFamily, fullAllowedCodes);
+            const minimumShortlist = componentFamilyScope === "GP_DOOR" ? 2 : 1;
+            if (shortlistCodes.length >= minimumShortlist && shortlistCodes.length < fullAllowedCodes.length) {
               const shortlistSet = new Set(shortlistCodes);
               classificationAllowed = allowed.filter(item => shortlistSet.has(item.component_code));
               componentFamilyNarrowingUsed = true;
@@ -289,6 +356,7 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
         componentLog("FAMILY_RESPONSE", {
           traceId,
           findingId,
+          componentFamilyScope,
           componentFamily,
           componentFamilyConfidence,
           componentFamilyReason,
@@ -299,6 +367,7 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
         componentLog("FAMILY_FALLBACK", {
           traceId,
           findingId,
+          componentFamilyScope,
           reason: error instanceof Error ? error.message : "Family classifier unavailable"
         });
       }
@@ -319,6 +388,8 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
       targetPoint,
       componentTargetPhotoId: componentTargetPhoto?.id ?? null,
       targetCropAvailable: Boolean(componentTargetImage),
+      targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null,
+      targetCropVersion: componentTargetMetadata?.version ?? null,
       coordinateSpace: componentTargetMetadata?.coordinateSpace ?? null,
       pointerStagePoint,
       imageNormalizedPoint,
@@ -331,6 +402,7 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
       allowedCount: allowedCodes.length,
       allowedCodes,
       componentFamilyInferenceUsed,
+      componentFamilyScope,
       componentFamily,
       componentFamilyConfidence,
       componentFamilyNarrowingUsed,
@@ -346,35 +418,44 @@ Special HWH/HWR rule: HWH is the specific Huckbolt code. A round fastener head b
       : "";
 
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
-Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
+Classify ONLY the physical component directly beneath the surveyor crosshair. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
+
+Evidence priority is strict:
+1. Local crosshair evidence — strongest. If supplied, the LEFT half is a tight crop and the RIGHT half is a medium crop of the same target.
+2. The exact numeric crosshair coordinate.
+3. The full close-up — surrounding assembly context only.
+4. D1 visual rules and recorded container face.
+5. Overview position/location — weak supporting context only.
+
+A damage-area box or damage extent is for damage size/location and must NEVER be used as the component target. A large panel occupying most of the full image must not override a smaller component directly under the crosshair.
 ${gpDoorHardwareGuidance}
-${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
-${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this as supporting structural-position context only. Do not choose a component from the location code alone. If the close-up visual evidence conflicts with the location context, set needs_review true or abstain rather than forcing a component code.` : "No confirmed CEDEX location code is available yet; rely on the recorded face, overview context and close-up evidence."}
-${targetPoint ? `The surveyor pinpointed the target on the original close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
-${componentTargetImage ? "A second AI-only target crop is supplied after the full close-up. Its fine cyan laser reticle marks the exact surveyor-selected point. The reticle is an overlay, not part of the container. Give the reticle centre priority when deciding which adjacent physical component is targeted." : "No AI target crop is available; use the numeric pinpoint and full close-up."}
+${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}. This is weak context only.` : "No confirmed overview position is available."}
+${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this only as weak structural-position context. Do not choose a component from the location code alone.` : "No confirmed CEDEX location code is available yet."}
+${targetPoint ? `The surveyor pinpointed the component target on the original close-up at normalized coordinates x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
+${componentTargetImage ? "The local target image is supplied FIRST. Its fine cyan reticle marks the same exact surveyor-selected point in a tight crop and a medium crop. The reticle is an overlay, not part of the container. Resolve the object directly beneath the reticle before considering the full close-up." : "No local target crop is available; use the numeric pinpoint and full close-up carefully."}
 
 ${guidance}
 
-If the target cannot be identified reliably or the recorded face conflicts with the image, return selected_code null and needs_review true.
+If the local target cannot be identified reliably or evidence conflicts, return selected_code null and needs_review true rather than allowing the dominant full-image object to decide.
 Allowed codes:
 ${allowedText}
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (one short visual sentence), and candidates (at most 3 objects with code, confidence and reason). Do not explain your reasoning outside the JSON.`;
 
     const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
-    if (overviewImage) {
+    if (componentTargetImage) {
       content.push(
-        { type: "text", text: "Overview image: use this only to understand where the confirmed damage point sits on the recorded container face." },
-        { type: "image_url", image_url: { url: overviewImage } }
+        { type: "text", text: "PRIMARY LOCAL TARGET: left = tight crop, right = medium crop. The fine cyan reticle centre in both halves is the exact component target." },
+        { type: "image_url", image_url: { url: componentTargetImage } }
       );
     }
     content.push(
-      { type: "text", text: "Full close-up image: use this for surrounding assembly context." },
+      { type: "text", text: "SECONDARY CONTEXT: full close-up. Use only to understand how the locally targeted object connects to surrounding structure." },
       { type: "image_url", image_url: { url: image } }
     );
-    if (componentTargetImage) {
+    if (!componentTargetImage && overviewImage) {
       content.push(
-        { type: "text", text: "AI-only pinpoint crop: the fine cyan laser reticle centre is the exact surveyor-selected target. Ignore the reticle as a physical object and classify the component directly beneath its centre." },
-        { type: "image_url", image_url: { url: componentTargetImage } }
+        { type: "text", text: "WEAK CONTEXT: overview image. Do not use the dominant object in this image as the component target." },
+        { type: "image_url", image_url: { url: overviewImage } }
       );
     }
 
@@ -384,11 +465,15 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       model: MODEL,
       reasoningEffort: "low",
       maxCompletionTokens: MAX_COMPLETION_TOKENS,
-      hasOverviewImage: Boolean(overviewImage),
+      hasOverviewImage: Boolean(overviewImage && !componentTargetImage),
+      overviewImageSuppressedByLocalTarget: Boolean(overviewImage && componentTargetImage),
       hasCloseupImage: true,
       hasTargetCrop: Boolean(componentTargetImage),
+      targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null,
+      localEvidencePriorityUsed: Boolean(componentTargetImage),
       targetPointUsed: Boolean(targetPoint),
       locationContextUsed: Boolean(context.final_location_code),
+      componentFamilyScope,
       componentFamily,
       componentFamilyConfidence,
       componentFamilyNarrowingUsed,
@@ -511,7 +596,10 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       model: MODEL,
       targetPointUsed: Boolean(targetPoint),
       targetCropUsed: Boolean(componentTargetImage),
+      targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null,
+      localEvidencePriorityUsed: Boolean(componentTargetImage),
       overviewUsed: Boolean(overviewImage && overviewPoint),
+      overviewImageUsed: Boolean(!componentTargetImage && overviewImage),
       overviewZone: zone,
       confirmedLocationCode: context.final_location_code,
       locationContextUsed: Boolean(context.final_location_code),
@@ -519,6 +607,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       visualKnowledgeUsed: visualRules.length > 0,
       visualRuleCount: visualRules.length,
       componentFamilyInferenceUsed,
+      componentFamilyScope,
       componentFamily,
       componentFamilyConfidence,
       componentFamilyReason,
@@ -544,6 +633,10 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         componentTargetPhotoId: componentTargetPhoto?.id ?? null,
         targetCropUsed: Boolean(componentTargetImage),
         targetCropReticle: componentTargetImage ? "FINE_LASER" : null,
+        targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null,
+        targetCropVersion: componentTargetMetadata?.version ?? null,
+        localEvidencePriorityUsed: Boolean(componentTargetImage),
+        damageAreaUsedForComponent: false,
         coordinateSpace: componentTargetMetadata?.coordinateSpace ?? null,
         pointerStagePoint,
         imageNormalizedPoint,
@@ -559,6 +652,7 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
         visualRuleCount: visualRules.length,
         visualRuleCodes: [...new Set(visualRules.map(rule => rule.component_code))],
         componentFamilyInferenceUsed,
+        componentFamilyScope,
         componentFamily,
         componentFamilyConfidence,
         componentFamilyReason,
