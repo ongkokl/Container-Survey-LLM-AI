@@ -388,6 +388,8 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
       targetPoint,
       componentTargetPhotoId: componentTargetPhoto?.id ?? null,
       targetCropAvailable: Boolean(componentTargetImage),
+      targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null,
+      targetCropVersion: componentTargetMetadata?.version ?? null,
       coordinateSpace: componentTargetMetadata?.coordinateSpace ?? null,
       pointerStagePoint,
       imageNormalizedPoint,
@@ -400,6 +402,8 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
       allowedCount: allowedCodes.length,
       allowedCodes,
       componentFamilyInferenceUsed,
+      componentFamilyScope,
+      componentFamilyScope,
       componentFamily,
       componentFamilyConfidence,
       componentFamilyNarrowingUsed,
@@ -415,35 +419,44 @@ Special HWH/HWR rule: HWH is the specific Huckbolt code. A round fastener head b
       : "";
 
     const prompt = `You are assisting a shipping-container surveyor. Equipment type: ${equipment}. Recorded container face: ${context.container_face}.
-Classify ONLY the physical component containing the target damage. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
+Classify ONLY the physical component directly beneath the surveyor crosshair. The allowed list has already been restricted to components verified as physically applicable to the recorded container face. Choose ONLY from the allowed component codes. Never invent a code.
+
+Evidence priority is strict:
+1. Local crosshair evidence — strongest. If supplied, the LEFT half is a tight crop and the RIGHT half is a medium crop of the same target.
+2. The exact numeric crosshair coordinate.
+3. The full close-up — surrounding assembly context only.
+4. D1 visual rules and recorded container face.
+5. Overview position/location — weak supporting context only.
+
+A damage-area box or damage extent is for damage size/location and must NEVER be used as the component target. A large panel occupying most of the full image must not override a smaller component directly under the crosshair.
 ${gpDoorHardwareGuidance}
-${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}.` : "No confirmed overview position is available."}
-${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this as supporting structural-position context only. Do not choose a component from the location code alone. If the close-up visual evidence conflicts with the location context, set needs_review true or abstain rather than forcing a component code.` : "No confirmed CEDEX location code is available yet; rely on the recorded face, overview context and close-up evidence."}
-${targetPoint ? `The surveyor pinpointed the target on the original close-up image at normalized coordinates from the top-left: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point, using the surrounding structure as context.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
-${componentTargetImage ? "A second AI-only target crop is supplied after the full close-up. Its fine cyan laser reticle marks the exact surveyor-selected point. The reticle is an overlay, not part of the container. Give the reticle centre priority when deciding which adjacent physical component is targeted." : "No AI target crop is available; use the numeric pinpoint and full close-up."}
+${overviewPoint ? `The surveyor's confirmed damage position on the overview image is x=${overviewPoint.x.toFixed(4)}, y=${overviewPoint.y.toFixed(4)} (normalized from top-left). Heuristic overview zone: ${zone}. This is weak context only.` : "No confirmed overview position is available."}
+${context.final_location_code ? `Confirmed CEDEX location from the overview workflow: ${context.final_location_code}. Use this only as weak structural-position context. Do not choose a component from the location code alone.` : "No confirmed CEDEX location code is available yet."}
+${targetPoint ? `The surveyor pinpointed the component target on the original close-up at normalized coordinates x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}. Identify the physical component containing this exact point.` : "No close-up target point is available. If the target component is ambiguous, abstain."}
+${componentTargetImage ? "The local target image is supplied FIRST. Its fine cyan reticle marks the same exact surveyor-selected point in a tight crop and a medium crop. The reticle is an overlay, not part of the container. Resolve the object directly beneath the reticle before considering the full close-up." : "No local target crop is available; use the numeric pinpoint and full close-up carefully."}
 
 ${guidance}
 
-If the target cannot be identified reliably or the recorded face conflicts with the image, return selected_code null and needs_review true.
+If the local target cannot be identified reliably or evidence conflicts, return selected_code null and needs_review true rather than allowing the dominant full-image object to decide.
 Allowed codes:
 ${allowedText}
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (one short visual sentence), and candidates (at most 3 objects with code, confidence and reason). Do not explain your reasoning outside the JSON.`;
 
     const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
-    if (overviewImage) {
+    if (componentTargetImage) {
       content.push(
-        { type: "text", text: "Overview image: use this only to understand where the confirmed damage point sits on the recorded container face." },
-        { type: "image_url", image_url: { url: overviewImage } }
+        { type: "text", text: "PRIMARY LOCAL TARGET: left = tight crop, right = medium crop. The fine cyan reticle centre in both halves is the exact component target." },
+        { type: "image_url", image_url: { url: componentTargetImage } }
       );
     }
     content.push(
-      { type: "text", text: "Full close-up image: use this for surrounding assembly context." },
+      { type: "text", text: "SECONDARY CONTEXT: full close-up. Use only to understand how the locally targeted object connects to surrounding structure." },
       { type: "image_url", image_url: { url: image } }
     );
-    if (componentTargetImage) {
+    if (!componentTargetImage && overviewImage) {
       content.push(
-        { type: "text", text: "AI-only pinpoint crop: the fine cyan laser reticle centre is the exact surveyor-selected target. Ignore the reticle as a physical object and classify the component directly beneath its centre." },
-        { type: "image_url", image_url: { url: componentTargetImage } }
+        { type: "text", text: "WEAK CONTEXT: overview image. Do not use the dominant object in this image as the component target." },
+        { type: "image_url", image_url: { url: overviewImage } }
       );
     }
 
@@ -453,9 +466,12 @@ Return only the final JSON object with selected_code (an allowed code or JSON nu
       model: MODEL,
       reasoningEffort: "low",
       maxCompletionTokens: MAX_COMPLETION_TOKENS,
-      hasOverviewImage: Boolean(overviewImage),
+      hasOverviewImage: Boolean(overviewImage && !componentTargetImage),
+      overviewImageSuppressedByLocalTarget: Boolean(overviewImage && componentTargetImage),
       hasCloseupImage: true,
       hasTargetCrop: Boolean(componentTargetImage),
+      targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null,
+      localEvidencePriorityUsed: Boolean(componentTargetImage),
       targetPointUsed: Boolean(targetPoint),
       locationContextUsed: Boolean(context.final_location_code),
       componentFamily,
