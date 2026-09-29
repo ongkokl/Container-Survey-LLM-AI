@@ -29,6 +29,23 @@ const GP_DOOR_FAMILY_CODES: Record<Exclude<GpDoorFamily, "UNKNOWN">, readonly st
   DOOR_ACCESSORY: ["DHC","DHR","DPL","DRH","DRT","MPD"]
 };
 
+const GP_STRUCTURAL_FAMILIES = [
+  "CORNER_FITTING",
+  "CORNER_POST",
+  "PANEL_SURFACE",
+  "RAIL_EDGE",
+  "FITTED_COMPONENT",
+  "UNKNOWN"
+] as const;
+type GpStructuralFamily = typeof GP_STRUCTURAL_FAMILIES[number];
+type ComponentFamily = GpDoorFamily | GpStructuralFamily;
+
+const GP_STRUCTURAL_FAMILY_CODES: Record<Exclude<GpStructuralFamily, "UNKNOWN"|"PANEL_SURFACE"|"FITTED_COMPONENT">, readonly string[]> = {
+  CORNER_FITTING: ["CFG"],
+  CORNER_POST: ["CPA","CPI","CPJ","CPL","CPO"],
+  RAIL_EDGE: ["RLA","RLG","RDP","RCI","HEP","RCG"]
+};
+
 type AiRunner = { run(model: string, input: unknown): Promise<unknown> };
 type Bucket = { get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null> };
 type AnalysisStatus = "SUGGESTED" | "ABSTAINED" | "INCOMPLETE" | "INVALID_RESPONSE";
@@ -126,6 +143,10 @@ function isGpDoorFamily(value: unknown): value is GpDoorFamily {
   return typeof value === "string" && (GP_DOOR_FAMILIES as readonly string[]).includes(value);
 }
 
+function isGpStructuralFamily(value: unknown): value is GpStructuralFamily {
+  return typeof value === "string" && (GP_STRUCTURAL_FAMILIES as readonly string[]).includes(value);
+}
+
 function gpDoorFamilyShortlist(
   family: GpDoorFamily,
   allowedCodes: string[],
@@ -139,6 +160,15 @@ function gpDoorFamilyShortlist(
       if (code.length === 3) selected.add(code);
     }
   }
+  return allowedCodes.filter(code => selected.has(code));
+}
+
+function gpStructuralFamilyShortlist(
+  family: GpStructuralFamily,
+  allowedCodes: string[]
+) {
+  if (family === "UNKNOWN" || family === "PANEL_SURFACE" || family === "FITTED_COMPONENT") return [];
+  const selected = new Set<string>(GP_STRUCTURAL_FAMILY_CODES[family]);
   return allowedCodes.filter(code => selected.has(code));
 }
 
