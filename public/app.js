@@ -2027,7 +2027,7 @@ repairSelect.addEventListener("change",()=>{
 });
 
 confirmRepairBtn.addEventListener("click",async()=>{
-  if(!currentFinding||!repairSelect.value)return;
+  if(!currentFinding||!repairSelect.value||repairRecommendationStale)return;
   if(!repairDentDirectionWrap.hidden&&repairDepthCm.value!==""&&repairDirection.value==="UNKNOWN"){
     repairDepthCriterion.textContent="Select inward or outward before saving a measured dent depth.";
     updateRepairConfirmState();
