@@ -260,7 +260,7 @@ describe("fixed camera calibration service",()=>{
     expect(result.reason).toMatch(/outside the calibrated tolerance/i);
   });
 
-  it("blocks automatic CEDEX location when required alignment cannot be detected",async()=>{
+  it("keeps stored calibration with surveyor review when alignment cannot be independently verified",async()=>{
     const service=new FixedCameraCalibrationService(
       repoWithCalibration(stored("R","RIGHT","LEFT"),"RIGHT")
     );
@@ -270,9 +270,10 @@ describe("fixed camera calibration service",()=>{
       alignmentReferenceBox:null,
       requireAlignment:true
     });
-    expect(result.alignment?.status).toBe("RED");
-    expect(result.code).toBeNull();
-    expect(result.reason).toMatch(/could not be verified/i);
+    expect(result.alignment?.status).toBe("UNVERIFIED");
+    expect(result.code?.startsWith("R")).toBe(true);
+    expect(result.reviewRequired).toBe(true);
+    expect(result.reason).toMatch(/could not be independently verified/i);
   });
 
 });
