@@ -214,13 +214,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         cameraId?:string;
         damagePoint?:{x:number;y:number}|null;
         damageBox?:{x:number;y:number;width:number;height:number}|null;
+        alignmentReferenceBox?:{x:number;y:number;width:number;height:number}|null;
       }>(request);
       const service=new FixedCameraCalibrationService(new CedexRepository(env.DB));
       return json({ok:true,result:await service.calculate({
         findingId:body.findingId??"",
         cameraId:body.cameraId??"",
         damagePoint:body.damagePoint??null,
-        damageBox:body.damageBox??null
+        damageBox:body.damageBox??null,
+        alignmentReferenceBox:body.alignmentReferenceBox??null,
+        requireAlignment:true
       })});
     } catch(error) {
       return json({ok:false,error:"FIXED_CAMERA_LOCATION_FAILED",message:error instanceof Error?error.message:"Unable to calculate location from fixed camera calibration."},422);
