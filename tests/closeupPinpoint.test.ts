@@ -398,6 +398,105 @@ describe("close-up pinpoint targeting",()=>{
     expect(result.classificationAllowedComponents.map(x=>x.component_code).sort()).toEqual(["CPA","CPO"]);
   });
 
+  it("recognises a side forklift-pocket target before rail/panel classification",async()=>{
+    const componentCodes=[
+      ["PAA","Panel Assembly"],["RLA","Rail Assembly"],["RDP","Rail Doubling Plate"],
+      ["FLA","Forklift Pocket Assembly"],["FLT","Forklift Pocket Whole Transverse Section"],
+      ["FLP","Forklift Pocket Top Plate"],["FLS","Forklift Pocket Strap"],
+      ["CFG","Corner Fitting"],["CPO","Corner Post Outer Piece"],["CPA","Corner Post Assembly"],
+      ["RCI","Rail Corner Protector Recess"],["RLG","Rail Gusset"],["VRA","Ventilator"],["DRH","Door Chain Hook"]
+    ];
+    const saveComponentPrediction=vi.fn(async()=>({predictionId:"pred-fork"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-fork",survey_id:"s-fork",container_face:"LEFT",final_location_code:"LB4N",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      equipmentForFinding:vi.fn(async()=>"GP"),
+      components:vi.fn(async()=>componentCodes.map(([component_code,component_name])=>({
+        component_code,component_name,standard_version:"2025"
+      }))),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-fork",r2_key:"closeup-fork.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {
+          id:"target-fork",r2_key:"target-fork.jpg",content_type:"image/jpeg",
+          capture_metadata_json:JSON.stringify({version:"component_target_crop_v3",targetEvidenceMode:"DUAL_SCALE_LOCAL"})
+        };
+        if(role==="FACE_OVERVIEW")return {id:"overview-fork",r2_key:"overview-fork.jpg",content_type:"image/jpeg"};
+        return null;
+      }),
+      surveyorComponentPoint:vi.fn(async()=>({x:0.34,y:0.83})),
+      surveyorLocationPoint:vi.fn(async()=>({x:0.34,y:0.83})),
+      componentVisualRules:vi.fn(async()=>[]),
+      saveComponentPrediction
+    } as unknown as CedexRepository;
+
+    const ai={run:vi.fn()
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
+        const prompt=String(request.messages[0].content[0].text??"");
+        expect(prompt).toContain("FORKLIFT_POCKET");
+        expect(prompt).toContain("fork-entry pocket/opening");
+        expect(prompt).toContain("do NOT collapse it into a general rail");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          family:"FORKLIFT_POCKET",confidence:0.94,
+          reason:"The reticle is centred on the visible fork-entry pocket opening."
+        })}}]};
+      })
+      .mockImplementationOnce(async(_model:string,input:unknown)=>{
+        const request=input as {
+          messages:Array<{content:Array<{type:string;text?:string}>}>,
+          response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}
+        };
+        const prompt=String(request.messages[0].content[0].text??"");
+        expect(prompt).toContain("GP forklift-pocket family stage");
+        expect(prompt).toContain("FLA = Forklift Pocket Assembly");
+        expect(prompt).toContain("FLT = Forklift Pocket Whole Transverse Section");
+        expect(prompt).toContain("FLP = Forklift Pocket Top Plate");
+        expect(prompt).toContain("FLS = Forklift Pocket Strap");
+        expect(prompt).not.toContain("RLA = Rail Assembly");
+        expect(prompt).not.toContain("PAA = Panel Assembly");
+        expect(prompt).not.toContain("RDP = Rail Doubling Plate");
+        const enumCodes=request.response_format.json_schema.schema.properties.selected_code.enum;
+        expect(enumCodes.filter(Boolean).sort()).toEqual(["FLA","FLP","FLS","FLT"]);
+        expect(enumCodes).not.toContain("RLA");
+        expect(enumCodes).not.toContain("PAA");
+        expect(enumCodes).not.toContain("RDP");
+        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+          selected_code:"FLA",confidence:0.84,needs_review:true,
+          reason:"The target is the forklift-pocket opening generally; the exact sub-member is not distinct.",
+          candidates:[
+            {code:"FLA",confidence:0.84,reason:"Pocket assembly/opening."},
+            {code:"FLT",confidence:0.12,reason:"Possible transverse section."},
+            {code:"FLP",confidence:0.04,reason:"Top plate not clearly isolated."}
+          ]
+        })}}]};
+      })};
+
+    const result=await new CedexClassificationService(
+      repo,
+      {get:vi.fn(async()=>imageObject())},
+      ai
+    ).analyseComponent("f-fork");
+
+    expect(ai.run).toHaveBeenCalledTimes(2);
+    expect(result.selectedCode).toBe("FLA");
+    expect(result.needsReview).toBe(true);
+    expect(result.componentFamilyScope).toBe("GP_STRUCTURAL");
+    expect(result.componentFamily).toBe("FORKLIFT_POCKET");
+    expect(result.componentFamilyNarrowingUsed).toBe(true);
+    expect(result.classificationAllowedComponents.map(x=>x.component_code).sort()).toEqual(["FLA","FLP","FLS","FLT"]);
+    expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      requestContext:expect.objectContaining({
+        componentFamilyScope:"GP_STRUCTURAL",
+        componentFamily:"FORKLIFT_POCKET",
+        componentFamilyNarrowingUsed:true,
+        targetEvidenceMode:"DUAL_SCALE_LOCAL",
+        damageAreaUsedForComponent:false
+      })
+    }));
+  });
+
   it("uses the same pinpoint as the primary target for damage classification",async()=>{
     const saveDamagePrediction=vi.fn(async()=>({predictionId:"pred-2"}));
     const repo={
