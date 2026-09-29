@@ -227,21 +227,30 @@ export class CedexClassificationService {
     const allVisualRules = (await this.repo.componentVisualRules(equipment, context.container_face, zone))
       .filter(rule => fullAllowedSet.has(rule.component_code));
 
+    const structuralFace=["LEFT","RIGHT","FRONT","ROOF","FLOOR"].includes(context.container_face);
+    const componentFamilyScope: "GP_DOOR"|"GP_STRUCTURAL"|null =
+      equipment === "GP"
+        ? context.container_face === "DOOR"
+          ? "GP_DOOR"
+          : structuralFace
+            ? "GP_STRUCTURAL"
+            : null
+        : null;
     const familyInferenceEligible =
-      equipment === "GP" &&
-      context.container_face === "DOOR" &&
-      fullAllowedCodes.length > COMPONENT_FAMILY_MIN_ALLOWED &&
+      Boolean(componentFamilyScope) &&
+      fullAllowedCodes.length > (componentFamilyScope === "GP_DOOR" ? COMPONENT_FAMILY_MIN_ALLOWED : 3) &&
       Boolean(componentTargetImage || targetPoint);
     let componentFamilyInferenceUsed = false;
-    let componentFamily: GpDoorFamily | null = null;
+    let componentFamily: ComponentFamily | null = null;
     let componentFamilyConfidence: number | null = null;
     let componentFamilyReason: string | null = null;
     let componentFamilyNarrowingUsed = false;
     let classificationAllowed = allowed;
 
-    if (familyInferenceEligible) {
+    if (familyInferenceEligible && componentFamilyScope) {
       componentFamilyInferenceUsed = true;
-      const familyPrompt = `Identify the local GP dry-container DOOR assembly family directly beneath the surveyor target.
+      const familyPrompt = componentFamilyScope === "GP_DOOR"
+        ? `Identify the local GP dry-container DOOR assembly family directly beneath the surveyor target.
 The exact reticle centre / numeric pinpoint is the target; surrounding structure is context only.
 Choose one family:
 - LOCKING_BAR_SUPPORT: locking-bar rod support area, bracket, guide, fastening/mounting hardware.
@@ -254,6 +263,17 @@ Choose one family:
 - DOOR_ACCESSORY: door stop/slam plate, holdback chain/cable, data plate or similar accessory.
 - UNKNOWN: target is unclear or lies between families.
 Do not identify the CEDEX component code yet. If the visual evidence is ambiguous, choose UNKNOWN rather than guessing.
+${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}.` : ""}`
+        : `Identify the local GP dry-container structural family directly beneath the surveyor crosshair on the ${context.container_face} view.
+Use the local target evidence only. The crosshair centre is authoritative; a large nearby panel or the overall image must not override the object directly under the crosshair.
+Choose one family:
+- CORNER_FITTING: the block-like ISO corner casting/fitting at a container corner.
+- CORNER_POST: the vertical corner-post assembly or one of its inner/outer/J-bar/hinge-lug pieces.
+- PANEL_SURFACE: broad corrugated sheet/panel surface.
+- RAIL_EDGE: a distinct structural rail, rail gusset/doubling/recess, header extension or roof-corner gusset.
+- FITTED_COMPONENT: a fitted item such as a ventilator, marking/stripe or another local accessory.
+- UNKNOWN: the local target is unclear or lies between families.
+Do not identify the exact CEDEX component code yet. If the local evidence is ambiguous, choose UNKNOWN rather than guessing.
 ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed(4)}, y=${targetPoint.y.toFixed(4)}.` : ""}`;
 
       const familyContent: Array<Record<string, unknown>> = [
@@ -261,19 +281,24 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
         {
           type: "text",
           text: componentTargetImage
-            ? "Pinpoint crop: the fine cyan reticle centre is the exact target."
-            : "Full close-up: use the numeric pinpoint as the exact target."
+            ? "Local target image: LEFT half is a tight crop and RIGHT half is a medium crop. The fine cyan reticle centre in both halves marks the same exact physical target. Decide from the reticle centre first."
+            : "Full close-up fallback: use the numeric pinpoint as the exact target and ignore dominant surrounding objects."
         },
         { type: "image_url", image_url: { url: componentTargetImage ?? image } }
       ];
+      const familyEnum = componentFamilyScope === "GP_DOOR"
+        ? GP_DOOR_FAMILIES
+        : GP_STRUCTURAL_FAMILIES;
 
       try {
         componentLog("FAMILY_REQUEST", {
           traceId,
           findingId,
           model: MODEL,
+          componentFamilyScope,
           fullAllowedCount: fullAllowedCodes.length,
-          hasTargetCrop: Boolean(componentTargetImage)
+          hasTargetCrop: Boolean(componentTargetImage),
+          targetEvidenceMode: componentTargetMetadata?.targetEvidenceMode ?? null
         });
         const familyRaw = await this.ai.run(MODEL, {
           messages: [{ role: "user", content: familyContent }],
@@ -283,12 +308,14 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
           response_format: {
             type: "json_schema",
             json_schema: {
-              name: "gp_door_component_family",
+              name: componentFamilyScope === "GP_DOOR"
+                ? "gp_door_component_family"
+                : "gp_structural_component_family",
               strict: true,
               schema: {
                 type: "object",
                 properties: {
-                  family: { type: "string", enum: GP_DOOR_FAMILIES },
+                  family: { type: "string", enum: familyEnum },
                   confidence: { type: ["number", "null"], minimum: 0, maximum: 1 },
                   reason: { type: "string" }
                 },
@@ -299,17 +326,27 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
           }
         });
         const parsedFamily = parseFamilyJson(familyRaw);
-        if (parsedFamily && isGpDoorFamily(parsedFamily.family) && validConfidence(parsedFamily.confidence) && typeof parsedFamily.reason === "string") {
-          componentFamily = parsedFamily.family;
+        const familyValid = componentFamilyScope === "GP_DOOR"
+          ? isGpDoorFamily(parsedFamily?.family)
+          : isGpStructuralFamily(parsedFamily?.family);
+        if (parsedFamily && familyValid && validConfidence(parsedFamily.confidence) && typeof parsedFamily.reason === "string") {
+          componentFamily = parsedFamily.family as ComponentFamily;
           componentFamilyConfidence = confidence(parsedFamily.confidence);
           componentFamilyReason = parsedFamily.reason.trim() || null;
+          const minConfidence =
+            componentFamilyScope === "GP_STRUCTURAL" && componentFamily === "CORNER_FITTING"
+              ? 0.9
+              : COMPONENT_FAMILY_MIN_CONFIDENCE;
           if (
             componentFamily !== "UNKNOWN" &&
             componentFamilyConfidence !== null &&
-            componentFamilyConfidence >= COMPONENT_FAMILY_MIN_CONFIDENCE
+            componentFamilyConfidence >= minConfidence
           ) {
-            const shortlistCodes = gpDoorFamilyShortlist(componentFamily, fullAllowedCodes, allVisualRules);
-            if (shortlistCodes.length >= 2 && shortlistCodes.length < fullAllowedCodes.length) {
+            const shortlistCodes = componentFamilyScope === "GP_DOOR"
+              ? gpDoorFamilyShortlist(componentFamily as GpDoorFamily, fullAllowedCodes, allVisualRules)
+              : gpStructuralFamilyShortlist(componentFamily as GpStructuralFamily, fullAllowedCodes);
+            const minimumShortlist = componentFamilyScope === "GP_DOOR" ? 2 : 1;
+            if (shortlistCodes.length >= minimumShortlist && shortlistCodes.length < fullAllowedCodes.length) {
               const shortlistSet = new Set(shortlistCodes);
               classificationAllowed = allowed.filter(item => shortlistSet.has(item.component_code));
               componentFamilyNarrowingUsed = true;
@@ -319,6 +356,7 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
         componentLog("FAMILY_RESPONSE", {
           traceId,
           findingId,
+          componentFamilyScope,
           componentFamily,
           componentFamilyConfidence,
           componentFamilyReason,
@@ -329,6 +367,7 @@ ${targetPoint ? `Original close-up target coordinates: x=${targetPoint.x.toFixed
         componentLog("FAMILY_FALLBACK", {
           traceId,
           findingId,
+          componentFamilyScope,
           reason: error instanceof Error ? error.message : "Family classifier unavailable"
         });
       }
