@@ -1624,57 +1624,76 @@ async function createComponentTargetCrop(file,point){
   try{
     const source=await compressForOcr(file);
     const bitmap=await createImageBitmap(source);
-    const minDimension=Math.min(bitmap.width,bitmap.height);
-    const desiredSide=Math.max(280,Math.min(900,Math.round(minDimension*0.42)));
-    const cropSide=Math.min(minDimension,desiredSide);
-    const targetX=point.x*bitmap.width,targetY=point.y*bitmap.height;
-    const cropX=Math.max(0,Math.min(bitmap.width-cropSide,targetX-cropSide/2));
-    const cropY=Math.max(0,Math.min(bitmap.height-cropSide,targetY-cropSide/2));
-    const localX=(targetX-cropX)/cropSide,localY=(targetY-cropY)/cropSide;
-    const outputSize=768,canvas=document.createElement("canvas");
-    canvas.width=outputSize;canvas.height=outputSize;
+    const sourceWidth=bitmap.width,sourceHeight=bitmap.height;
+    const minDimension=Math.min(sourceWidth,sourceHeight);
+    const targetX=point.x*sourceWidth,targetY=point.y*sourceHeight;
+
+    function cropAroundTarget(side){
+      const cropSide=Math.min(minDimension,Math.max(1,side));
+      const x=Math.max(0,Math.min(sourceWidth-cropSide,targetX-cropSide/2));
+      const y=Math.max(0,Math.min(sourceHeight-cropSide,targetY-cropSide/2));
+      return {
+        x,y,side:cropSide,
+        localX:(targetX-x)/cropSide,
+        localY:(targetY-y)/cropSide
+      };
+    }
+
+    const tight=cropAroundTarget(Math.max(160,Math.min(420,Math.round(minDimension*0.18))));
+    const medium=cropAroundTarget(Math.max(300,Math.min(900,Math.round(minDimension*0.42))));
+    const panelSize=512,canvas=document.createElement("canvas");
+    canvas.width=panelSize*2;canvas.height=panelSize;
     const ctx=canvas.getContext("2d");
     if(!ctx){bitmap.close();return null;}
-    const sourceWidth=bitmap.width,sourceHeight=bitmap.height;
-    ctx.drawImage(bitmap,cropX,cropY,cropSide,cropSide,0,0,outputSize,outputSize);
+
+    function drawPanel(crop,offsetX){
+      ctx.drawImage(bitmap,crop.x,crop.y,crop.side,crop.side,offsetX,0,panelSize,panelSize);
+      const x=offsetX+crop.localX*panelSize,y=crop.localY*panelSize,gap=8,arm=26;
+      ctx.save();
+      ctx.lineWidth=1.5;
+      ctx.strokeStyle="#6ee7ff";
+      ctx.fillStyle="#6ee7ff";
+      ctx.shadowColor="rgba(0,0,0,.95)";
+      ctx.shadowBlur=2;
+      ctx.beginPath();
+      ctx.moveTo(x-arm,y);ctx.lineTo(x-gap,y);
+      ctx.moveTo(x+gap,y);ctx.lineTo(x+arm,y);
+      ctx.moveTo(x,y-arm);ctx.lineTo(x,y-gap);
+      ctx.moveTo(x,y+gap);ctx.lineTo(x,y+arm);
+      ctx.stroke();
+      ctx.shadowBlur=0;
+      ctx.beginPath();ctx.arc(x,y,1.5,0,Math.PI*2);ctx.fill();
+      ctx.restore();
+    }
+
+    drawPanel(tight,0);
+    drawPanel(medium,panelSize);
     bitmap.close();
 
-    const x=localX*outputSize,y=localY*outputSize,gap=12,arm=34;
-    ctx.save();
-    ctx.lineWidth=2;
-    ctx.strokeStyle="#6ee7ff";
-    ctx.fillStyle="#6ee7ff";
-    ctx.shadowColor="rgba(0,0,0,.95)";
-    ctx.shadowBlur=2;
-    ctx.beginPath();
-    ctx.moveTo(x-arm,y);ctx.lineTo(x-gap,y);
-    ctx.moveTo(x+gap,y);ctx.lineTo(x+arm,y);
-    ctx.moveTo(x,y-arm);ctx.lineTo(x,y-gap);
-    ctx.moveTo(x,y+gap);ctx.lineTo(x,y+arm);
-    ctx.stroke();
-    ctx.shadowBlur=0;
-    ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();
-    ctx.restore();
-
-    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.92));
+    const normalizedCrop=crop=>({
+      x:crop.x/sourceWidth,
+      y:crop.y/sourceHeight,
+      width:crop.side/sourceWidth,
+      height:crop.side/sourceHeight
+    });
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.94));
     if(!blob)return null;
     return {
-      file:new File([blob],"component-target.jpg",{type:"image/jpeg",lastModified:Date.now()}),
+      file:new File([blob],"component-target-local.jpg",{type:"image/jpeg",lastModified:Date.now()}),
       metadata:{
-        version:"component_target_crop_v2",
+        version:"component_target_crop_v3",
         source:"DERIVED_FROM_DAMAGE_CLOSEUP",
+        targetEvidenceMode:"DUAL_SCALE_LOCAL",
         coordinateSpace:"SOURCE_IMAGE_NORMALIZED",
         targetPoint:{x:point.x,y:point.y},
         pointerMapping:closeupPointerDebug,
-        crop:{
-          x:cropX/sourceWidth,
-          y:cropY/sourceHeight,
-          width:cropSide/sourceWidth,
-          height:cropSide/sourceHeight
-        },
-        targetPointInCrop:{x:localX,y:localY},
-        reticle:{style:"FINE_LASER",lineWidthPx:2,centreGapPx:12,armLengthPx:34,centreDotPx:2},
-        output:{width:outputSize,height:outputSize}
+        tightCrop:normalizedCrop(tight),
+        mediumCrop:normalizedCrop(medium),
+        targetPointInTightCrop:{x:tight.localX,y:tight.localY},
+        targetPointInMediumCrop:{x:medium.localX,y:medium.localY},
+        panelOrder:["TIGHT","MEDIUM"],
+        reticle:{style:"FINE_LASER",lineWidthPx:1.5,centreGapPx:8,armLengthPx:26,centreDotPx:1.5},
+        output:{width:panelSize*2,height:panelSize}
       }
     };
   }catch{
