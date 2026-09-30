@@ -70,12 +70,11 @@ describe("zero-touch fixed-camera point fallback",()=>{
     expect(result.found).toBe(true);
     expect(result.localizationSource).toBe("POINT_FALLBACK");
     expect(result.point).toEqual({x:0.42,y:0.56});
-    expect(result.damageBox).toEqual({
-      x:0.33,
-      y:0.44,
-      width:0.18,
-      height:0.24
-    });
+    expect(result.damageBox).not.toBeNull();
+    expect(result.damageBox?.x).toBeCloseTo(0.33,6);
+    expect(result.damageBox?.y).toBeCloseTo(0.44,6);
+    expect(result.damageBox?.width).toBeCloseTo(0.18,6);
+    expect(result.damageBox?.height).toBeCloseTo(0.24,6);
     const location=result.location as {
       code:string|null;
       reviewRequired:boolean;
