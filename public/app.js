@@ -1309,9 +1309,10 @@ async function createOverviewDamagePocCrop(file,box){
     const sx=Math.round(left*sw),sy=Math.round(top*sh);
     const cropWidth=Math.max(1,Math.round((right-left)*sw));
     const cropHeight=Math.max(1,Math.round((bottom-top)*sh));
-    const maxSide=900,scale=Math.min(1,maxSide/Math.max(cropWidth,cropHeight));
-    const outW=Math.max(256,Math.round(cropWidth*scale));
-    const outH=Math.max(256,Math.round(cropHeight*scale));
+    const maxSide=900,longSide=Math.max(cropWidth,cropHeight);
+    const scale=Math.min(maxSide/longSide,Math.max(1,640/longSide));
+    const outW=Math.max(1,Math.round(cropWidth*scale));
+    const outH=Math.max(1,Math.round(cropHeight*scale));
     const canvas=document.createElement("canvas");
     canvas.width=outW;canvas.height=outH;
     const ctx=canvas.getContext("2d");
