@@ -68,6 +68,21 @@ export class MoondreamDamageMarker {
     return {found:true,model:MODEL,geometry:{x:normalize(x),y:normalize(y)},raw};
   }
 
+  async pointOverview(file:File,face:string){
+    const image=await this.imageData(file);
+    const faceName=String(face||"container").toLowerCase();
+    const target=
+      "single most visually abnormal physical damage or repair area on the shipping container "+
+      faceName+" face, including dent, deformation, buckle, crease, bent profile, crack, cut, puncture, tear, repair patch or distorted rail/panel; "+
+      "ignore logos, lettering, paint variation, dirt, stains, shadows, timestamps, reflections and normal corrugations";
+    const raw=await this.ai.run(MODEL,{task:"point",image,target,max_objects:3});
+    const points=arrayAt(raw,"points");
+    if(!points.length)return {found:false,model:MODEL,geometry:null,raw,target};
+    const p=points[0],x=finite(p.x),y=finite(p.y);
+    if(x===null||y===null)return {found:false,model:MODEL,geometry:null,raw,target};
+    return {found:true,model:MODEL,geometry:{x:normalize(x),y:normalize(y)},raw,target};
+  }
+
   async detect(file:File){
     const image=await this.imageData(file);
     const raw=await this.ai.run(MODEL,{task:"detect",image,target:"visible damaged area on the shipping container component",max_objects:3});
