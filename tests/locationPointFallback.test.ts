@@ -76,10 +76,16 @@ describe("zero-touch fixed-camera point fallback",()=>{
       width:0.18,
       height:0.24
     });
-    expect(result.location.code).toBeTruthy();
-    expect(result.location.reviewRequired).toBe(true);
-    expect(result.location.physicalMeasurement).toBeNull();
-    expect(String(result.location.reason)).toContain("point fallback located");
+    const location=result.location as {
+      code:string|null;
+      reviewRequired:boolean;
+      physicalMeasurement?:unknown;
+      reason:string;
+    };
+    expect(location.code).toBeTruthy();
+    expect(location.reviewRequired).toBe(true);
+    expect(location.physicalMeasurement).toBeNull();
+    expect(String(location.reason)).toContain("point fallback located");
     expect(saveLocationPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         localizationSource:"POINT_FALLBACK"
@@ -138,6 +144,6 @@ describe("zero-touch fixed-camera point fallback",()=>{
     expect(result.localizationSource).toBe("POINT_FALLBACK");
     expect(result.damageBox).toBeNull();
     expect(result.point).toBeNull();
-    expect(String(result.location.reason)).toContain("mark the damage manually");
+    expect(String((result.location as {reason:string}|null)?.reason)).toContain("mark the damage manually");
   });
 });
