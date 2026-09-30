@@ -505,6 +505,12 @@ const componentDecision=document.querySelector("#componentDecision");
 const componentSelect=document.querySelector("#componentSelect");
 const confirmComponentBtn=document.querySelector("#confirmComponentBtn");
 const componentDecisionMessage=document.querySelector("#componentDecisionMessage");
+const overviewDamagePocToggle=document.querySelector("#overviewDamagePocToggle");
+const overviewDamagePocReview=document.querySelector("#overviewDamagePocReview");
+const overviewDamagePocSuggestion=document.querySelector("#overviewDamagePocSuggestion");
+const overviewDamagePocCandidates=document.querySelector("#overviewDamagePocCandidates");
+const overviewDamagePocMeta=document.querySelector("#overviewDamagePocMeta");
+const overviewDamagePocRetry=document.querySelector("#overviewDamagePocRetry");
 const analyseDamageBtn=document.querySelector("#analyseDamageBtn"),damageReview=document.querySelector("#damageReview"),damageSuggestion=document.querySelector("#damageSuggestion"),damageCandidates=document.querySelector("#damageCandidates"),damageDecision=document.querySelector("#damageDecision"),damageSelect=document.querySelector("#damageSelect"),confirmDamageBtn=document.querySelector("#confirmDamageBtn"),damageDecisionMessage=document.querySelector("#damageDecisionMessage");
 const analyseRepairBtn=document.querySelector("#analyseRepairBtn"),repairReview=document.querySelector("#repairReview"),repairSuggestion=document.querySelector("#repairSuggestion"),repairCandidates=document.querySelector("#repairCandidates"),repairDecision=document.querySelector("#repairDecision"),repairSelect=document.querySelector("#repairSelect"),confirmRepairBtn=document.querySelector("#confirmRepairBtn"),repairDecisionMessage=document.querySelector("#repairDecisionMessage"),repairLengthCm=document.querySelector("#repairLengthCm"),repairWidthCm=document.querySelector("#repairWidthCm"),repairDepthCm=document.querySelector("#repairDepthCm"),repairDentDirectionWrap=document.querySelector("#repairDentDirectionWrap"),repairDirection=document.querySelector("#repairDirection"),repairDepthCriterion=document.querySelector("#repairDepthCriterion"),repairCorrugations=document.querySelector("#repairCorrugations"),repairNotes=document.querySelector("#repairNotes");
 let damageAiCode=null;
@@ -515,7 +521,7 @@ let repairRecommendationGenerated=false,repairRecommendationStale=true,currentRe
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,closeupTargetPoint=null;
 let overviewPointerDebug=null,closeupPointerDebug=null;
 let aiLocationPoint=null,aiLocationArea=null,aiCloseupTargetPoint=null;
-let overviewAiRequest=0,closeupAiRequest=0,overviewEdited=false,closeupEdited=false;
+let overviewAiRequest=0,closeupAiRequest=0,overviewDamagePocRequest=0,overviewEdited=false,closeupEdited=false;
 let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let currentAutoDamageMeasurement=null;
@@ -1028,6 +1034,9 @@ async function recalculateLocationFromMark(){
     locationCodeInput.value="";
     locationSuggestion.textContent=e instanceof Error?e.message:"Unable to recalculate location. Enter it manually.";
   }
+  if(overviewDamagePocToggle?.checked&&usingArea&&validNormalizedBox(locationArea)){
+    void runOverviewDamagePoc(locationArea);
+  }
   updateFindingReady();
 }
 
@@ -1285,7 +1294,118 @@ locationCodeInput.addEventListener("input",()=>{
   updateFindingReady();
 });
 
+async function createOverviewDamagePocCrop(file,box){
+  if(!file||!validNormalizedBox(box))return null;
+  try{
+    const source=await compressForOcr(file);
+    const bitmap=await createImageBitmap(source);
+    const sw=bitmap.width,sh=bitmap.height;
+    const padX=Math.max(box.width*0.35,0.025);
+    const padY=Math.max(box.height*0.35,0.025);
+    const left=Math.max(0,box.x-padX);
+    const top=Math.max(0,box.y-padY);
+    const right=Math.min(1,box.x+box.width+padX);
+    const bottom=Math.min(1,box.y+box.height+padY);
+    const sx=Math.round(left*sw),sy=Math.round(top*sh);
+    const cropWidth=Math.max(1,Math.round((right-left)*sw));
+    const cropHeight=Math.max(1,Math.round((bottom-top)*sh));
+    const maxSide=900,scale=Math.min(1,maxSide/Math.max(cropWidth,cropHeight));
+    const outW=Math.max(256,Math.round(cropWidth*scale));
+    const outH=Math.max(256,Math.round(cropHeight*scale));
+    const canvas=document.createElement("canvas");
+    canvas.width=outW;canvas.height=outH;
+    const ctx=canvas.getContext("2d");
+    if(!ctx){bitmap.close();return null;}
+    ctx.drawImage(bitmap,sx,sy,cropWidth,cropHeight,0,0,outW,outH);
+    bitmap.close();
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.94));
+    if(!blob)return null;
+    return new File([blob],"overview-damage-poc.jpg",{type:"image/jpeg",lastModified:Date.now()});
+  }catch{
+    return null;
+  }
+}
+
+function renderOverviewDamagePocResult(result){
+  overviewDamagePocReview.hidden=false;
+  const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result?.analysisStatus);
+  overviewDamagePocSuggestion.textContent=failed
+    ?result.reason
+    :result?.selectedCode
+      ?"Damage "+result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":"")
+      :"No reliable damage code selected · review required";
+  overviewDamagePocCandidates.textContent=result?.candidates?.length
+    ?"Candidates: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"%":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
+    :result?.reason??"";
+  overviewDamagePocMeta.textContent=
+    "Location "+(result?.locationCode||locationCodeInput.value||"—")+
+    " · POC component assumed PAA — Panel Assembly"+
+    " · source: AI-detected overview damage crop.";
+  overviewDamagePocRetry.hidden=!validNormalizedBox(locationArea??aiLocationArea);
+}
+
+async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
+  if(!overviewDamagePocToggle?.checked||!currentFinding||!overviewFile||!validNormalizedBox(box))return;
+  if(!["LEFT","RIGHT","FRONT"].includes(findingFace.value)){
+    overviewDamagePocReview.hidden=false;
+    overviewDamagePocSuggestion.textContent="This POC currently supports GP side/front panel views only.";
+    overviewDamagePocCandidates.textContent="";
+    overviewDamagePocMeta.textContent="";
+    overviewDamagePocRetry.hidden=true;
+    return;
+  }
+  const requestId=++overviewDamagePocRequest;
+  overviewDamagePocReview.hidden=false;
+  overviewDamagePocSuggestion.textContent="Classifying the AI-detected panel damage from the overview crop…";
+  overviewDamagePocCandidates.textContent="";
+  overviewDamagePocMeta.textContent="POC assumption: component PAA — Panel Assembly.";
+  overviewDamagePocRetry.hidden=true;
+  try{
+    const crop=await createOverviewDamagePocCrop(overviewFile,box);
+    if(!crop)throw new Error("Unable to create the detected damage crop.");
+    const form=new FormData();
+    form.append("photo",crop,crop.name);
+    form.append("findingId",currentFinding.id);
+    form.append("damageBox",JSON.stringify(box));
+    form.append("locationCode",normalizedLocationCode(locationCodeInput.value||aiLocationCode||""));
+    const result=await apiJson("/api/poc/overview-damage-classify",{method:"POST",body:form});
+    if(requestId!==overviewDamagePocRequest)return;
+    renderOverviewDamagePocResult(result);
+  }catch(e){
+    if(requestId!==overviewDamagePocRequest)return;
+    if(["OVERVIEW_DAMAGE_POC_INCOMPLETE","OVERVIEW_DAMAGE_POC_INVALID_RESPONSE"].includes(e?.code)&&e.result){
+      renderOverviewDamagePocResult(e.result);
+    }else{
+      overviewDamagePocReview.hidden=false;
+      overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Overview damage POC failed.";
+      overviewDamagePocCandidates.textContent="";
+      overviewDamagePocMeta.textContent="Location detection remains available; only the experimental damage-code step failed.";
+      overviewDamagePocRetry.hidden=!validNormalizedBox(box);
+    }
+  }
+}
+
+overviewDamagePocToggle?.addEventListener("change",()=>{
+  if(!overviewDamagePocToggle.checked){
+    overviewDamagePocRequest++;
+    overviewDamagePocReview.hidden=true;
+    return;
+  }
+  const box=validNormalizedBox(locationArea)?locationArea:aiLocationArea;
+  if(validNormalizedBox(box))void runOverviewDamagePoc(box);
+  else{
+    overviewDamagePocReview.hidden=false;
+    overviewDamagePocSuggestion.textContent="Upload an overview and let AI detect one damage area first.";
+    overviewDamagePocCandidates.textContent="";
+    overviewDamagePocMeta.textContent="POC assumption: GP PAA panel damage.";
+    overviewDamagePocRetry.hidden=true;
+  }
+});
+overviewDamagePocRetry?.addEventListener("click",()=>void runOverviewDamagePoc(validNormalizedBox(locationArea)?locationArea:aiLocationArea));
+
 function selectOverviewPhoto(file,source,captureMetadata=null){
+  overviewDamagePocRequest++;
+  overviewDamagePocReview.hidden=true;
   overviewFile=file??null;
   overviewCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"overview"),"overview");
   resetOverviewLocation();
@@ -1333,6 +1453,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         overviewStage.dataset.markMode="AREA";
         drawOverviewComposite();
         tapHelp.textContent="AI proposed this damage area. Drag on the photo to redraw it, or switch to Pinpoint damage for a small defect.";
+        if(overviewDamagePocToggle?.checked)void runOverviewDamagePoc(locationArea);
       }else if(!overviewEdited&&aiLocationPoint){
         locationPoint={...aiLocationPoint};
         overviewMarkMode="POINT";
