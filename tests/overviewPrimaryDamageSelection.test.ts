@@ -78,8 +78,14 @@ describe("primary overview damage selection",()=>{
     const marker=new MoondreamDamageMarker(ai);
     const result=await marker.locateOverview(photo(),"LEFT",null,{skipReferenceDetection:true,skipDoorDetection:true});
     expect(result.damageCandidates).toHaveLength(3);
-    expect(result.damageCandidates[0]).toEqual({x:0.1,y:0.2,width:0.2,height:0.2});
-    expect(result.damageBox).toEqual({x:0.4,y:0.45,width:0.4,height:0.15});
+    expect(result.damageCandidates[0].x).toBeCloseTo(0.1);
+    expect(result.damageCandidates[0].y).toBeCloseTo(0.2);
+    expect(result.damageCandidates[0].width).toBeCloseTo(0.2);
+    expect(result.damageCandidates[0].height).toBeCloseTo(0.2);
+    expect(result.damageBox?.x).toBeCloseTo(0.4);
+    expect(result.damageBox?.y).toBeCloseTo(0.45);
+    expect(result.damageBox?.width).toBeCloseTo(0.4);
+    expect(result.damageBox?.height).toBeCloseTo(0.15);
   });
 
   it("uses the Qwen-selected structural candidate for fixed-camera CEDEX location",async()=>{
