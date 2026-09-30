@@ -945,7 +945,15 @@ function renderLocationResult(result){
         ?"Camera "+(camera?.id??"—")+" perspective calibration is loaded, but physical Door/Front CEDEX structure calibration is still required."
         :"Camera "+(camera?.id??"—")+" calibration loaded · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+
           " · damage coordinates are mapped through stored physical calibration."+
-          (result?.localizationSource==="POINT_FALLBACK"?" · AI box detector missed; automatic damage pinpoint fallback used.":"")+
+          (result?.localizationSource==="QWEN_PRIMARY_BOX"
+            ?" · Qwen reviewed Moondream candidates and selected the primary physical damage."
+            :result?.localizationSource==="QWEN_PRIMARY_OVERRIDE_POINT"
+              ?" · Qwen rejected lower-priority candidate marks and relocated the primary physical damage."
+              :result?.localizationSource==="POINT_FALLBACK"
+                ?" · AI box detector missed; automatic Moondream pinpoint fallback used."
+                :result?.localizationSource==="QWEN_POINT_FALLBACK"
+                  ?" · Moondream localization missed; Qwen full-overview fallback used."
+                  :"")+
           fixedAlignmentText(result?.alignment??location?.alignment)
       :"Camera "+(camera?.id??"—")+" face/orientation is known, but no stored calibration exists for this container size."+
         (fixedCameraDebug?" Use Calibrate fixed camera with 4 corners once.":" Admin calibration is required.");
