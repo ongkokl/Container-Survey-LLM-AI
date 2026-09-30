@@ -340,7 +340,7 @@ export class LocationSuggestionService{
             point:null,
             damageBox:null,
             localizationSource:"NONE",
-            pointFallbackAttempted:true,
+            pointFallbackAttempted:moondreamPointAttempted,
             pointFallbackFound:false,
             qwenFallbackAttempted:true,
             qwenFallbackFound:false,
@@ -494,6 +494,16 @@ export class LocationSuggestionService{
           referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
           calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,alignmentStatus:alignment.status,orientationConflict:false,
           localizationSource,
+          primaryReviewAttempted,
+          primaryCandidateCount:detectedDamageCandidates.length,
+          primarySelectorModel,
+          primarySelectorDecision,
+          primarySelectorConfidence,
+          primarySelectorPriorityClass,
+          primarySelectorReason,
+          selectedCandidateIndex,
+          primarySelectionUsed:["QWEN_PRIMARY_BOX","QWEN_PRIMARY_OVERRIDE_POINT"].includes(localizationSource),
+          moondreamPointAttempted,
           pointFallbackUsed:localizationSource==="POINT_FALLBACK",
           qwenFallbackUsed:localizationSource==="QWEN_POINT_FALLBACK",
           pointFallbackConfidence,
@@ -502,6 +512,12 @@ export class LocationSuggestionService{
       });
       return {
         found:true,model:localizationModel,predictionId:prediction.predictionId,point,damageBox:resolvedDamageBox,localizationSource,pointFallbackModel,pointFallbackConfidence,pointFallbackReason,
+        damageCandidates:detectedDamageCandidates,
+        primaryDamageSelection:{
+          attempted:primaryReviewAttempted,model:primarySelectorModel,decision:primarySelectorDecision,
+          confidence:primarySelectorConfidence,priorityClass:primarySelectorPriorityClass,
+          reason:primarySelectorReason,selectedCandidateIndex
+        },
         referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
         doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
         fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
