@@ -259,7 +259,7 @@ export class LocationSuggestionService{
             localizationSource="QWEN_POINT_FALLBACK";
           }else{
           const reason=calibration.available
-            ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. Moondream and Qwen full-overview primary-damage search could not establish a reliable visible damage target; manual marking is now the fallback."
+            ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. AI could not detect, pinpoint or reason to a visible damage area, including the Qwen full-overview primary-damage search; manual marking is now the fallback."
             :"Fixed Camera "+fixedCamera.id+" calibration is not configured for this container size. Run the one-time admin calibration before automatic location.";
           const prediction=await this.repo.saveLocationPrediction({
             findingId:input.findingId,
