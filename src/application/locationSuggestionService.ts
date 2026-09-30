@@ -104,6 +104,15 @@ function geometryScore(reference:NormalizedBox|null,imageWidth:number,imageHeigh
   return Number(Math.min(observed/expected,expected/observed).toFixed(3));
 }
 
+function contextBoxAroundPoint(point:NormalizedPoint,face:string):NormalizedBox{
+  const sideFace=face==="LEFT"||face==="RIGHT";
+  const width=sideFace?0.18:0.22;
+  const height=sideFace?0.24:0.22;
+  const x=Math.max(0,Math.min(1-width,point.x-width/2));
+  const y=Math.max(0,Math.min(1-height,point.y-height/2));
+  return {x,y,width,height};
+}
+
 export class LocationSuggestionService{
   constructor(
     private readonly repo:CedexRepository,
@@ -180,7 +189,24 @@ export class LocationSuggestionService{
           :"Face orientation comes from fixed Camera "+fixedCamera.id+"."
       };
 
-      if(!located.found||!located.damageBox){
+      let damageBox=located.damageBox??null;
+      let point:NormalizedPoint|null=damageBox?{
+        x:damageBox.x+damageBox.width/2,
+        y:damageBox.y+damageBox.height/2
+      }:null;
+      let localizationSource:"DETECT"|"POINT_FALLBACK"=damageBox?"DETECT":"POINT_FALLBACK";
+      let pointFallbackModel:string|null=null;
+
+      if(!damageBox){
+        const fallback=await this.marker.point(input.file);
+        pointFallbackModel=fallback.model;
+        if(fallback.found&&fallback.geometry){
+          point=fallback.geometry;
+          damageBox=contextBoxAroundPoint(point,context.container_face);
+        }
+      }
+
+      if(!damageBox||!point){
         const reason=calibration.available
           ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. AI could not identify the damage area; mark the damage manually to calculate CEDEX location."
           :"Fixed Camera "+fixedCamera.id+" calibration is not configured for this container size. Run the one-time admin calibration, then mark the damage.";
@@ -204,6 +230,8 @@ export class LocationSuggestionService{
             calibration,
             alignment,
             alignmentSource,
+            localizationSource,
+            pointFallbackModel,
             orientationConflict:false,
             autoUsable:false,
             reason
@@ -242,16 +270,14 @@ export class LocationSuggestionService{
           calibration,
             alignment,
           alignmentSource,
+          localizationSource,
+          pointFallbackModel,
           orientationConflict:false,
           autoUsable:false,
           location:{code:null,reviewRequired:true,reason}
         };
       }
 
-      const point={
-        x:located.damageBox.x+located.damageBox.width/2,
-        y:located.damageBox.y+located.damageBox.height/2
-      };
       if(!calibration.available){
         const reason="Fixed Camera "+fixedCamera.id+" calibration is not configured for "+
           calibration.lengthFt+" ft / "+calibration.heightMm+" mm geometry. Run the one-time admin calibration before automatic CEDEX location.";
@@ -262,28 +288,32 @@ export class LocationSuggestionService{
           selectedCode:null,
           status:"FAILED",
           response:{
-            found:true,damageBox:located.damageBox,point,referenceBox:alignmentReferenceBox,
+            found:true,damageBox,point,referenceBox:alignmentReferenceBox,
             referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
             doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
             alignment,
             alignmentSource,
+            localizationSource,
+            pointFallbackModel,
             orientationConflict:false,autoUsable:false,reason
           },
           requestContext:{
             face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
             captureSource:capture.source,measurementQuality:capture.measurementQuality,
             referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
-            calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,alignmentStatus:alignment.status,orientationConflict:false
+            calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,alignmentStatus:alignment.status,localizationSource,pointFallbackModel,orientationConflict:false
           }
         });
         return {
-          found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox:located.damageBox,
+          found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox,
           referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
             alignment,
           alignmentSource,
+          localizationSource,
+          pointFallbackModel,
           orientationConflict:false,autoUsable:false,
           location:{code:null,reviewRequired:true,reason}
         };
@@ -292,12 +322,16 @@ export class LocationSuggestionService{
       const calculated=await calibrationService.calculate({
         findingId:input.findingId,
         cameraId:fixedCamera.id,
-        damageBox:located.damageBox,
+        damageBox:localizationSource==="DETECT"?damageBox:undefined,
+        damagePoint:localizationSource==="POINT_FALLBACK"?point:undefined,
         alignmentReferenceBox,
         requireAlignment:true
       });
       const selectedCode=calculated.code??null;
-      const reason=calculated.reason??"Calculated from fixed-camera calibration and the detected damage area.";
+      const pointFallbackReason=localizationSource==="POINT_FALLBACK"
+        ?"Moondream box detection missed the damage; point fallback located the most abnormal visible damage area. "
+        :"";
+      const reason=pointFallbackReason+(calculated.reason??"Calculated from fixed-camera calibration and the detected damage area.");
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
         surveyId:context.survey_id,
@@ -305,12 +339,14 @@ export class LocationSuggestionService{
         selectedCode,
         status:selectedCode?"REVIEW_REQUIRED":"FAILED",
         response:{
-          found:true,damageBox:located.damageBox,point,referenceBox:alignmentReferenceBox,
+          found:true,damageBox,point,referenceBox:alignmentReferenceBox,
           referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
             alignment,
           alignmentSource,
+          localizationSource,
+          pointFallbackModel,
           orientationConflict:false,autoUsable:Boolean(selectedCode),
           calculatedLocation:calculated,selectedCode,reviewRequired:true,reason
         },
@@ -318,11 +354,11 @@ export class LocationSuggestionService{
           face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
           captureSource:capture.source,measurementQuality:capture.measurementQuality,
           referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
-          calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,alignmentStatus:alignment.status,orientationConflict:false
+          calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,alignmentStatus:alignment.status,localizationSource,pointFallbackModel,orientationConflict:false
         }
       });
       return {
-        found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox:located.damageBox,
+        found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox,
         referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
         doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
         fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -457,7 +493,7 @@ export class LocationSuggestionService{
     const calculated=referenceBox?suggestCedexLocation({
       face:context.container_face as SurveyFace,
       lengthFt:Number(context.length_ft)||40,
-      damageBox:located.damageBox,
+      damageBox,
       referenceBox
     }):null;
 
@@ -495,7 +531,7 @@ export class LocationSuggestionService{
       status:selectedCode?"REVIEW_REQUIRED":"FAILED",
       response:{
         found:true,
-        damageBox:located.damageBox,
+        damageBox,
         point,
         referenceBox,
         referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
@@ -534,7 +570,7 @@ export class LocationSuggestionService{
       model:located.model,
       predictionId:prediction.predictionId,
       point,
-      damageBox:located.damageBox,
+      damageBox,
       referenceBox,
       referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
       geometryScore:score,
