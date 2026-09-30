@@ -46,10 +46,17 @@ function objectBox(o:Record<string,unknown>):{x:number;y:number;width:number;hei
   };
 }
 
+function boxesFromRaw(raw:unknown):{x:number;y:number;width:number;height:number}[]{
+  return arrayAt(raw,"objects")
+    .map(objectBox)
+    .filter((x):x is {x:number;y:number;width:number;height:number}=>Boolean(x))
+    .slice(0,3);
+}
+
 function largestBox(raw:unknown):{x:number;y:number;width:number;height:number}|null{
-  const boxes=arrayAt(raw,"objects").map(objectBox).filter((x):x is {x:number;y:number;width:number;height:number}=>Boolean(x));
+  const boxes=boxesFromRaw(raw);
   if(!boxes.length)return null;
-  return boxes.sort((a,b)=>b.width*b.height-a.width*a.height)[0];
+  return [...boxes].sort((a,b)=>b.width*b.height-a.width*a.height)[0];
 }
 
 function record(value:unknown):Record<string,unknown>|null{
@@ -65,7 +72,7 @@ function parseQwenJson(raw:unknown):Record<string,unknown>|null{
   const values=first?[message?.content]:[raw,envelope?.response,envelope?.result,envelope?.output_text];
   for(const value of values){
     const object=record(value);
-    if(object&&Object.hasOwn(object,"found"))return object;
+    if(object&&(Object.hasOwn(object,"found")||Object.hasOwn(object,"decision")))return object;
     if(typeof value!=="string")continue;
     const text=value.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
     try{
@@ -115,6 +122,138 @@ export class MoondreamDamageMarker {
     return geometry
       ? {found:true,model:MODEL,geometry,raw}
       : {found:false,model:MODEL,geometry:null,raw};
+  }
+
+  async selectPrimaryOverviewDamage(
+    file:File,
+    face:string,
+    candidates:Array<{x:number;y:number;width:number;height:number}>
+  ){
+    const image=await this.imageData(file);
+    const faceName=String(face||"container").toLowerCase();
+    const validCandidates=candidates
+      .filter(box=>[box.x,box.y,box.width,box.height].every(Number.isFinite)&&box.width>0&&box.height>0)
+      .slice(0,3);
+    if(!validCandidates.length){
+      return {
+        found:false,
+        model:QWEN_MODEL,
+        decision:"NONE" as const,
+        geometry:null,
+        selectedCandidateIndex:null,
+        confidence:null,
+        priorityClass:"NO_RELIABLE_DAMAGE",
+        reason:"No Moondream damage candidates were available for primary-damage review.",
+        raw:null
+      };
+    }
+
+    const candidateText=validCandidates.map((box,index)=>
+      `${index}: x=${box.x.toFixed(4)}, y=${box.y.toFixed(4)}, width=${box.width.toFixed(4)}, height=${box.height.toFixed(4)}`
+    ).join("\n");
+    const prompt=`ZERO-TOUCH PRIMARY DAMAGE SELECTION.
+This is a fixed-camera overview of the shipping container ${faceName} face.
+Moondream proposed up to three candidate damage regions. Review the FULL overview image as well as those coordinates and choose the SINGLE primary physical damage for this one-finding POC.
+
+Candidate boxes (normalized image coordinates, top-left origin):
+${candidateText}
+
+Selection priority for this POC:
+1. clear structural deformation: dent, buckle, crease, bent/distorted panel or rail;
+2. clear material break: crack, cut, puncture or tear;
+3. visible previous repair / repair patch;
+4. gouge, scrape, scratch or paint failure;
+5. dirt, staining or discoloration.
+
+A clearer higher-priority physical defect must beat a lower-priority surface mark even when the surface mark has a darker colour or stronger contrast.
+A row or line of repeated dents/deformations across corrugations is ONE structural damage region and should outrank isolated dark scrape marks elsewhere.
+Ignore normal corrugations, perspective, logos, lettering, paint shade variation, reflections, shadows, dirt, timestamps and background objects.
+
+Return decision=CANDIDATE when one supplied box is the best primary damage.
+Return decision=OVERRIDE_POINT when the strongest primary physical damage is visibly elsewhere; return the centre of that damage as normalized x/y.
+Return decision=NONE only when no physical damage is visually supportable.
+Do not classify the CEDEX damage code here. Return only JSON.`;
+
+    const raw=await this.ai.run(QWEN_MODEL,{
+      messages:[{role:"user",content:[
+        {type:"text",text:prompt},
+        {type:"image_url",image_url:{url:image}}
+      ]}],
+      max_completion_tokens:1000,
+      reasoning_effort:"low",
+      temperature:0,
+      response_format:{
+        type:"json_schema",
+        json_schema:{
+          name:"overview_primary_damage_selection",
+          strict:true,
+          schema:{
+            type:"object",
+            properties:{
+              decision:{type:"string",enum:["CANDIDATE","OVERRIDE_POINT","NONE"]},
+              candidate_index:{type:["integer","null"],minimum:0,maximum:2},
+              x:{type:["number","null"],minimum:0,maximum:1},
+              y:{type:["number","null"],minimum:0,maximum:1},
+              confidence:{type:["number","null"],minimum:0,maximum:1},
+              priority_class:{
+                type:"string",
+                enum:["STRUCTURAL_DEFORMATION","MATERIAL_BREAK","PREVIOUS_REPAIR","SURFACE_DAMAGE","NO_RELIABLE_DAMAGE"]
+              },
+              reason:{type:"string"}
+            },
+            required:["decision","candidate_index","x","y","confidence","priority_class","reason"],
+            additionalProperties:false
+          }
+        }
+      }
+    });
+
+    const parsed=parseQwenJson(raw);
+    const decision=typeof parsed?.decision==="string"?parsed.decision:"NONE";
+    const confidence=finite(parsed?.confidence);
+    const candidateIndex=Number.isInteger(parsed?.candidate_index)?Number(parsed?.candidate_index):null;
+    const x=finite(parsed?.x),y=finite(parsed?.y);
+    const priorityClass=typeof parsed?.priority_class==="string"?parsed.priority_class:"NO_RELIABLE_DAMAGE";
+    const reason=typeof parsed?.reason==="string"?parsed.reason.trim():"";
+    const confident=confidence!==null&&confidence>=0.45;
+
+    if(decision==="CANDIDATE"&&confident&&candidateIndex!==null&&validCandidates[candidateIndex]){
+      return {
+        found:true,
+        model:QWEN_MODEL,
+        decision:"CANDIDATE" as const,
+        geometry:{...validCandidates[candidateIndex]},
+        selectedCandidateIndex:candidateIndex,
+        confidence,
+        priorityClass,
+        reason,
+        raw
+      };
+    }
+    if(decision==="OVERRIDE_POINT"&&confident&&x!==null&&y!==null&&x>=0&&x<=1&&y>=0&&y<=1){
+      return {
+        found:true,
+        model:QWEN_MODEL,
+        decision:"OVERRIDE_POINT" as const,
+        geometry:{x,y},
+        selectedCandidateIndex:null,
+        confidence,
+        priorityClass,
+        reason,
+        raw
+      };
+    }
+    return {
+      found:false,
+      model:QWEN_MODEL,
+      decision:"NONE" as const,
+      geometry:null,
+      selectedCandidateIndex:null,
+      confidence:confidence!==null?Math.max(0,Math.min(1,confidence)):null,
+      priorityClass,
+      reason,
+      raw
+    };
   }
 
   async reasonedPointOverview(file:File,face:string){
@@ -198,11 +337,15 @@ Return only JSON.`;
 
     if(options?.skipReferenceDetection&&!knownReferenceBox){
       const damageRaw=await this.ai.run(MODEL,{task:"detect",image,target:damageTarget,max_objects:3});
-      const damageBox=largestBox(damageRaw);
+      const damageCandidates=boxesFromRaw(damageRaw);
+      const damageBox=damageCandidates.length
+        ? [...damageCandidates].sort((a,b)=>b.width*b.height-a.width*a.height)[0]
+        : null;
       return {
         found:Boolean(damageBox),
         model:MODEL,
         damageBox,
+        damageCandidates,
         referenceBox:null,
         doorBox:null,
         raw:{damage:damageRaw,reference:null,door:null}
@@ -214,11 +357,16 @@ Return only JSON.`;
       const doorRaw=options?.skipDoorDetection
         ? null
         : await this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2});
-      const damageBox=largestBox(damageRaw),doorBox=doorRaw?largestBox(doorRaw):null;
+      const damageCandidates=boxesFromRaw(damageRaw);
+      const damageBox=damageCandidates.length
+        ? [...damageCandidates].sort((a,b)=>b.width*b.height-a.width*a.height)[0]
+        : null;
+      const doorBox=doorRaw?largestBox(doorRaw):null;
       return {
         found:Boolean(damageBox),
         model:MODEL,
         damageBox,
+        damageCandidates,
         referenceBox:knownReferenceBox,
         doorBox,
         raw:{damage:damageRaw,reference:null,door:doorRaw}
@@ -242,13 +390,17 @@ Return only JSON.`;
     const doorRaw=options?.skipDoorDetection
       ? null
       : await this.ai.run(MODEL,{task:"detect",image,target:doorTarget,max_objects:2});
-    const damageBox=largestBox(damageRaw);
+    const damageCandidates=boxesFromRaw(damageRaw);
+    const damageBox=damageCandidates.length
+      ? [...damageCandidates].sort((a,b)=>b.width*b.height-a.width*a.height)[0]
+      : null;
     const referenceBox=largestBox(referenceRaw);
     const doorBox=doorRaw?largestBox(doorRaw):null;
     return {
       found:Boolean(damageBox),
       model:MODEL,
       damageBox,
+      damageCandidates,
       referenceBox,
       doorBox,
       raw:{damage:damageRaw,reference:referenceRaw,door:doorRaw}
