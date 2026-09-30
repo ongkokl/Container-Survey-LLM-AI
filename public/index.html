@@ -213,12 +213,17 @@
           <span id="overviewDamagePocMeta" class="message"></span>
           <button id="overviewDamagePocRetry" class="secondary" type="button" hidden>Re-run automatic analysis</button>
         </div>
-        <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture optical-zoom damage close-up</strong><span>POC assumption: the same fixed camera optically zooms to the confirmed overview damage region.</span></button>
+        <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture optical-zoom damage close-up</strong><span>POC measurement: use the same fixed camera and frame approximately the same physical damage ROI as the overview, but with optical zoom and the full damage still visible.</span></button>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>
-        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Load zoomed close-up for POC test</strong><span>Use a close-up from the same fixed camera; the overview remains the location reference.</span></label>
+        <label class="camera compact" for="closeupGalleryPhoto"><span class="cameraIcon">▧</span><strong>Load zoomed close-up for POC test</strong><span>Keep the same damage region/framing reference as the overview. The AI close-up box will refine length/width only; dent depth remains manual.</span></label>
         <input id="closeupGalleryPhoto" type="file" accept="image/*" hidden>
         <div id="closeupStage" class="annotationStage" hidden><img id="closeupPreview" alt="Close-up photo"><canvas id="closeupCanvas"></canvas></div>
-        <p id="boxHelp" class="message" hidden>AI will propose a target point. Tap the exact damaged component to correct it if needed.</p>
+        <div id="closeupMeasurementReview" class="info" hidden>
+          <strong>Close-up damage measurement POC</strong>
+          <span id="closeupMeasurementText" class="message"></span>
+          <span id="closeupMeasurementMeta" class="message"></span>
+        </div>
+        <p id="boxHelp" class="message" hidden>AI will propose the damage extent and target point. Tap the exact damaged component to correct the component target if needed.</p>
         <button id="saveFindingBtn" class="primary" type="button" disabled>Save finding evidence</button>
       </div>
       <p id="findingMessage" class="message" aria-live="polite"></p>
