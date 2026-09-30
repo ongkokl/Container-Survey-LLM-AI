@@ -723,16 +723,27 @@ function centreOfBox(box){
 function applyPhysicalMeasurement(measurement){
   currentAutoDamageMeasurement=measurement??null;
   if(!measurement){
+    currentOverviewDamageMeasurement=null;
+    currentCloseupDamageMeasurement=null;
     damageMeasurementText.textContent="";
     return;
+  }
+  const isCloseup=measurement.source==="CLOSEUP_DAMAGE_BOX_RELATIVE_TO_OVERVIEW_ROI";
+  if(isCloseup){
+    currentCloseupDamageMeasurement=measurement;
+  }else if(measurement.source==="OVERVIEW_DAMAGE_BOX"){
+    currentOverviewDamageMeasurement=measurement;
+    currentCloseupDamageMeasurement=null;
   }
   const x=(measurement.spanXmm/10).toFixed(1);
   const y=(measurement.spanYmm/10).toFixed(1);
   damageMeasurementText.textContent=
-    "Estimated planar damage size: "+x+" × "+y+" cm · "+
+    (isCloseup?"Close-up refined planar estimate: ":"Estimated planar damage size: ")+x+" × "+y+" cm · "+
     String(measurement.xAxis||"X").toLowerCase()+" × "+
     String(measurement.yAxis||"Y").toLowerCase()+
-    " · fixed-camera geometry · verify before repair decision.";
+    (isCloseup
+      ?" · Moondream close-up extent × calibrated overview ROI · POC only; verify before repair decision."
+      :" · fixed-camera geometry · verify before repair decision.");
 }
 
 function validNormalizedBox(box){
@@ -1655,15 +1666,21 @@ function drawBox(canvas,box,isAi=false,clear=true){
   ctx.strokeRect(mapped.x,mapped.y,mapped.width,mapped.height);
   ctx.restore();
 }
+function drawCloseupComposite(){
+  if(closeupStage.hidden||!closeupPreview.complete)return;
+  syncAnnotationCanvas(closeupPreview,closeupCanvas);
+  const ctx=closeupCanvas.getContext("2d");
+  ctx.clearRect(0,0,closeupCanvas.width,closeupCanvas.height);
+  if(validNormalizedBox(aiCloseupDamageBox))drawBox(closeupCanvas,aiCloseupDamageBox,true,false);
+  if(closeupTargetPoint)drawPrecisionTarget(closeupCanvas,closeupTargetPoint,!closeupEdited,false);
+}
 function syncAnnotationCanvas(img,canvas){
   const rect=img.getBoundingClientRect(),width=Math.max(1,Math.round(rect.width)),height=Math.max(1,Math.round(rect.height));
   if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
 }
 function redrawAnnotations(){
   if(!overviewStage.hidden&&overviewPreview.complete)drawOverviewComposite();
-  if(!closeupStage.hidden&&closeupPreview.complete&&closeupTargetPoint){
-    syncAnnotationCanvas(closeupPreview,closeupCanvas);drawPrecisionTarget(closeupCanvas,closeupTargetPoint,!closeupEdited);
-  }
+  if(!closeupStage.hidden&&closeupPreview.complete)drawCloseupComposite();
 }
 window.addEventListener("resize",()=>requestAnimationFrame(redrawAnnotations));
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)requestAnimationFrame(redrawAnnotations);});
