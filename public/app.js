@@ -1841,24 +1841,111 @@ overviewCanvas.addEventListener("pointercancel",(event)=>{
 });
 
 function selectCloseupPhoto(file,source,captureMetadata=null){
-  closeupFile=file??null;closeupTargetPoint=null;aiCloseupTargetPoint=null;closeupEdited=false;closeupPointerDebug=null;
+  closeupFile=file??null;
+  closeupTargetPoint=null;
+  aiCloseupTargetPoint=null;
+  aiCloseupDamageBox=null;
+  currentCloseupDamageMeasurement=null;
+  closeupEdited=false;
+  closeupPointerDebug=null;
+  closeupMeasurementReview.hidden=true;
+  closeupMeasurementText.textContent="";
+  closeupMeasurementMeta.textContent="";
   closeupCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"closeup"),"closeup");
   const requestId=++closeupAiRequest;
   if(!closeupFile)return;
   if(source==="gallery") closeupPhoto.value=""; else closeupGalleryPhoto.value="";
-  findingMessage.textContent="Optical-zoom close-up loaded from fixed Camera "+(selectedFixedCamera()?.id??"—")+". The overview damage mark remains the CEDEX location reference.";
+  findingMessage.textContent="Optical-zoom close-up loaded from fixed Camera "+(selectedFixedCamera()?.id??"—")+". AI will detect the damage extent and component target.";
   showImage(closeupFile,closeupPreview,closeupStage,closeupCanvas,async()=>{
-    boxHelp.hidden=false;boxHelp.textContent="AI is pinpointing the target damage…";
+    boxHelp.hidden=false;
+    boxHelp.textContent="AI is detecting close-up damage extent and pinpointing the component target…";
     try{
-      const upload=await compressForOcr(closeupFile),form=new FormData();
-      form.append("photo",upload,upload.name||"closeup.jpg");form.append("mode","point");
-      const result=await apiJson("/api/vision/mark-damage",{method:"POST",body:form});
-      if(requestId!==closeupAiRequest||closeupEdited)return;
-      if(result.found&&result.geometry){
-        aiCloseupTargetPoint={...result.geometry};closeupTargetPoint={...result.geometry};drawPrecisionTarget(closeupCanvas,closeupTargetPoint,true);
-        boxHelp.textContent="AI proposed this target point. Tap the exact damaged component to correct it if needed.";
+      const upload=await compressForOcr(closeupFile);
+      const makeForm=mode=>{
+        const form=new FormData();
+        form.append("photo",upload,upload.name||"closeup.jpg");
+        form.append("mode",mode);
+        return form;
+      };
+      const [pointResult,boxResult]=await Promise.all([
+        apiJson("/api/vision/mark-damage",{method:"POST",body:makeForm("point")}).catch(()=>null),
+        apiJson("/api/vision/mark-damage",{method:"POST",body:makeForm("box")}).catch(()=>null)
+      ]);
+      if(requestId!==closeupAiRequest)return;
+
+      if(boxResult?.found&&validNormalizedBox(boxResult.geometry)){
+        aiCloseupDamageBox={...boxResult.geometry};
+      }
+      if(pointResult?.found&&pointResult.geometry){
+        aiCloseupTargetPoint={...pointResult.geometry};
+        closeupTargetPoint={...pointResult.geometry};
+      }
+      drawCloseupComposite();
+
+      if(aiCloseupDamageBox&&currentOverviewDamageMeasurement&&validNormalizedBox(locationArea)){
+        closeupMeasurementReview.hidden=false;
+        closeupMeasurementText.textContent="Calculating close-up refined length/width…";
+        closeupMeasurementMeta.textContent="POC assumption: the optical-zoom frame represents the same physical damage ROI as the calibrated overview.";
+        try{
+          const camera=selectedFixedCamera();
+          const measured=await apiJson("/api/poc/closeup-damage-measurement",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({
+              findingId:currentFinding.id,
+              cameraId:camera?.id??"",
+              overviewDamageBox:locationArea,
+              closeupDamageBox:aiCloseupDamageBox,
+              alignmentReferenceBox:locationReferenceBox
+            })
+          });
+          if(requestId!==closeupAiRequest)return;
+          const measurement=measured?.measurement??null;
+          if(measurement){
+            applyPhysicalMeasurement(measurement);
+            const x=(measurement.spanXmm/10).toFixed(1);
+            const y=(measurement.spanYmm/10).toFixed(1);
+            closeupMeasurementText.textContent="AI close-up estimate: "+x+" × "+y+" cm · surveyor verification required.";
+            const quality=measurement.quality?.reason?" "+measurement.quality.reason:"";
+            closeupMeasurementMeta.textContent=
+              "Detected close-up coverage: "+(measurement.closeupCoverage?.widthPct??"—")+"% × "+
+              (measurement.closeupCoverage?.heightPct??"—")+"% of the overview ROI. "+
+              "Depth is not estimated."+quality;
+            if(closeupCaptureMeta){
+              closeupCaptureMeta.damageMeasurementPoc={
+                source:measurement.source,
+                method:measurement.method,
+                closeupDamageBox:{...aiCloseupDamageBox},
+                spanXmm:measurement.spanXmm,
+                spanYmm:measurement.spanYmm,
+                majorCm:measurement.majorCm,
+                minorCm:measurement.minorCm,
+                framingAssumption:measurement.framingAssumption,
+                requiresSurveyorVerification:true
+              };
+            }
+          }
+        }catch(e){
+          if(requestId!==closeupAiRequest)return;
+          closeupMeasurementText.textContent=e instanceof Error?e.message:"Close-up physical measurement unavailable.";
+          closeupMeasurementMeta.textContent="The AI damage box is still shown. Use the overview estimate or manual measurement for repair decisions.";
+        }
+      }else if(aiCloseupDamageBox){
+        closeupMeasurementReview.hidden=false;
+        closeupMeasurementText.textContent="AI detected the close-up damage extent, but physical cm refinement is unavailable.";
+        closeupMeasurementMeta.textContent=currentOverviewDamageMeasurement
+          ?"Draw/confirm a real overview damage area before using close-up measurement."
+          :"A calibrated overview DAMAGE BOX measurement is required. Point-only localization cannot be used as a physical size reference.";
+      }
+
+      if(closeupTargetPoint&&aiCloseupDamageBox){
+        boxHelp.textContent="AI marked the damage extent and component target. Tap only if the component target needs correction.";
+      }else if(closeupTargetPoint){
+        boxHelp.textContent="AI pinpointed the component target, but could not determine a reliable damage extent.";
+      }else if(aiCloseupDamageBox){
+        boxHelp.textContent="AI detected the damage extent. Tap the exact damaged component to set the component target.";
       }else{
-        boxHelp.textContent="AI could not pinpoint the target confidently. Tap the damaged component.";
+        boxHelp.textContent="AI could not locate the close-up target reliably. Tap the damaged component; length/width remains manual.";
       }
     }catch{
       boxHelp.textContent="AI marking unavailable. Tap the damaged component.";
@@ -1878,8 +1965,8 @@ closeupCanvas.addEventListener("pointerdown",(event)=>{
   }
   closeupEdited=true;
   closeupTargetPoint=mapped.point;
-  drawPrecisionTarget(closeupCanvas,closeupTargetPoint,false);
-  boxHelp.textContent="Target pinpoint confirmed in image coordinates. Tap again to adjust.";
+  drawCloseupComposite();
+  boxHelp.textContent="Component target pinpoint confirmed. The AI damage-extent box remains unchanged.";
   updateFindingReady();
 });
 
