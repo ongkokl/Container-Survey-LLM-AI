@@ -55,7 +55,8 @@ describe("zero-touch overview point fallback",()=>{
       pointOverview:vi.fn(async()=>({
         found:true,model:"@cf/moondream/moondream3.1-9B-A2B",
         geometry:{x:0.42,y:0.55},raw:{points:[{x:42,y:55}]}
-      }))
+      })),
+      reasonedPointOverview:vi.fn()
     } as unknown as MoondreamDamageMarker;
 
     const result=await new LocationSuggestionService(repo,marker).analyse({
@@ -74,6 +75,7 @@ describe("zero-touch overview point fallback",()=>{
 
     expect(marker.locateOverview).toHaveBeenCalledTimes(1);
     expect(marker.pointOverview).toHaveBeenCalledWith(expect.any(File),"LEFT");
+    expect(marker.reasonedPointOverview).not.toHaveBeenCalled();
     expect(result.found).toBe(true);
     expect(result.localizationSource).toBe("POINT_FALLBACK");
     expect(result.point).toEqual({x:0.42,y:0.55});
@@ -89,6 +91,73 @@ describe("zero-touch overview point fallback",()=>{
       requestContext:expect.objectContaining({
         localizationSource:"POINT_FALLBACK",
         pointFallbackUsed:true
+      })
+    }));
+  });
+
+  it("continues zero-touch location with Qwen when both Moondream localization stages miss",async()=>{
+    const saveLocationPrediction=vi.fn(async()=>({predictionId:"lp-qwen"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"fq",survey_id:"sq",container_face:"LEFT",
+        final_location_code:null,equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      geometryForFinding:vi.fn(async()=>({
+        isoCode:"45G1",equipmentType:"GP",lengthFt:40,heightDescription:"9'6",
+        lengthMm:12192,widthMm:2438,heightMm:2896,
+        geometrySource:"test",geometryVersion:"test"
+      })),
+      fixedCameraCalibration:vi.fn(async()=>({
+        cameraId:"L",containerFace:"LEFT",lengthFt:40,heightMm:2896,
+        doorEndInImage:"RIGHT",
+        corners:[
+          {x:0.1,y:0.1},{x:0.9,y:0.1},{x:0.9,y:0.9},{x:0.1,y:0.9}
+        ],
+        calibrationVersion:1,updatedAt:"2026-09-30T00:00:00.000Z"
+      })),
+      saveLocationPrediction
+    } as unknown as CedexRepository;
+
+    const marker={
+      locateOverview:vi.fn(async()=>({
+        found:false,model:"@cf/moondream/moondream3.1-9B-A2B",
+        damageBox:null,referenceBox:null,doorBox:null,raw:{}
+      })),
+      pointOverview:vi.fn(async()=>({
+        found:false,model:"@cf/moondream/moondream3.1-9B-A2B",
+        geometry:null,raw:{points:[]}
+      })),
+      reasonedPointOverview:vi.fn(async()=>({
+        found:true,model:"@cf/qwen/qwen3.8-27b",
+        geometry:{x:0.51,y:0.47},
+        confidence:0.86,
+        reason:"Visible inward dent interrupts the otherwise regular corrugation.",
+        raw:{}
+      }))
+    } as unknown as MoondreamDamageMarker;
+
+    const result=await new LocationSuggestionService(repo,marker).analyse({
+      findingId:"fq",file:photo(),imageWidth:1600,imageHeight:900,
+      captureMetadata:{fixedCameraMode:true,fixedCameraId:"L"}
+    });
+
+    expect(marker.locateOverview).toHaveBeenCalledTimes(1);
+    expect(marker.pointOverview).toHaveBeenCalledTimes(1);
+    expect(marker.reasonedPointOverview).toHaveBeenCalledWith(expect.any(File),"LEFT");
+    expect(result.found).toBe(true);
+    expect(result.localizationSource).toBe("QWEN_POINT_FALLBACK");
+    expect(result.model).toBe("@cf/qwen/qwen3.8-27b");
+    expect(result.point).toEqual({x:0.51,y:0.47});
+    expect(result.pointFallbackConfidence).toBe(0.86);
+    const location=result.location as {code:string|null;markType?:string}|null;
+    expect(location?.code).toMatch(/^L/);
+    expect(location?.markType).toBe("POINT");
+    expect(saveLocationPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      modelName:"@cf/qwen/qwen3.8-27b",
+      requestContext:expect.objectContaining({
+        localizationSource:"QWEN_POINT_FALLBACK",
+        qwenFallbackUsed:true,
+        pointFallbackConfidence:0.86
       })
     }));
   });
@@ -124,6 +193,10 @@ describe("zero-touch overview point fallback",()=>{
       pointOverview:vi.fn(async()=>({
         found:false,model:"@cf/moondream/moondream3.1-9B-A2B",
         geometry:null,raw:{points:[]}
+      })),
+      reasonedPointOverview:vi.fn(async()=>({
+        found:false,model:"@cf/qwen/qwen3.8-27b",
+        geometry:null,confidence:0.2,reason:"No reliable physical defect.",raw:{}
       }))
     } as unknown as MoondreamDamageMarker;
 
@@ -135,6 +208,8 @@ describe("zero-touch overview point fallback",()=>{
     expect(result.found).toBe(false);
     expect(result.localizationSource).toBe("NONE");
     expect(result.pointFallbackAttempted).toBe(true);
-    expect(result.location?.reason).toContain("could not detect or pinpoint");
+    expect(result.qwenFallbackAttempted).toBe(true);
+    expect(marker.reasonedPointOverview).toHaveBeenCalledTimes(1);
+    expect(result.location?.reason).toContain("could not detect, pinpoint or reason");
   });
 });
