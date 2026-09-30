@@ -169,10 +169,12 @@ Return only JSON.`;
       x!==null&&y!==null&&x>=0&&x<=1&&y>=0&&y<=1&&
       confidence!==null&&confidence>=0.45
     );
+    const geometry:{x:number;y:number}|null=
+      supported&&x!==null&&y!==null?{x,y}:null;
     return {
       found:supported,
       model:QWEN_MODEL,
-      geometry:supported?{x,y}:null,
+      geometry,
       confidence:confidence!==null?Math.max(0,Math.min(1,confidence)):null,
       reason:typeof parsed?.reason==="string"?parsed.reason.trim():"",
       raw
