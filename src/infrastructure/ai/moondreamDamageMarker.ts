@@ -60,7 +60,12 @@ export class MoondreamDamageMarker {
 
   async point(file:File){
     const image=await this.imageData(file);
-    const raw=await this.ai.run(MODEL,{task:"point",image,target:"visible physical damage on the shipping container",max_objects:3});
+    const raw=await this.ai.run(MODEL,{
+      task:"point",
+      image,
+      target:"single most visually abnormal physical damage area on the shipping container: dent, deformation, buckle, crease, bent profile, crack, cut, puncture, tear, repair patch, distorted rail or distorted panel; ignore logos, paint graphics, dirt, stains, shadows, timestamps and normal corrugations",
+      max_objects:3
+    });
     const points=arrayAt(raw,"points");
     if(!points.length)return {found:false,model:MODEL,geometry:null,raw};
     const p=points[0],x=finite(p.x),y=finite(p.y);
