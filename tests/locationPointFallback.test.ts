@@ -80,11 +80,12 @@ describe("zero-touch overview point fallback",()=>{
     expect(result.damageBox).toEqual(expect.objectContaining({
       width:0.18,height:0.18
     }));
-    expect(result.location.code).toMatch(/^L/);
-    expect(result.location.markType).toBe("POINT");
+    const location=result.location as {code:string|null;markType?:string}|null;
+    expect(location?.code).toMatch(/^L/);
+    expect(location?.markType).toBe("POINT");
     expect(result.autoUsable).toBe(true);
     expect(saveLocationPrediction).toHaveBeenCalledWith(expect.objectContaining({
-      selectedCode:result.location.code,
+      selectedCode:location?.code,
       requestContext:expect.objectContaining({
         localizationSource:"POINT_FALLBACK",
         pointFallbackUsed:true
@@ -134,6 +135,6 @@ describe("zero-touch overview point fallback",()=>{
     expect(result.found).toBe(false);
     expect(result.localizationSource).toBe("NONE");
     expect(result.pointFallbackAttempted).toBe(true);
-    expect(result.location.reason).toContain("could not detect or pinpoint");
+    expect(result.location?.reason).toContain("could not detect or pinpoint");
   });
 });
