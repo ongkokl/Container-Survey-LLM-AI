@@ -924,6 +924,7 @@ function renderLocationResult(result){
         ?"Camera "+(camera?.id??"—")+" perspective calibration is loaded, but physical Door/Front CEDEX structure calibration is still required."
         :"Camera "+(camera?.id??"—")+" calibration loaded · "+calibration.heightMm+" mm · version "+calibration.calibrationVersion+
           " · damage coordinates are mapped through stored physical calibration."+
+          (result?.localizationSource==="POINT_FALLBACK"?" · AI box detector missed; automatic damage pinpoint fallback used.":"")+
           fixedAlignmentText(result?.alignment??location?.alignment)
       :"Camera "+(camera?.id??"—")+" face/orientation is known, but no stored calibration exists for this container size."+
         (fixedCameraDebug?" Use Calibrate fixed camera with 4 corners once.":" Admin calibration is required.");
@@ -1561,7 +1562,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
 
       if(!overviewEdited&&aiLocationArea){
         locationArea={...aiLocationArea};
-        locationPoint=centreOfBox(locationArea);
+        locationPoint=aiLocationPoint?{...aiLocationPoint}:centreOfBox(locationArea);
         overviewMarkMode="AREA";
         markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
         markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
