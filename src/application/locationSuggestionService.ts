@@ -364,6 +364,8 @@ export class LocationSuggestionService{
         fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
             alignment,
         alignmentSource,
+        localizationSource,
+        pointFallbackModel,
         orientationConflict:false,autoUsable:Boolean(selectedCode),
         location:{...calculated,code:selectedCode,reviewRequired:true,reason}
       };
