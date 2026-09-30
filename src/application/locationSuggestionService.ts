@@ -200,6 +200,7 @@ export class LocationSuggestionService{
       let pointFallbackConfidence:number|null=null;
       let pointFallbackReason:string|null=null;
       let primaryReviewAttempted=false;
+      let moondreamPointAttempted=false;
       let primarySelectorModel:string|null=null;
       let primarySelectorDecision:string|null=null;
       let primarySelectorConfidence:number|null=null;
@@ -240,6 +241,7 @@ export class LocationSuggestionService{
 
       if(!damageBox){
         const skipMoondreamPoint=primaryReviewAttempted&&primarySelectorDecision==="NONE";
+        if(!skipMoondreamPoint)moondreamPointAttempted=true;
         const pointed=skipMoondreamPoint
           ?{found:false,model:located.model,geometry:null}
           :await this.marker.pointOverview(input.file,context.container_face);
@@ -264,7 +266,7 @@ export class LocationSuggestionService{
           const prediction=await this.repo.saveLocationPrediction({
             findingId:input.findingId,
             surveyId:context.survey_id,
-            modelName:located.model,
+            modelName:pointFallbackModel??primarySelectorModel??located.model,
             selectedCode:null,
             status:"FAILED",
             response:{
@@ -277,6 +279,16 @@ export class LocationSuggestionService{
               pointFallbackFound:false,
               qwenFallbackAttempted:true,
               qwenFallbackFound:false,
+              damageCandidates:detectedDamageCandidates,
+              primaryDamageSelection:{
+                attempted:primaryReviewAttempted,
+                model:primarySelectorModel,
+                decision:primarySelectorDecision,
+                confidence:primarySelectorConfidence,
+                priorityClass:primarySelectorPriorityClass,
+                reason:primarySelectorReason,
+                selectedCandidateIndex
+              },
               referenceBox:alignmentReferenceBox,
               referenceSource:"FIXED_CAMERA_CALIBRATION",
               geometryScore:null,
@@ -308,13 +320,22 @@ export class LocationSuggestionService{
               fixedAlignmentConfidence:capture.fixedAlignmentConfidence,
               orientationConflict:false,
               localizationSource:"NONE",
-              pointFallbackAttempted:true,
+              primaryReviewAttempted,
+              primaryCandidateCount:detectedDamageCandidates.length,
+              primarySelectorModel,
+              primarySelectorDecision,
+              primarySelectorConfidence,
+              primarySelectorPriorityClass,
+              primarySelectorReason,
+              selectedCandidateIndex,
+              moondreamPointAttempted,
+              pointFallbackAttempted:moondreamPointAttempted,
               qwenFallbackAttempted:true
             }
           });
           return {
             found:false,
-            model:located.model,
+            model:pointFallbackModel??primarySelectorModel??located.model,
             predictionId:prediction.predictionId,
             point:null,
             damageBox:null,
@@ -323,6 +344,16 @@ export class LocationSuggestionService{
             pointFallbackFound:false,
             qwenFallbackAttempted:true,
             qwenFallbackFound:false,
+            damageCandidates:detectedDamageCandidates,
+            primaryDamageSelection:{
+              attempted:primaryReviewAttempted,
+              model:primarySelectorModel,
+              decision:primarySelectorDecision,
+              confidence:primarySelectorConfidence,
+              priorityClass:primarySelectorPriorityClass,
+              reason:primarySelectorReason,
+              selectedCandidateIndex
+            },
             referenceBox:alignmentReferenceBox,
             referenceSource:"FIXED_CAMERA_CALIBRATION",
             geometryScore:null,
@@ -348,7 +379,7 @@ export class LocationSuggestionService{
         x:resolvedDamageBox.x+resolvedDamageBox.width/2,
         y:resolvedDamageBox.y+resolvedDamageBox.height/2
       };
-      const localizationModel=pointFallbackModel??located.model;
+      const localizationModel=pointFallbackModel??primarySelectorModel??located.model;
       if(!calibration.available){
         const reason="Fixed Camera "+fixedCamera.id+" calibration is not configured for "+
           calibration.lengthFt+" ft / "+calibration.heightMm+" mm geometry. Run the one-time admin calibration before automatic CEDEX location.";
@@ -359,7 +390,14 @@ export class LocationSuggestionService{
           selectedCode:null,
           status:"FAILED",
           response:{
-            found:true,damageBox:resolvedDamageBox,point,localizationSource,pointFallbackModel,pointFallbackConfidence,pointFallbackReason,referenceBox:alignmentReferenceBox,
+            found:true,damageBox:resolvedDamageBox,point,localizationSource,pointFallbackModel,pointFallbackConfidence,pointFallbackReason,
+            damageCandidates:detectedDamageCandidates,
+            primaryDamageSelection:{
+              attempted:primaryReviewAttempted,model:primarySelectorModel,decision:primarySelectorDecision,
+              confidence:primarySelectorConfidence,priorityClass:primarySelectorPriorityClass,
+              reason:primarySelectorReason,selectedCandidateIndex
+            },
+            referenceBox:alignmentReferenceBox,
             referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
             doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -373,6 +411,16 @@ export class LocationSuggestionService{
             referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
             calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,alignmentStatus:alignment.status,orientationConflict:false,
             localizationSource,
+            primaryReviewAttempted,
+            primaryCandidateCount:detectedDamageCandidates.length,
+            primarySelectorModel,
+            primarySelectorDecision,
+            primarySelectorConfidence,
+            primarySelectorPriorityClass,
+            primarySelectorReason,
+            selectedCandidateIndex,
+            primarySelectionUsed:["QWEN_PRIMARY_BOX","QWEN_PRIMARY_OVERRIDE_POINT"].includes(localizationSource),
+            moondreamPointAttempted,
             pointFallbackUsed:localizationSource==="POINT_FALLBACK",
             qwenFallbackUsed:localizationSource==="QWEN_POINT_FALLBACK",
             pointFallbackConfidence,
@@ -381,6 +429,12 @@ export class LocationSuggestionService{
         });
         return {
           found:true,model:localizationModel,predictionId:prediction.predictionId,point,damageBox:resolvedDamageBox,localizationSource,pointFallbackModel,pointFallbackConfidence,pointFallbackReason,
+          damageCandidates:detectedDamageCandidates,
+          primaryDamageSelection:{
+            attempted:primaryReviewAttempted,model:primarySelectorModel,decision:primarySelectorDecision,
+            confidence:primarySelectorConfidence,priorityClass:primarySelectorPriorityClass,
+            reason:primarySelectorReason,selectedCandidateIndex
+          },
           referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -401,11 +455,15 @@ export class LocationSuggestionService{
       });
       const selectedCode=calculated.code??null;
       const reason=calculated.reason??(
-        localizationSource==="POINT_FALLBACK"
-          ?"Calculated from fixed-camera calibration and the automatic Moondream damage pinpoint fallback."
-          :localizationSource==="QWEN_POINT_FALLBACK"
-            ?"Calculated from fixed-camera calibration and the Qwen full-overview damage localization fallback."
-            :"Calculated from fixed-camera calibration and the detected damage area."
+        localizationSource==="QWEN_PRIMARY_BOX"
+          ?"Calculated from fixed-camera calibration after Qwen selected the primary physical damage from Moondream candidate regions."
+          :localizationSource==="QWEN_PRIMARY_OVERRIDE_POINT"
+            ?"Calculated from fixed-camera calibration after Qwen rejected lower-priority candidate marks and localized a stronger primary physical damage."
+            :localizationSource==="POINT_FALLBACK"
+              ?"Calculated from fixed-camera calibration and the automatic Moondream damage pinpoint fallback."
+              :localizationSource==="QWEN_POINT_FALLBACK"
+                ?"Calculated from fixed-camera calibration and the Qwen full-overview damage localization fallback."
+                :"Calculated from fixed-camera calibration and the detected damage area."
       );
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
@@ -414,7 +472,14 @@ export class LocationSuggestionService{
         selectedCode,
         status:selectedCode?"REVIEW_REQUIRED":"FAILED",
         response:{
-          found:true,damageBox:resolvedDamageBox,point,localizationSource,pointFallbackModel,pointFallbackConfidence,pointFallbackReason,referenceBox:alignmentReferenceBox,
+          found:true,damageBox:resolvedDamageBox,point,localizationSource,pointFallbackModel,pointFallbackConfidence,pointFallbackReason,
+            damageCandidates:detectedDamageCandidates,
+            primaryDamageSelection:{
+              attempted:primaryReviewAttempted,model:primarySelectorModel,decision:primarySelectorDecision,
+              confidence:primarySelectorConfidence,priorityClass:primarySelectorPriorityClass,
+              reason:primarySelectorReason,selectedCandidateIndex
+            },
+            referenceBox:alignmentReferenceBox,
           referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
