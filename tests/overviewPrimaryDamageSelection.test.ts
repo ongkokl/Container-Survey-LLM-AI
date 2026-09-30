@@ -45,6 +45,31 @@ describe("primary overview damage selection",()=>{
     expect(result.priorityClass).toBe("STRUCTURAL_DEFORMATION");
   });
 
+  it("searches the full overview when Moondream returns zero candidate boxes",async()=>{
+    const ai={run:vi.fn(async(model:string,input:unknown)=>{
+      expect(model).toBe("@cf/qwen/qwen3.8-27b");
+      const req=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
+      const prompt=String(req.messages[0].content[0].text??"");
+      expect(prompt).toContain("NONE — Moondream returned no candidate boxes");
+      expect(prompt).toContain("MUST still inspect the full overview");
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        decision:"OVERRIDE_POINT",
+        candidate_index:null,
+        x:0.44,
+        y:0.48,
+        confidence:0.89,
+        priority_class:"STRUCTURAL_DEFORMATION",
+        reason:"A horizontal dent line is clearly visible around the panel centre."
+      })}}]};
+    })};
+    const marker=new MoondreamDamageMarker(ai);
+    const result=await marker.selectPrimaryOverviewDamage(photo(),"RIGHT",[]);
+    expect(result.found).toBe(true);
+    expect(result.decision).toBe("OVERRIDE_POINT");
+    expect(result.geometry).toEqual({x:0.44,y:0.48});
+    expect(result.priorityClass).toBe("STRUCTURAL_DEFORMATION");
+  });
+
   it("can override Moondream boxes when a stronger structural defect is elsewhere",async()=>{
     const ai={run:vi.fn(async()=>({
       choices:[{finish_reason:"stop",message:{content:JSON.stringify({
@@ -159,6 +184,82 @@ describe("primary overview damage selection",()=>{
         primarySelectionUsed:true,
         selectedCandidateIndex:1,
         primarySelectorPriorityClass:"STRUCTURAL_DEFORMATION"
+      })
+    }));
+  });
+
+  it("uses Qwen full-image primary search before point fallbacks when Moondream returns no candidates",async()=>{
+    const saveLocationPrediction=vi.fn(async()=>({predictionId:"lp-zero-candidates"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-zero",survey_id:"s-zero",container_face:"RIGHT",
+        final_location_code:null,equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      geometryForFinding:vi.fn(async()=>({
+        isoCode:"45G1",equipmentType:"GP",lengthFt:40,heightDescription:"9'6",
+        lengthMm:12192,widthMm:2438,heightMm:2896,
+        geometrySource:"test",geometryVersion:"test"
+      })),
+      fixedCameraCalibration:vi.fn(async()=>({
+        cameraId:"R",containerFace:"RIGHT",lengthFt:40,heightMm:2896,
+        doorEndInImage:"LEFT",
+        corners:[
+          {x:0.1,y:0.1},{x:0.9,y:0.1},{x:0.9,y:0.9},{x:0.1,y:0.9}
+        ],
+        calibrationVersion:3,updatedAt:"2026-09-30T00:00:00.000Z"
+      })),
+      saveLocationPrediction
+    } as unknown as CedexRepository;
+
+    const marker={
+      locateOverview:vi.fn(async()=>({
+        found:false,
+        model:"@cf/moondream/moondream3.1-9B-A2B",
+        damageBox:null,
+        damageCandidates:[],
+        referenceBox:null,doorBox:null,raw:{}
+      })),
+      selectPrimaryOverviewDamage:vi.fn(async()=>({
+        found:true,
+        model:"@cf/qwen/qwen3.8-27b",
+        decision:"OVERRIDE_POINT",
+        geometry:{x:0.44,y:0.48},
+        selectedCandidateIndex:null,
+        confidence:0.89,
+        priorityClass:"STRUCTURAL_DEFORMATION",
+        reason:"Horizontal dent line around centre panel.",
+        raw:{}
+      })),
+      pointOverview:vi.fn(),
+      reasonedPointOverview:vi.fn()
+    } as unknown as MoondreamDamageMarker;
+
+    const result=await new LocationSuggestionService(repo,marker).analyse({
+      findingId:"f-zero",
+      file:photo(),
+      imageWidth:1600,
+      imageHeight:900,
+      captureMetadata:{fixedCameraMode:true,fixedCameraId:"R"}
+    });
+
+    expect(marker.selectPrimaryOverviewDamage).toHaveBeenCalledWith(expect.any(File),"RIGHT",[]);
+    expect(marker.pointOverview).not.toHaveBeenCalled();
+    expect(marker.reasonedPointOverview).not.toHaveBeenCalled();
+    expect(result.found).toBe(true);
+    expect(result.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
+    expect(result.point).toEqual({x:0.44,y:0.48});
+    expect(result.primaryDamageSelection).toEqual(expect.objectContaining({
+      attempted:true,
+      decision:"OVERRIDE_POINT",
+      priorityClass:"STRUCTURAL_DEFORMATION",
+      confidence:0.89
+    }));
+    expect(saveLocationPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      modelName:"@cf/qwen/qwen3.8-27b",
+      requestContext:expect.objectContaining({
+        primaryReviewAttempted:true,
+        primaryCandidateCount:0,
+        primarySelectionUsed:true
       })
     }));
   });
