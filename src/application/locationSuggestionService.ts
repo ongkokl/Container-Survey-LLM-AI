@@ -434,7 +434,7 @@ export class LocationSuggestionService{
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
         surveyId:context.survey_id,
-        modelName:localizationModel,
+        modelName:located.model,
         selectedCode:null,
         status:"FAILED",
         response:{
@@ -530,7 +530,7 @@ export class LocationSuggestionService{
     const prediction=await this.repo.saveLocationPrediction({
       findingId:input.findingId,
       surveyId:context.survey_id,
-      modelName:localizationModel,
+      modelName:located.model,
       selectedCode,
       status:selectedCode?"REVIEW_REQUIRED":"FAILED",
       response:{
