@@ -220,6 +220,9 @@ Return only JSON with selected_code, confidence, needs_review, reason (max 20 wo
     }
 
     const selectedRule=selectedDamageRule(rules,selectedCode);
+    const selectedName=selectedCode
+      ?allowed.damages.find(item=>item.damage_code===selectedCode)?.damage_name??null
+      :null;
     return {
       pocMode:"OVERVIEW_SINGLE_PAA_DAMAGE",
       source:"AI_DETECTED_OVERVIEW_CROP",
@@ -229,6 +232,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (max 20 wo
       locationCode:location,
       analysisStatus,
       selectedCode,
+      selectedName,
       confidence:selectedConfidence,
       needsReview,
       reason,
