@@ -206,7 +206,7 @@ export class LocationSuggestionService{
           const prediction=await this.repo.saveLocationPrediction({
             findingId:input.findingId,
             surveyId:context.survey_id,
-            modelName:localizationModel,
+            modelName:located.model,
             selectedCode:null,
             status:"FAILED",
             response:{
@@ -308,7 +308,7 @@ export class LocationSuggestionService{
             captureSource:capture.source,measurementQuality:capture.measurementQuality,
             referenceSource:"FIXED_CAMERA_CALIBRATION",fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
             calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,alignmentStatus:alignment.status,orientationConflict:false,
-          localizationSource,pointFallbackUsed:localizationSource==="POINT_FALLBACK"
+            localizationSource,pointFallbackUsed:localizationSource==="POINT_FALLBACK"
           }
         });
         return {
