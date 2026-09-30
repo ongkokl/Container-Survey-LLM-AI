@@ -250,13 +250,13 @@ export class LocationSuggestionService{
           pointFallbackModel=pointed.model;
         }else{
           const reasoned=await this.marker.reasonedPointOverview(input.file,context.container_face);
+          pointFallbackModel=reasoned.model;
+          pointFallbackConfidence=reasoned.confidence;
+          pointFallbackReason=reasoned.reason||null;
           if(reasoned.found&&reasoned.geometry){
             pointFallback=reasoned.geometry;
             damageBox=contextBoxAroundPoint(pointFallback);
             localizationSource="QWEN_POINT_FALLBACK";
-            pointFallbackModel=reasoned.model;
-            pointFallbackConfidence=reasoned.confidence;
-            pointFallbackReason=reasoned.reason||null;
           }else{
           const reason=calibration.available
             ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. Moondream and Qwen full-overview primary-damage search could not establish a reliable visible damage target; manual marking is now the fallback."
@@ -277,6 +277,9 @@ export class LocationSuggestionService{
               pointFallbackFound:false,
               qwenFallbackAttempted:true,
               qwenFallbackFound:false,
+              qwenFallbackModel:pointFallbackModel,
+              qwenFallbackConfidence:pointFallbackConfidence,
+              qwenFallbackReason:pointFallbackReason,
               damageCandidates:detectedDamageCandidates,
               primaryDamageSelection:{
                 attempted:primaryReviewAttempted,
@@ -342,6 +345,9 @@ export class LocationSuggestionService{
             pointFallbackFound:false,
             qwenFallbackAttempted:true,
             qwenFallbackFound:false,
+            qwenFallbackModel:pointFallbackModel,
+            qwenFallbackConfidence:pointFallbackConfidence,
+            qwenFallbackReason:pointFallbackReason,
             damageCandidates:detectedDamageCandidates,
             primaryDamageSelection:{
               attempted:primaryReviewAttempted,
