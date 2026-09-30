@@ -188,14 +188,61 @@ export class LocationSuggestionService{
           :"Face orientation comes from fixed Camera "+fixedCamera.id+"."
       };
 
+      const detectedDamageCandidates=Array.isArray(located.damageCandidates)
+        ?located.damageCandidates
+        :located.damageBox?[located.damageBox]:[];
       let damageBox=located.damageBox??null;
       let pointFallback:NormalizedPoint|null=null;
-      let localizationSource:"DETECT_BOX"|"POINT_FALLBACK"|"QWEN_POINT_FALLBACK"="DETECT_BOX";
+      let localizationSource:
+        "DETECT_BOX"|"QWEN_PRIMARY_BOX"|"QWEN_PRIMARY_OVERRIDE_POINT"|"POINT_FALLBACK"|"QWEN_POINT_FALLBACK"
+        ="DETECT_BOX";
       let pointFallbackModel:string|null=null;
       let pointFallbackConfidence:number|null=null;
       let pointFallbackReason:string|null=null;
-      if(!located.found||!damageBox){
-        const pointed=await this.marker.pointOverview(input.file,context.container_face);
+      let primaryReviewAttempted=false;
+      let primarySelectorModel:string|null=null;
+      let primarySelectorDecision:string|null=null;
+      let primarySelectorConfidence:number|null=null;
+      let primarySelectorPriorityClass:string|null=null;
+      let primarySelectorReason:string|null=null;
+      let selectedCandidateIndex:number|null=null;
+
+      if(detectedDamageCandidates.length){
+        primaryReviewAttempted=true;
+        try{
+          const primary=await this.marker.selectPrimaryOverviewDamage(
+            input.file,
+            context.container_face,
+            detectedDamageCandidates
+          );
+          primarySelectorModel=primary.model;
+          primarySelectorDecision=primary.decision;
+          primarySelectorConfidence=primary.confidence;
+          primarySelectorPriorityClass=primary.priorityClass;
+          primarySelectorReason=primary.reason||null;
+          selectedCandidateIndex=primary.selectedCandidateIndex;
+          if(primary.found&&primary.decision==="CANDIDATE"&&primary.geometry&&"width" in primary.geometry){
+            damageBox=primary.geometry;
+            localizationSource="QWEN_PRIMARY_BOX";
+          }else if(primary.found&&primary.decision==="OVERRIDE_POINT"&&primary.geometry&&!("width" in primary.geometry)){
+            pointFallback=primary.geometry;
+            damageBox=contextBoxAroundPoint(pointFallback);
+            localizationSource="QWEN_PRIMARY_OVERRIDE_POINT";
+          }else{
+            damageBox=null;
+          }
+        }catch(error){
+          primarySelectorDecision="ERROR";
+          primarySelectorReason=error instanceof Error?error.message:"Primary-damage selector unavailable.";
+          localizationSource="DETECT_BOX";
+        }
+      }
+
+      if(!damageBox){
+        const skipMoondreamPoint=primaryReviewAttempted&&primarySelectorDecision==="NONE";
+        const pointed=skipMoondreamPoint
+          ?{found:false,model:located.model,geometry:null}
+          :await this.marker.pointOverview(input.file,context.container_face);
         if(pointed.found&&pointed.geometry){
           pointFallback=pointed.geometry;
           damageBox=contextBoxAroundPoint(pointFallback);
