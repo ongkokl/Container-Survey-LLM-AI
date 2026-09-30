@@ -529,7 +529,7 @@ let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let currentAutoDamageMeasurement=null,currentOverviewDamageMeasurement=null,currentCloseupDamageMeasurement=null;
 let currentOverviewDamagePocResult=null;
-let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
+let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,aiLocalizationSource=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
 let currentFixedCalibration=null,endStructureMarkMode=false,endStructurePoints=[];
 let aiDoorEndBox=null,detectedDoorSide=null,doorOrientationConfirmed=false;
@@ -656,7 +656,7 @@ createFindingBtn.addEventListener("click",async()=>{
     currentGeometry=null;currentFixedCalibration=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
     currentAutoDamageMeasurement=null;currentOverviewDamageMeasurement=null;currentCloseupDamageMeasurement=null;
     aiCloseupDamageBox=null;closeupMeasurementReview.hidden=true;closeupMeasurementText.textContent="";closeupMeasurementMeta.textContent="";
-    locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
+    locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;aiLocalizationSource=null;locationRecalcRequest++;
     locationReferenceQuad=null;faceMarkMode=false;faceMarkPoints=[];faceMarkResumeMode="AREA";
     locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
     overviewPointerDebug=null;closeupPointerDebug=null;
@@ -871,6 +871,7 @@ function fixedAlignmentText(alignment){
 
 function renderLocationResult(result){
   locationReferenceBox=result?.referenceBox??null;
+  aiLocalizationSource=result?.localizationSource??null;
   locationAutoUsable=Boolean(result?.autoUsable);
   aiDoorEndBox=null;
   const camera=selectedFixedCamera();
@@ -1303,6 +1304,13 @@ function drawOverviewComposite(){
   if(endStructureMarkMode&&endStructurePoints.length)drawEndStructureGuidePoints(overviewCanvas,endStructurePoints);
   if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited,false);
   else if(locationPoint)drawPrecisionTarget(overviewCanvas,locationPoint,!overviewEdited,false);
+  const visibleLocation=normalizedLocationCode(locationCodeInput.value)||aiLocationCode;
+  if(visibleLocation){
+    const anchor=overviewMarkMode==="AREA"&&validNormalizedBox(locationArea)
+      ?centreOfBox(locationArea)
+      :locationPoint;
+    if(anchor)drawOverviewLocationLabel(overviewCanvas,anchor,visibleLocation,overviewLocalizationSourceLabel());
+  }
   if(overviewDamagePocToggle?.checked&&currentOverviewDamagePocResult?.selectedCode){
     const resultBox=validNormalizedBox(currentOverviewDamagePocResult.damageBox)
       ?currentOverviewDamagePocResult.damageBox
@@ -1677,6 +1685,41 @@ function drawBox(canvas,box,isAi=false,clear=true){
   ctx.shadowColor="rgba(0,0,0,.9)";ctx.shadowBlur=2;
   const mapped=annotationStageBox(canvas,box);
   ctx.strokeRect(mapped.x,mapped.y,mapped.width,mapped.height);
+  ctx.restore();
+}
+
+function overviewLocalizationSourceLabel(){
+  if(overviewEdited)return "Manual";
+  if(["QWEN_PRIMARY_BOX","QWEN_PRIMARY_OVERRIDE_POINT","QWEN_POINT_FALLBACK"].includes(aiLocalizationSource))return "AI · Qwen";
+  if(["DETECT_BOX","POINT_FALLBACK"].includes(aiLocalizationSource))return "AI · Moondream";
+  return "AI";
+}
+
+function drawOverviewLocationLabel(canvas,anchor,locationCode,source){
+  if(!anchor||!locationCode)return;
+  const ctx=canvas.getContext("2d");
+  if(!ctx)return;
+  const mapped=annotationStagePoint(canvas,anchor);
+  const label=[source,locationCode].filter(Boolean).join(" · ");
+  const fontSize=Math.max(11,Math.min(14,Math.round(canvas.width/38)));
+  const padX=8,padY=5;
+  ctx.save();
+  ctx.font="700 "+fontSize+"px Inter, system-ui, sans-serif";
+  const width=ctx.measureText(label).width+padX*2;
+  const height=fontSize+padY*2;
+  let x=mapped.x+12,y=mapped.y-height-12;
+  if(x+width>canvas.width-5)x=Math.max(5,mapped.x-width-12);
+  if(y<5)y=Math.min(canvas.height-height-5,mapped.y+12);
+  ctx.fillStyle="rgba(5,10,18,.90)";
+  ctx.strokeStyle=source==="Manual"?"#6ee7ff":"#ffd54a";
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  if(typeof ctx.roundRect==="function")ctx.roundRect(x,y,width,height,6);
+  else ctx.rect(x,y,width,height);
+  ctx.fill();ctx.stroke();
+  ctx.fillStyle="#f4f7fb";
+  ctx.textBaseline="top";
+  ctx.fillText(label,x+padX,y+padY);
   ctx.restore();
 }
 function drawCloseupComposite(){
