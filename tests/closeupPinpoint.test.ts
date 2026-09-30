@@ -497,6 +497,111 @@ describe("close-up pinpoint targeting",()=>{
     }));
   });
 
+  it("allows visible improper-repair IR as a photo suggestion but always requires review",async()=>{
+    const saveDamagePrediction=vi.fn(async()=>({predictionId:"pred-ir"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-ir",survey_id:"s-ir",container_face:"FRONT",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      damageCodesForFinding:vi.fn(async()=>({
+        componentCode:"PAA",
+        damages:[
+          {damage_code:"DT",damage_name:"Dent / Bent"},
+          {damage_code:"IR",damage_name:"Improper / Non-conforming repair"},
+          {damage_code:"ME",damage_name:"Existing manufacturing defect"}
+        ]
+      })),
+      findingPhoto:vi.fn(async(_id:string,role:string)=>{
+        if(role==="DAMAGE_CLOSEUP")return {id:"photo-ir",r2_key:"ir-closeup.jpg",content_type:"image/jpeg"};
+        if(role==="COMPONENT_CLOSEUP")return {id:"target-ir",r2_key:"ir-target.jpg",content_type:"image/jpeg"};
+        return null;
+      }),
+      surveyorComponentPoint:vi.fn(async()=>({x:0.51,y:0.36})),
+      damageVisualRules:vi.fn(async()=>[
+        {
+          damage_code:"DT",component_code:"PAA",
+          visual_definition:"Visible dent deformation.",
+          positive_cues:"Local panel deformation.",
+          negative_cues:"Not a previous repair.",
+          confusable_with:"IR",
+          evidence_requirement:"VISUAL",
+          force_review:0,
+          source_reference:"test"
+        },
+        {
+          damage_code:"IR",component_code:"PAA",
+          visual_definition:"A previous repair appears improper or non-conforming.",
+          positive_cues:"Visible repair patch, weld, inserted piece or prior repair workmanship.",
+          negative_cues:"Photo alone cannot prove conformity.",
+          confusable_with:"ME,PF,CD",
+          evidence_requirement:"HISTORY_CONTEXT",
+          force_review:1,
+          source_reference:"test"
+        },
+        {
+          damage_code:"ME",component_code:"PAA",
+          visual_definition:"Possible manufacturing-origin defect.",
+          positive_cues:"Fabrication feature.",
+          negative_cues:"Needs provenance.",
+          confusable_with:"IR,DT",
+          evidence_requirement:"HISTORY_CONTEXT",
+          force_review:1,
+          source_reference:"test"
+        }
+      ]),
+      saveDamagePrediction
+    } as unknown as CedexRepository;
+
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      const request=input as {
+        messages:Array<{content:Array<{type:string;text?:string}>}>,
+        response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}
+      };
+      const prompt=String(request.messages[0].content[0].text??"");
+      expect(prompt).toContain("IR (Improper / Non-conforming repair) is a special photo-eligible exception");
+      expect(prompt).toContain("always set needs_review true");
+      expect(prompt).toContain("IR = Improper / Non-conforming repair");
+      expect(prompt).not.toContain("ME = Existing manufacturing defect");
+      const enumCodes=request.response_format.json_schema.schema.properties.selected_code.enum;
+      expect(enumCodes).toContain("IR");
+      expect(enumCodes).toContain("DT");
+      expect(enumCodes).not.toContain("ME");
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        selected_code:"IR",confidence:0.91,needs_review:false,
+        reason:"Visible prior patch and weld workmanship at the marked panel area.",
+        candidates:[
+          {code:"IR",confidence:0.91,reason:"Visible previous repair patch/workmanship."},
+          {code:"DT",confidence:0.09,reason:"Deformation is secondary to the prior repair."}
+        ]
+      })}}]};
+    })};
+
+    const result=await new DamageClassificationService(
+      repo,
+      {get:vi.fn(async()=>imageObject())},
+      ai
+    ).analyse("f-ir");
+
+    expect(result.selectedCode).toBe("IR");
+    expect(result.confidence).toBe(0.91);
+    expect(result.needsReview).toBe(true);
+    expect(result.evidenceRequirement).toBe("HISTORY_CONTEXT");
+    expect(result.evidenceReviewRequired).toBe(true);
+    expect(result.aiEligibleDamageCodes).toContain("IR");
+    expect(result.excludedFromPhotoOnlyAi).toContain("ME");
+    expect(result.excludedFromPhotoOnlyAi).not.toContain("IR");
+    expect(saveDamagePrediction).toHaveBeenCalledWith(expect.objectContaining({
+      status:"REVIEW_REQUIRED",
+      requestContext:expect.objectContaining({
+        selectedEvidenceRequirement:"HISTORY_CONTEXT",
+        evidenceReviewRequired:true,
+        selectedCode:"IR",
+        needsReview:true
+      })
+    }));
+  });
+
   it("uses the same pinpoint as the primary target for damage classification",async()=>{
     const saveDamagePrediction=vi.fn(async()=>({predictionId:"pred-2"}));
     const repo={
