@@ -24,6 +24,30 @@ describe("zero-touch overview point fallback",()=>{
     expect(result.geometry).toEqual({x:0.43,y:0.58});
   });
 
+  it("uses Qwen full-overview reasoning as the third automatic localization stage",async()=>{
+    const ai={run:vi.fn(async(model:string,input:unknown)=>{
+      expect(model).toBe("@cf/qwen/qwen3.8-27b");
+      const req=input as {
+        messages:Array<{content:Array<{type:string;text?:string}>}>,
+        response_format:{json_schema:{name:string}}
+      };
+      const prompt=String(req.messages[0].content[0].text??"");
+      expect(prompt).toContain("Moondream object detection and pinpoint both failed");
+      expect(prompt).toContain("normalized image coordinates");
+      expect(req.response_format.json_schema.name).toBe("overview_damage_point_fallback");
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        found:true,x:0.49,y:0.53,confidence:0.84,
+        reason:"Visible local inward deformation on the corrugated panel."
+      })}}]};
+    })};
+    const marker=new MoondreamDamageMarker(ai);
+    const result=await marker.reasonedPointOverview(photo(),"LEFT");
+    expect(result.found).toBe(true);
+    expect(result.geometry).toEqual({x:0.49,y:0.53});
+    expect(result.confidence).toBe(0.84);
+    expect(result.model).toBe("@cf/qwen/qwen3.8-27b");
+  });
+
   it("continues fixed-camera CEDEX location from the automatic point when detect returns no box",async()=>{
     const saveLocationPrediction=vi.fn(async()=>({predictionId:"lp1"}));
     const repo={
