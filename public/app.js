@@ -525,6 +525,7 @@ let overviewAiRequest=0,closeupAiRequest=0,overviewDamagePocRequest=0,overviewEd
 let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
 let currentAutoDamageMeasurement=null;
+let currentOverviewDamagePocResult=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
 let currentFixedCalibration=null,endStructureMarkMode=false,endStructurePoints=[];
@@ -1177,6 +1178,87 @@ function drawEndStructureGuidePoints(canvas,points){
   ctx.restore();
 }
 
+function drawDamageAnalysisCallout(canvas,box,result){
+  if(!validNormalizedBox(box)||!result?.selectedCode)return;
+  const ctx=canvas.getContext("2d");
+  if(!ctx)return;
+  const mapped=annotationStageBox(canvas,box);
+  const confidence=typeof result.confidence==="number"?Math.round(result.confidence*100):null;
+  const title=result.selectedCode+(result.selectedName?" · "+result.selectedName:"");
+  const detail=[
+    confidence!==null?confidence+"%":null,
+    result.componentCode||"PAA",
+    result.locationCode||normalizedLocationCode(locationCodeInput.value)||null
+  ].filter(Boolean).join(" · ");
+  const review=result.needsReview?"Review required":null;
+
+  ctx.save();
+  const fontSize=Math.max(11,Math.min(14,Math.round(canvas.width/38)));
+  const smallSize=Math.max(10,fontSize-2);
+  const pad=Math.max(7,Math.round(fontSize*0.65));
+  const radius=Math.max(7,Math.round(fontSize*0.65));
+  ctx.font="700 "+fontSize+"px Inter, system-ui, sans-serif";
+  const titleWidth=ctx.measureText(title).width;
+  ctx.font="600 "+smallSize+"px Inter, system-ui, sans-serif";
+  const detailWidth=ctx.measureText(detail).width;
+  const reviewWidth=review?ctx.measureText(review).width:0;
+  const boxWidth=Math.min(
+    Math.max(titleWidth,detailWidth,reviewWidth)+pad*2,
+    Math.max(150,canvas.width-16)
+  );
+  const lineHeight=fontSize+4;
+  const boxHeight=review?lineHeight*3+pad*1.5:lineHeight*2+pad*1.5;
+
+  const preferredRight=mapped.x+mapped.width+10;
+  const preferredLeft=mapped.x-boxWidth-10;
+  let x=preferredRight+boxWidth<=canvas.width-6
+    ?preferredRight
+    :Math.max(6,preferredLeft);
+  x=Math.min(Math.max(6,x),Math.max(6,canvas.width-boxWidth-6));
+
+  const centreY=mapped.y+mapped.height/2;
+  let y=centreY-boxHeight/2;
+  y=Math.min(Math.max(6,y),Math.max(6,canvas.height-boxHeight-6));
+
+  const attachX=x>mapped.x+mapped.width/2?x:x+boxWidth;
+  const damageX=x>mapped.x+mapped.width/2?mapped.x+mapped.width:mapped.x;
+  const attachY=Math.min(Math.max(centreY,y+10),y+boxHeight-10);
+
+  ctx.strokeStyle="rgba(110,231,255,.95)";
+  ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo(damageX,centreY);
+  ctx.lineTo(attachX,attachY);
+  ctx.stroke();
+
+  ctx.fillStyle="rgba(5,10,18,.90)";
+  ctx.strokeStyle="rgba(110,231,255,.95)";
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  if(typeof ctx.roundRect==="function"){
+    ctx.roundRect(x,y,boxWidth,boxHeight,radius);
+  }else{
+    ctx.rect(x,y,boxWidth,boxHeight);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle="#f4f7fb";
+  ctx.font="700 "+fontSize+"px Inter, system-ui, sans-serif";
+  ctx.textBaseline="top";
+  ctx.fillText(title,x+pad,y+pad,boxWidth-pad*2);
+
+  ctx.fillStyle="#b9c8da";
+  ctx.font="600 "+smallSize+"px Inter, system-ui, sans-serif";
+  ctx.fillText(detail,x+pad,y+pad+lineHeight,boxWidth-pad*2);
+
+  if(review){
+    ctx.fillStyle="#f0c78b";
+    ctx.fillText(review,x+pad,y+pad+lineHeight*2,boxWidth-pad*2);
+  }
+  ctx.restore();
+}
+
 function drawOverviewComposite(){
   if(overviewStage.hidden||!overviewPreview.complete)return;
   syncAnnotationCanvas(overviewPreview,overviewCanvas);
@@ -1188,6 +1270,12 @@ function drawOverviewComposite(){
   if(endStructureMarkMode&&endStructurePoints.length)drawEndStructureGuidePoints(overviewCanvas,endStructurePoints);
   if(overviewMarkMode==="AREA"&&validNormalizedBox(locationArea))drawBox(overviewCanvas,locationArea,!overviewEdited,false);
   else if(locationPoint)drawPrecisionTarget(overviewCanvas,locationPoint,!overviewEdited,false);
+  if(overviewDamagePocToggle?.checked&&currentOverviewDamagePocResult?.selectedCode){
+    const resultBox=validNormalizedBox(currentOverviewDamagePocResult.damageBox)
+      ?currentOverviewDamagePocResult.damageBox
+      :validNormalizedBox(locationArea)?locationArea:aiLocationArea;
+    drawDamageAnalysisCallout(overviewCanvas,resultBox,currentOverviewDamagePocResult);
+  }
 }
 
 function beginFaceMarking(){
@@ -1328,6 +1416,7 @@ async function createOverviewDamagePocCrop(file,box){
 }
 
 function renderOverviewDamagePocResult(result){
+  currentOverviewDamagePocResult=result??null;
   overviewDamagePocReview.hidden=false;
   const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result?.analysisStatus);
   overviewDamagePocSuggestion.textContent=failed
@@ -1343,6 +1432,7 @@ function renderOverviewDamagePocResult(result){
     " · POC component assumed PAA — Panel Assembly"+
     " · source: AI-detected overview damage crop.";
   overviewDamagePocRetry.hidden=!validNormalizedBox(locationArea??aiLocationArea);
+  drawOverviewComposite();
 }
 
 async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
@@ -1356,6 +1446,8 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
     return;
   }
   const requestId=++overviewDamagePocRequest;
+  currentOverviewDamagePocResult=null;
+  drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
   overviewDamagePocSuggestion.textContent="Classifying the AI-detected panel damage from the overview crop…";
   overviewDamagePocCandidates.textContent="";
@@ -1377,6 +1469,8 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
     if(["OVERVIEW_DAMAGE_POC_INCOMPLETE","OVERVIEW_DAMAGE_POC_INVALID_RESPONSE"].includes(e?.code)&&e.result){
       renderOverviewDamagePocResult(e.result);
     }else{
+      currentOverviewDamagePocResult=null;
+      drawOverviewComposite();
       overviewDamagePocReview.hidden=false;
       overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Overview damage POC failed.";
       overviewDamagePocCandidates.textContent="";
@@ -1389,7 +1483,9 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
 overviewDamagePocToggle?.addEventListener("change",()=>{
   if(!overviewDamagePocToggle.checked){
     overviewDamagePocRequest++;
+    currentOverviewDamagePocResult=null;
     overviewDamagePocReview.hidden=true;
+    drawOverviewComposite();
     return;
   }
   const box=validNormalizedBox(locationArea)?locationArea:aiLocationArea;
@@ -1406,6 +1502,7 @@ overviewDamagePocRetry?.addEventListener("click",()=>void runOverviewDamagePoc(v
 
 function selectOverviewPhoto(file,source,captureMetadata=null){
   overviewDamagePocRequest++;
+  currentOverviewDamagePocResult=null;
   overviewDamagePocReview.hidden=true;
   overviewFile=file??null;
   overviewCaptureMeta=fixedCameraMetadata(captureMetadata??unscoredCaptureMetadata(source,"overview"),"overview");
