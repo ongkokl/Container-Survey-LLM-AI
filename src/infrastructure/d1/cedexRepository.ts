@@ -441,18 +441,25 @@ export class CedexRepository {
   }
 
 
-  async damageCodesForFinding(findingId:string){
-    const row=await this.db.prepare("SELECT final_component_code FROM findings WHERE id=?").bind(findingId).first<{final_component_code:string|null}>();
-    if(!row?.final_component_code) throw new Error("Confirm the component before analysing damage.");
+  async damageCodesForComponent(findingId:string,componentCode:string){
+    const context=await this.findingContext(findingId);
+    if(!context) throw new Error("Finding not found.");
+    const normalized=componentCode.trim().toUpperCase();
+    if(!normalized) throw new Error("Component code is required.");
     const result=await this.db.prepare(`
       SELECT d.damage_code,d.damage_name
       FROM component_damage_rules r
       JOIN damage_codes d ON d.damage_code=r.damage_code AND d.active=1
-      WHERE r.equipment_type=(SELECT gc.observed_container_type FROM findings f JOIN surveys s ON s.id=f.survey_id JOIN gate_cycles gc ON gc.id=s.gate_cycle_id WHERE f.id=?)
-        AND r.component_code=? AND r.active=1
+      WHERE r.equipment_type=? AND r.component_code=? AND r.active=1
       ORDER BY d.damage_code`
-    ).bind(findingId,row.final_component_code).all<{damage_code:string;damage_name:string}>();
-    return {componentCode:row.final_component_code,damages:result.results};
+    ).bind(context.equipment_type,normalized).all<{damage_code:string;damage_name:string}>();
+    return {componentCode:normalized,damages:result.results};
+  }
+
+  async damageCodesForFinding(findingId:string){
+    const row=await this.db.prepare("SELECT final_component_code FROM findings WHERE id=?").bind(findingId).first<{final_component_code:string|null}>();
+    if(!row?.final_component_code) throw new Error("Confirm the component before analysing damage.");
+    return this.damageCodesForComponent(findingId,row.final_component_code);
   }
 
 
