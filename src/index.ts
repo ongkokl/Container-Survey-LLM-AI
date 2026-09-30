@@ -20,6 +20,7 @@ import { CedexClassificationService } from "./application/cedexClassificationSer
 import { DamageClassificationService } from "./application/damageClassificationService";
 import { OverviewDamagePocService } from "./application/overviewDamagePocService";
 import { OverviewAutoAnalysisService } from "./application/overviewAutoAnalysisService";
+import { CloseupMeasurementPocService } from "./application/closeupMeasurementPocService";
 import { RepairRecommendationService } from "./application/repairRecommendationService";
 import { LocationSuggestionService } from "./application/locationSuggestionService";
 import { FixedCameraCalibrationService } from "./application/fixedCameraCalibrationService";
@@ -185,6 +186,32 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"OVERVIEW_AUTO_FAILED",message:error instanceof Error?error.message:"Unable to run zero-touch overview analysis."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/poc/closeup-damage-measurement") {
+    try {
+      const body=await readJson<{
+        findingId?:string;
+        cameraId?:string;
+        overviewDamageBox?:unknown;
+        closeupDamageBox?:unknown;
+        alignmentReferenceBox?:unknown;
+      }>(request);
+      const result=await new CloseupMeasurementPocService(new CedexRepository(env.DB)).measure({
+        findingId:body.findingId??"",
+        cameraId:body.cameraId??"",
+        overviewDamageBox:body.overviewDamageBox,
+        closeupDamageBox:body.closeupDamageBox,
+        alignmentReferenceBox:body.alignmentReferenceBox
+      });
+      return json({ok:true,result});
+    } catch(error) {
+      return json({
+        ok:false,
+        error:"CLOSEUP_MEASUREMENT_POC_FAILED",
+        message:error instanceof Error?error.message:"Unable to estimate close-up damage dimensions."
+      },422);
     }
   }
 
