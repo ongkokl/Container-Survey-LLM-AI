@@ -1589,6 +1589,13 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         overviewMarkTools.hidden=false;
         tapHelp.hidden=false;
         tapHelp.textContent="AI could not identify the damage area. Manual marking is available only as a fallback.";
+        if(overviewDamagePocToggle?.checked){
+          overviewDamagePocReview.hidden=false;
+          overviewDamagePocSuggestion.textContent="Automatic damage localization completed but no reliable damage target was found.";
+          overviewDamagePocCandidates.textContent="";
+          overviewDamagePocMeta.textContent=result?.location?.reason||"Moondream and Qwen localization could not find a reliable damage target.";
+          overviewDamagePocRetry.hidden=true;
+        }
       }
     }catch(e){
       if(requestId!==overviewAiRequest)return;
