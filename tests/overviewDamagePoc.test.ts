@@ -139,4 +139,89 @@ describe("overview-only damage POC",()=>{
     expect(result.needsReview).toBe(true);
     expect(result.evidenceReviewRequired).toBe(true);
   });
+
+  it("classifies damage for an automatically detected non-PAA component",async()=>{
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f3",survey_id:"s3",container_face:"RIGHT",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      damageCodesForComponent:vi.fn(async(_findingId:string,componentCode:string)=>{
+        expect(componentCode).toBe("RLA");
+        return {componentCode:"RLA",damages:[
+          {damage_code:"DT",damage_name:"Dent / Bent"},
+          {damage_code:"CK",damage_name:"Cracked"}
+        ]};
+      }),
+      damageVisualRules:vi.fn(async()=>[
+        {
+          damage_code:"DT",component_code:"RLA",visual_definition:"Bent or deformed rail.",
+          positive_cues:"Rail profile displaced.",negative_cues:"No fracture.",
+          confusable_with:"CK",evidence_requirement:"VISUAL",force_review:0,source_reference:"test"
+        },
+        {
+          damage_code:"CK",component_code:"RLA",visual_definition:"Cracked rail.",
+          positive_cues:"Visible fracture.",negative_cues:"Not bend only.",
+          confusable_with:"DT",evidence_requirement:"VISUAL",force_review:0,source_reference:"test"
+        }
+      ])
+    } as unknown as CedexRepository;
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      const request=input as {messages:Array<{content:Array<{type:string;text?:string}>}>};
+      const prompt=String(request.messages[0].content[0].text??"");
+      expect(prompt).toContain("selected component RLA");
+      expect(prompt).not.toContain("intentionally assumed to be PAA");
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        selected_code:"DT",confidence:0.86,needs_review:false,
+        reason:"Rail profile is visibly bent without fracture.",
+        candidates:[{code:"DT",confidence:0.86,reason:"Bent rail profile."}]
+      })}}]};
+    })};
+
+    const result=await new OverviewDamagePocService(repo,ai).analyse({
+      findingId:"f3",file:file(),damageBox:{x:0.2,y:0.75,width:0.25,height:0.12},
+      locationCode:"RB3N",componentCode:"RLA"
+    });
+    expect(result.componentCode).toBe("RLA");
+    expect(result.componentAssumed).toBe(false);
+    expect(result.selectedCode).toBe("DT");
+  });
+
+  it("keeps history-only damage codes excluded if D1 visual rules are unavailable",async()=>{
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f4",survey_id:"s4",container_face:"RIGHT",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      damageCodesForComponent:vi.fn(async()=>({
+        componentCode:"PAA",
+        damages:[
+          {damage_code:"DT",damage_name:"Dent / Bent"},
+          {damage_code:"ME",damage_name:"Existing manufacturing defect"},
+          {damage_code:"MX",damage_name:"Misuse"},
+          {damage_code:"IR",damage_name:"Improper / Non-conforming repair"}
+        ]
+      })),
+      damageVisualRules:vi.fn(async()=>[])
+    } as unknown as CedexRepository;
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      const request=input as {response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}};
+      const codes=request.response_format.json_schema.schema.properties.selected_code.enum;
+      expect(codes).toContain("DT");
+      expect(codes).not.toContain("ME");
+      expect(codes).not.toContain("MX");
+      expect(codes).not.toContain("IR");
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        selected_code:"DT",confidence:0.82,needs_review:false,
+        reason:"Visible permanent panel deformation.",
+        candidates:[{code:"DT",confidence:0.82,reason:"Panel deformation."}]
+      })}}]};
+    })};
+
+    const result=await new OverviewDamagePocService(repo,ai).analyse({
+      findingId:"f4",file:file(),damageBox:{x:0.2,y:0.3,width:0.2,height:0.2},componentCode:"PAA"
+    });
+    expect(result.aiEligibleDamageCodes).toEqual(["DT"]);
+    expect(result.excludedFromPhotoOnlyAi).toEqual(expect.arrayContaining(["ME","MX","IR"]));
+  });
 });

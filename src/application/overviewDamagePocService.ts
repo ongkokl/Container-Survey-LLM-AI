@@ -3,6 +3,7 @@ import { CedexRepository, DamageVisualRule } from "../infrastructure/d1/cedexRep
 const MODEL="@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS=2000;
 const DAMAGE_REVIEW_THRESHOLD=0.8;
+const CONSERVATIVE_PHOTO_DAMAGE_CODES=new Set(["BN","CK","CO","CU","DT","DY","GD","ML","PF"]);
 
 type AiRunner={run(model:string,input:unknown):Promise<unknown>};
 type Candidate={code:string;confidence:number|null;reason:string};
@@ -80,6 +81,7 @@ export class OverviewDamagePocService{
     file:File;
     damageBox?:unknown;
     locationCode?:string|null;
+    componentCode?:string|null;
   }){
     const context=await this.repo.findingContext(input.findingId);
     if(!context)throw new Error("Finding not found.");
@@ -90,34 +92,45 @@ export class OverviewDamagePocService{
 
     const damageBox=normalizedBox(input.damageBox);
     if(!damageBox)throw new Error("A valid AI-detected damage box is required.");
-    const allowed=await this.repo.damageCodesForComponent(input.findingId,"PAA");
-    if(!allowed.damages.length)throw new Error("No verified PAA damage rules are loaded.");
+    const componentCode=(input.componentCode??"PAA").trim().toUpperCase();
+    const componentAssumed=!input.componentCode;
+    const allowed=await this.repo.damageCodesForComponent(input.findingId,componentCode);
+    if(!allowed.damages.length)throw new Error("No verified damage rules are loaded for component "+componentCode+".");
 
     const allCodes=[...new Set(allowed.damages.map(x=>x.damage_code))];
     const allSet=new Set(allCodes);
-    const rules=(await this.repo.damageVisualRules("GP","PAA")).filter(rule=>allSet.has(rule.damage_code));
+    const rules=(await this.repo.damageVisualRules("GP",componentCode)).filter(rule=>allSet.has(rule.damage_code));
     const eligibleRules=photoEligibleRules(rules);
     const eligibleCodes=new Set(eligibleRules.map(rule=>rule.damage_code));
     const eligibleDamages=eligibleRules.length
       ?allowed.damages.filter(x=>eligibleCodes.has(x.damage_code))
-      :allowed.damages;
+      :allowed.damages.filter(x=>CONSERVATIVE_PHOTO_DAMAGE_CODES.has(x.damage_code));
     const aiCodes=[...new Set(eligibleDamages.map(x=>x.damage_code))];
     const aiSet=new Set(aiCodes);
     const allowedText=eligibleDamages.map(x=>`${x.damage_code} = ${x.damage_name}`).join("\n");
     const location=(input.locationCode??"").trim().toUpperCase()||null;
 
-    const prompt=`POC TEST: classify one automatically detected visible damage on a GP container panel from an overview-photo crop.
-For this experiment the component is intentionally assumed to be PAA (Panel Assembly). Do not reclassify the component.
-The browser cropped the image around the AI-detected damage box, so the visible central defect is the PRIMARY target.
-Detected overview box: x=${damageBox.x.toFixed(4)}, y=${damageBox.y.toFixed(4)}, width=${damageBox.width.toFixed(4)}, height=${damageBox.height.toFixed(4)}.
-${location?`Calculated CEDEX location: ${location}. This is supporting position context only.`:"No calculated CEDEX location is available."}
-
-Classify the PRIMARY visible physical damage only. Ignore unrelated marks, paint, rust, dirt or other defects outside the central detected damage.
+    if(!eligibleDamages.length)throw new Error("No photo-eligible damage codes are available for component "+componentCode+".");
+    const componentInstruction=componentAssumed
+      ?"For this experiment the component is intentionally assumed to be PAA (Panel Assembly). Do not reclassify the component."
+      :"The previous AI stage selected component "+componentCode+". Classify damage for that component only; do not change the component.";
+    const paaPriority=componentCode==="PAA"
+      ?`
 For GP/PAA use this morphology priority:
 1. CK for a true fracture/split/crack line. CU for a sharp cut, severed edge or cut penetration. A true material discontinuity outranks a dent.
 2. DT for permanent panel displacement, depression, buckle, bend, crease or deformation when there is no crack/cut.
 3. PF, CO, DY or GD only when that surface condition is the dominant damage and no stronger structural break/deformation is present.
 4. IR may be suggested when the target visibly appears to be a previous repair (patch, weld, inserted piece or repair workmanship), but IR must set needs_review=true because a photo alone cannot prove IICL conformity.
+`
+      :"";
+    const prompt=`POC TEST: classify one automatically detected visible damage on a GP container component from an overview-photo crop.
+${componentInstruction}
+The browser cropped the image around the AI-detected damage box, so the visible central defect is the PRIMARY target.
+Detected overview box: x=${damageBox.x.toFixed(4)}, y=${damageBox.y.toFixed(4)}, width=${damageBox.width.toFixed(4)}, height=${damageBox.height.toFixed(4)}.
+${location?`Calculated CEDEX location: ${location}. This is supporting position context only.`:"No calculated CEDEX location is available."}
+
+Classify the PRIMARY visible physical damage only. Ignore unrelated marks, paint, rust, dirt or other defects outside the central detected damage.
+${paaPriority}
 If the crop is too weak to distinguish the damage type, return selected_code=null and needs_review=true rather than guessing.
 
 Visual rules:
@@ -224,10 +237,10 @@ Return only JSON with selected_code, confidence, needs_review, reason (max 20 wo
       ?allowed.damages.find(item=>item.damage_code===selectedCode)?.damage_name??null
       :null;
     return {
-      pocMode:"OVERVIEW_SINGLE_PAA_DAMAGE",
+      pocMode:componentAssumed?"OVERVIEW_SINGLE_PAA_DAMAGE":"OVERVIEW_AUTO_COMPONENT_DAMAGE",
       source:"AI_DETECTED_OVERVIEW_CROP",
-      componentCode:"PAA",
-      componentAssumed:true,
+      componentCode,
+      componentAssumed,
       damageBox,
       locationCode:location,
       analysisStatus,

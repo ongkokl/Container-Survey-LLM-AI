@@ -172,7 +172,7 @@
         <label class="camera compact" for="overviewGalleryPhoto"><span class="cameraIcon">▧</span><strong>Load fixed-camera overview for POC test</strong><span>Use a photo representing the selected fixed camera position.</span></label>
         <input id="overviewGalleryPhoto" type="file" accept="image/*" hidden>
         <p class="message"><strong>Measurement photo:</strong> no digital zoom · avoid strong angle/glare · keep full damage visible · include known container geometry.</p>
-        <label class="field"><span><input id="overviewDamagePocToggle" type="checkbox"> Overview-only panel damage POC</span><small>When enabled for GP side/front tests, AI detects one damage box, calculates CEDEX location, assumes PAA, then classifies the damage code from the detected crop.</small></label>
+        <label class="field"><span><input id="overviewDamagePocToggle" type="checkbox"> Zero-touch AI finding POC</span><small>GP side/front test: upload one overview only. AI locates one damage, calculates CEDEX location, detects the component and classifies the damage — no box drawing or pinpoint required.</small></label>
         <div id="overviewStage" class="annotationStage" hidden><img id="overviewPreview" alt="Overview measurement photo"><canvas id="overviewCanvas"></canvas></div>
         <div id="overviewMarkTools" class="markTools" hidden role="group" aria-label="Overview damage marking mode">
           <button id="markAreaBtn" class="markTool active" type="button" aria-pressed="true">Draw damage area</button>
@@ -207,11 +207,11 @@
           <span class="message">All six fixed cameras use stored calibration to map the confirmed damage position to CEDEX location. Surveyor confirmation remains required.</span>
         </div>
         <div id="overviewDamagePocReview" class="info" hidden>
-          <strong>Overview-only damage POC</strong>
-          <span id="overviewDamagePocSuggestion" class="message">Waiting for AI damage detection…</span>
+          <strong>Zero-touch AI finding</strong>
+          <span id="overviewDamagePocSuggestion" class="message">Waiting for automatic component, damage and location analysis…</span>
           <span id="overviewDamagePocCandidates" class="message"></span>
           <span id="overviewDamagePocMeta" class="message"></span>
-          <button id="overviewDamagePocRetry" class="secondary" type="button" hidden>Re-run on current damage box</button>
+          <button id="overviewDamagePocRetry" class="secondary" type="button" hidden>Re-run automatic analysis</button>
         </div>
         <button id="closeupCameraBtn" class="camera compact" type="button"><span class="cameraIcon">▣</span><strong>Capture optical-zoom damage close-up</strong><span>POC assumption: the same fixed camera optically zooms to the confirmed overview damage region.</span></button>
         <input id="closeupPhoto" type="file" accept="image/*" capture="environment" hidden>

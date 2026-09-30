@@ -1185,9 +1185,12 @@ function drawDamageAnalysisCallout(canvas,box,result){
   const mapped=annotationStageBox(canvas,box);
   const confidence=typeof result.confidence==="number"?Math.round(result.confidence*100):null;
   const title=result.selectedCode+(result.selectedName?" · "+result.selectedName:"");
+  const componentLabel=result.componentCode
+    ?result.componentCode+(result.componentName?" "+result.componentName:"")
+    :null;
   const detail=[
     confidence!==null?confidence+"%":null,
-    result.componentCode||"PAA",
+    componentLabel,
     result.locationCode||normalizedLocationCode(locationCodeInput.value)||null
   ].filter(Boolean).join(" · ");
   const review=result.needsReview?"Review required":null;
@@ -1419,18 +1422,27 @@ function renderOverviewDamagePocResult(result){
   currentOverviewDamagePocResult=result??null;
   overviewDamagePocReview.hidden=false;
   const failed=["INCOMPLETE","INVALID_RESPONSE"].includes(result?.analysisStatus);
+  const componentText=result?.componentCode
+    ?"Component "+result.componentCode+(result.componentName?" — "+result.componentName:"")+
+      (typeof result.componentConfidence==="number"?" · "+Math.round(result.componentConfidence*100)+"%":"")
+    :"Component not reliable";
+  const damageText=result?.selectedCode
+    ?"Damage "+result.selectedCode+(result.selectedName?" — "+result.selectedName:"")+
+      (typeof result.confidence==="number"?" · "+Math.round(result.confidence*100)+"%":"")
+    :"Damage not classified";
   overviewDamagePocSuggestion.textContent=failed
-    ?result.reason
-    :result?.selectedCode
-      ?"Damage "+result.selectedCode+" · "+Math.round((result.confidence??0)*100)+"% confidence"+(result.needsReview?" · review required":"")
-      :"No reliable damage code selected · review required";
-  overviewDamagePocCandidates.textContent=result?.candidates?.length
-    ?"Candidates: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"%":"—")+(x.reason?" · "+x.reason:"")).join(" | ")
-    :result?.reason??"";
+    ?"Automatic analysis incomplete · "+(result?.componentReason||result?.damageReason||"retry required")
+    :componentText+" | "+damageText+(result?.needsReview?" · review required":"");
+  const componentCandidates=result?.componentCandidates?.length
+    ?"Component candidates: "+result.componentCandidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"%":"—")).join(" / ")
+    :"";
+  const damageCandidates=result?.candidates?.length
+    ?"Damage candidates: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"%":"—")).join(" / ")
+    :"";
+  overviewDamagePocCandidates.textContent=[componentCandidates,damageCandidates].filter(Boolean).join(" · ");
   overviewDamagePocMeta.textContent=
     "Location "+(result?.locationCode||locationCodeInput.value||"—")+
-    " · POC component assumed PAA — Panel Assembly"+
-    " · source: AI-detected overview damage crop.";
+    " · one overview photo · AI-detected damage region · no manual box/pinpoint used.";
   overviewDamagePocRetry.hidden=!validNormalizedBox(locationArea??aiLocationArea);
   drawOverviewComposite();
 }
@@ -1439,7 +1451,7 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
   if(!overviewDamagePocToggle?.checked||!currentFinding||!overviewFile||!validNormalizedBox(box))return;
   if(!["LEFT","RIGHT","FRONT"].includes(findingFace.value)){
     overviewDamagePocReview.hidden=false;
-    overviewDamagePocSuggestion.textContent="This POC currently supports GP side/front panel views only.";
+    overviewDamagePocSuggestion.textContent="Zero-touch POC currently supports GP side/front views only.";
     overviewDamagePocCandidates.textContent="";
     overviewDamagePocMeta.textContent="";
     overviewDamagePocRetry.hidden=true;
@@ -1449,9 +1461,9 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
   currentOverviewDamagePocResult=null;
   drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
-  overviewDamagePocSuggestion.textContent="Classifying the AI-detected panel damage from the overview crop…";
+  overviewDamagePocSuggestion.textContent="Detecting the component and damage from the AI-located overview region…";
   overviewDamagePocCandidates.textContent="";
-  overviewDamagePocMeta.textContent="POC assumption: component PAA — Panel Assembly.";
+  overviewDamagePocMeta.textContent="Location comes from the fixed-camera geometry; no manual box or pinpoint is used.";
   overviewDamagePocRetry.hidden=true;
   try{
     const crop=await createOverviewDamagePocCrop(overviewFile,box);
@@ -1461,20 +1473,20 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
     form.append("findingId",currentFinding.id);
     form.append("damageBox",JSON.stringify(box));
     form.append("locationCode",normalizedLocationCode(locationCodeInput.value||aiLocationCode||""));
-    const result=await apiJson("/api/poc/overview-damage-classify",{method:"POST",body:form});
+    const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
     if(requestId!==overviewDamagePocRequest)return;
     renderOverviewDamagePocResult(result);
   }catch(e){
     if(requestId!==overviewDamagePocRequest)return;
-    if(["OVERVIEW_DAMAGE_POC_INCOMPLETE","OVERVIEW_DAMAGE_POC_INVALID_RESPONSE"].includes(e?.code)&&e.result){
+    if(["OVERVIEW_AUTO_INCOMPLETE","OVERVIEW_AUTO_INVALID_RESPONSE"].includes(e?.code)&&e.result){
       renderOverviewDamagePocResult(e.result);
     }else{
       currentOverviewDamagePocResult=null;
       drawOverviewComposite();
       overviewDamagePocReview.hidden=false;
-      overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Overview damage POC failed.";
+      overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Zero-touch overview analysis failed.";
       overviewDamagePocCandidates.textContent="";
-      overviewDamagePocMeta.textContent="Location detection remains available; only the experimental damage-code step failed.";
+      overviewDamagePocMeta.textContent="The detected location remains available; component/damage can be reviewed manually.";
       overviewDamagePocRetry.hidden=!validNormalizedBox(box);
     }
   }
@@ -1485,16 +1497,20 @@ overviewDamagePocToggle?.addEventListener("change",()=>{
     overviewDamagePocRequest++;
     currentOverviewDamagePocResult=null;
     overviewDamagePocReview.hidden=true;
+    overviewMarkTools.hidden=!overviewFile;
+    tapHelp.hidden=!overviewFile;
     drawOverviewComposite();
     return;
   }
+  overviewMarkTools.hidden=true;
+  tapHelp.hidden=true;
   const box=validNormalizedBox(locationArea)?locationArea:aiLocationArea;
   if(validNormalizedBox(box))void runOverviewDamagePoc(box);
   else{
     overviewDamagePocReview.hidden=false;
-    overviewDamagePocSuggestion.textContent="Upload an overview and let AI detect one damage area first.";
+    overviewDamagePocSuggestion.textContent="Upload one overview and let AI locate the damage automatically.";
     overviewDamagePocCandidates.textContent="";
-    overviewDamagePocMeta.textContent="POC assumption: GP PAA panel damage.";
+    overviewDamagePocMeta.textContent="No damage box or pinpoint is required from the surveyor.";
     overviewDamagePocRetry.hidden=true;
   }
 });
@@ -1512,9 +1528,10 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
   findingMessage.textContent="Fixed Camera "+(selectedFixedCamera()?.id??"—")+" overview loaded. Face/orientation and perspective come from the stored camera profile/calibration; AI will locate the damage area.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
-    overviewMarkTools.hidden=false;
+    overviewMarkTools.hidden=Boolean(overviewDamagePocToggle?.checked);
     setOverviewMarkMode("AREA");
-    tapHelp.hidden=false;tapHelp.textContent="AI is locating the visible structural damage area…";
+    tapHelp.hidden=Boolean(overviewDamagePocToggle?.checked);
+    tapHelp.textContent="AI is locating the visible structural damage area…";
     try{
       if(currentFixedCalibration?.available&&Array.isArray(currentFixedCalibration.corners)){
         const edgeAlignment=estimateFixedFaceAlignment(overviewPreview,currentFixedCalibration.corners);
@@ -1551,7 +1568,11 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         overviewStage.dataset.markMode="AREA";
         drawOverviewComposite();
         tapHelp.textContent="AI proposed this damage area. Drag on the photo to redraw it, or switch to Pinpoint damage for a small defect.";
-        if(overviewDamagePocToggle?.checked)void runOverviewDamagePoc(locationArea);
+        if(overviewDamagePocToggle?.checked){
+          overviewMarkTools.hidden=true;
+          tapHelp.hidden=true;
+          void runOverviewDamagePoc(locationArea);
+        }
       }else if(!overviewEdited&&aiLocationPoint){
         locationPoint={...aiLocationPoint};
         overviewMarkMode="POINT";
@@ -1564,7 +1585,9 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         await recalculateLocationFromMark();
       }else{
         drawOverviewComposite();
-        tapHelp.textContent="AI could not identify the damage area. Drag a box around the damage, or switch to Pinpoint damage for a small defect.";
+        overviewMarkTools.hidden=false;
+        tapHelp.hidden=false;
+        tapHelp.textContent="AI could not identify the damage area. Manual marking is available only as a fallback.";
       }
     }catch(e){
       if(requestId!==overviewAiRequest)return;
