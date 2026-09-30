@@ -134,26 +134,15 @@ export class MoondreamDamageMarker {
     const validCandidates=candidates
       .filter(box=>[box.x,box.y,box.width,box.height].every(Number.isFinite)&&box.width>0&&box.height>0)
       .slice(0,3);
-    if(!validCandidates.length){
-      return {
-        found:false,
-        model:QWEN_MODEL,
-        decision:"NONE" as const,
-        geometry:null,
-        selectedCandidateIndex:null,
-        confidence:null,
-        priorityClass:"NO_RELIABLE_DAMAGE",
-        reason:"No Moondream damage candidates were available for primary-damage review.",
-        raw:null
-      };
-    }
-
-    const candidateText=validCandidates.map((box,index)=>
-      `${index}: x=${box.x.toFixed(4)}, y=${box.y.toFixed(4)}, width=${box.width.toFixed(4)}, height=${box.height.toFixed(4)}`
-    ).join("\n");
+    const candidateText=validCandidates.length
+      ?validCandidates.map((box,index)=>
+          `${index}: x=${box.x.toFixed(4)}, y=${box.y.toFixed(4)}, width=${box.width.toFixed(4)}, height=${box.height.toFixed(4)}`
+        ).join("\n")
+      :"NONE — Moondream returned no candidate boxes. Search the full overview image directly.";
     const prompt=`ZERO-TOUCH PRIMARY DAMAGE SELECTION.
 This is a fixed-camera overview of the shipping container ${faceName} face.
-Moondream proposed up to three candidate damage regions. Review the FULL overview image as well as those coordinates and choose the SINGLE primary physical damage for this one-finding POC.
+Moondream may provide up to three candidate damage regions. Review the FULL overview image as well as any supplied coordinates and choose the SINGLE primary physical damage for this one-finding POC.
+If no candidate boxes were supplied, you MUST still inspect the full overview and may return OVERRIDE_POINT for a clearly visible primary defect.
 
 Candidate boxes (normalized image coordinates, top-left origin):
 ${candidateText}
@@ -170,7 +159,7 @@ A row or line of repeated dents/deformations across corrugations is ONE structur
 Ignore normal corrugations, perspective, logos, lettering, paint shade variation, reflections, shadows, dirt, timestamps and background objects.
 
 Return decision=CANDIDATE when one supplied box is the best primary damage.
-Return decision=OVERRIDE_POINT when the strongest primary physical damage is visibly elsewhere; return the centre of that damage as normalized x/y.
+Return decision=OVERRIDE_POINT when the strongest primary physical damage is visibly elsewhere OR when Moondream supplied no boxes; return the centre of that damage as normalized x/y.
 Return decision=NONE only when no physical damage is visually supportable.
 Do not classify the CEDEX damage code here. Return only JSON.`;
 

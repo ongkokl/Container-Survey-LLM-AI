@@ -208,35 +208,33 @@ export class LocationSuggestionService{
       let primarySelectorReason:string|null=null;
       let selectedCandidateIndex:number|null=null;
 
-      if(detectedDamageCandidates.length){
-        primaryReviewAttempted=true;
-        try{
-          const primary=await this.marker.selectPrimaryOverviewDamage(
-            input.file,
-            context.container_face,
-            detectedDamageCandidates
-          );
-          primarySelectorModel=primary.model;
-          primarySelectorDecision=primary.decision;
-          primarySelectorConfidence=primary.confidence;
-          primarySelectorPriorityClass=primary.priorityClass;
-          primarySelectorReason=primary.reason||null;
-          selectedCandidateIndex=primary.selectedCandidateIndex;
-          if(primary.found&&primary.decision==="CANDIDATE"&&primary.geometry&&"width" in primary.geometry){
-            damageBox=primary.geometry;
-            localizationSource="QWEN_PRIMARY_BOX";
-          }else if(primary.found&&primary.decision==="OVERRIDE_POINT"&&primary.geometry&&!("width" in primary.geometry)){
-            pointFallback=primary.geometry;
-            damageBox=contextBoxAroundPoint(pointFallback);
-            localizationSource="QWEN_PRIMARY_OVERRIDE_POINT";
-          }else{
-            damageBox=null;
-          }
-        }catch(error){
-          primarySelectorDecision="ERROR";
-          primarySelectorReason=error instanceof Error?error.message:"Primary-damage selector unavailable.";
-          localizationSource="DETECT_BOX";
+      primaryReviewAttempted=true;
+      try{
+        const primary=await this.marker.selectPrimaryOverviewDamage(
+          input.file,
+          context.container_face,
+          detectedDamageCandidates
+        );
+        primarySelectorModel=primary.model;
+        primarySelectorDecision=primary.decision;
+        primarySelectorConfidence=primary.confidence;
+        primarySelectorPriorityClass=primary.priorityClass;
+        primarySelectorReason=primary.reason||null;
+        selectedCandidateIndex=primary.selectedCandidateIndex;
+        if(primary.found&&primary.decision==="CANDIDATE"&&primary.geometry&&"width" in primary.geometry){
+          damageBox=primary.geometry;
+          localizationSource="QWEN_PRIMARY_BOX";
+        }else if(primary.found&&primary.decision==="OVERRIDE_POINT"&&primary.geometry&&!("width" in primary.geometry)){
+          pointFallback=primary.geometry;
+          damageBox=contextBoxAroundPoint(pointFallback);
+          localizationSource="QWEN_PRIMARY_OVERRIDE_POINT";
+        }else{
+          damageBox=null;
         }
+      }catch(error){
+        primarySelectorDecision="ERROR";
+        primarySelectorReason=error instanceof Error?error.message:"Primary-damage selector unavailable.";
+        localizationSource="DETECT_BOX";
       }
 
       if(!damageBox){
@@ -252,16 +250,16 @@ export class LocationSuggestionService{
           pointFallbackModel=pointed.model;
         }else{
           const reasoned=await this.marker.reasonedPointOverview(input.file,context.container_face);
+          pointFallbackModel=reasoned.model;
+          pointFallbackConfidence=reasoned.confidence;
+          pointFallbackReason=reasoned.reason||null;
           if(reasoned.found&&reasoned.geometry){
             pointFallback=reasoned.geometry;
             damageBox=contextBoxAroundPoint(pointFallback);
             localizationSource="QWEN_POINT_FALLBACK";
-            pointFallbackModel=reasoned.model;
-            pointFallbackConfidence=reasoned.confidence;
-            pointFallbackReason=reasoned.reason||null;
           }else{
           const reason=calibration.available
-            ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. AI could not detect, pinpoint or reason to a visible damage area; manual marking is now the fallback."
+            ?"Fixed Camera "+fixedCamera.id+" calibration is loaded. AI could not detect, pinpoint or reason to a visible damage area, including the Qwen full-overview primary-damage search; manual marking is now the fallback."
             :"Fixed Camera "+fixedCamera.id+" calibration is not configured for this container size. Run the one-time admin calibration before automatic location.";
           const prediction=await this.repo.saveLocationPrediction({
             findingId:input.findingId,
@@ -279,6 +277,9 @@ export class LocationSuggestionService{
               pointFallbackFound:false,
               qwenFallbackAttempted:true,
               qwenFallbackFound:false,
+              qwenFallbackModel:pointFallbackModel,
+              qwenFallbackConfidence:pointFallbackConfidence,
+              qwenFallbackReason:pointFallbackReason,
               damageCandidates:detectedDamageCandidates,
               primaryDamageSelection:{
                 attempted:primaryReviewAttempted,
@@ -344,6 +345,9 @@ export class LocationSuggestionService{
             pointFallbackFound:false,
             qwenFallbackAttempted:true,
             qwenFallbackFound:false,
+            qwenFallbackModel:pointFallbackModel,
+            qwenFallbackConfidence:pointFallbackConfidence,
+            qwenFallbackReason:pointFallbackReason,
             damageCandidates:detectedDamageCandidates,
             primaryDamageSelection:{
               attempted:primaryReviewAttempted,
