@@ -61,7 +61,10 @@ function selectedDamageRule(rules:DamageVisualRule[],code:string|null){
 }
 
 function photoEligibleRules(rules:DamageVisualRule[]){
-  return rules.filter(rule=>rule.evidence_requirement==="VISUAL");
+  return rules.filter(rule=>
+    rule.evidence_requirement==="VISUAL"||
+    (rule.damage_code==="IR"&&rule.evidence_requirement==="HISTORY_CONTEXT")
+  );
 }
 
 
@@ -120,13 +123,15 @@ ${equipment==="GP"&&allowed.componentCode==="PAA"?`For GP/PAA use this morpholog
 2. If there is no true discontinuity but the panel profile is permanently displaced, buckled, bent or depressed, DT outranks incidental paint loss, rust staining, dirt or superficial abrasion.
 3. Use PF, CO, DY or GD as the primary code only when that surface condition is itself the dominant morphology and there is no stronger structural break or deformation at the target.
 Do not label CK/CU as DT merely because surrounding sheet metal is also bent. Do not label a clear DT as PF or CO merely because coating loss or corrosion appears on the deformed area.`:""}
-Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code. Codes whose evidence requirement is MEASUREMENT or HISTORY_CONTEXT may be suggested only when visually plausible, but must set needs_review true because the photo alone cannot establish the required evidence. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
+Do not abstain merely because exact severity or repair measurement is unavailable: if the visible damage type itself is clear, return that damage code.
+IR (Improper / Non-conforming repair) is a special photo-eligible exception: suggest IR only when the target visibly appears to be a previous repair (for example a patch, weld, inserted piece or repair workmanship) and always set needs_review true because the photo alone cannot prove IICL conformity.
+Other codes whose evidence requirement is MEASUREMENT or HISTORY_CONTEXT remain excluded from the photo-only AI suggestion. If the image truly does not distinguish the damage type, return selected_code null and needs_review true.
 
 ${visualGuidance}
 
 Photo-eligible damage codes for ${allowed.componentCode}:
 ${aiAllowedText}
-Codes requiring measurement, history or broader context remain available for manual surveyor selection but are intentionally excluded from this photo-only AI suggestion.
+Codes requiring measurement, history or broader context remain available for manual surveyor selection and are excluded from this photo-only AI suggestion, except IR when visible previous-repair evidence is present. IR always requires surveyor review.
 
 Return only the final JSON object with selected_code (an allowed code or JSON null), confidence (0 to 1 or null), needs_review (boolean), reason (maximum 20 words), and candidates (at most 3 objects with code, confidence and a maximum 15-word reason). Keep the answer concise. Do not explain your reasoning outside the JSON.`;
 
