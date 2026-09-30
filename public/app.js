@@ -483,6 +483,9 @@ const closeupGalleryPhoto=document.querySelector("#closeupGalleryPhoto");
 const closeupStage=document.querySelector("#closeupStage");
 const closeupPreview=document.querySelector("#closeupPreview");
 const closeupCanvas=document.querySelector("#closeupCanvas");
+const closeupMeasurementReview=document.querySelector("#closeupMeasurementReview");
+const closeupMeasurementText=document.querySelector("#closeupMeasurementText");
+const closeupMeasurementMeta=document.querySelector("#closeupMeasurementMeta");
 const boxHelp=document.querySelector("#boxHelp");
 const saveFindingBtn=document.querySelector("#saveFindingBtn");
 const findingMessage=document.querySelector("#findingMessage");
@@ -520,11 +523,11 @@ let repairRecommendationGenerated=false,repairRecommendationStale=true,currentRe
 
 let currentSurveyId=null,currentFinding=null,overviewFile=null,closeupFile=null,locationPoint=null,locationArea=null,closeupTargetPoint=null;
 let overviewPointerDebug=null,closeupPointerDebug=null;
-let aiLocationPoint=null,aiLocationArea=null,aiCloseupTargetPoint=null;
+let aiLocationPoint=null,aiLocationArea=null,aiCloseupTargetPoint=null,aiCloseupDamageBox=null;
 let overviewAiRequest=0,closeupAiRequest=0,overviewDamagePocRequest=0,overviewEdited=false,closeupEdited=false;
 let overviewMarkMode="AREA",overviewDragStart=null;
 let currentGeometry=null,overviewCaptureMeta=null,closeupCaptureMeta=null;
-let currentAutoDamageMeasurement=null;
+let currentAutoDamageMeasurement=null,currentOverviewDamageMeasurement=null,currentCloseupDamageMeasurement=null;
 let currentOverviewDamagePocResult=null;
 let locationReferenceBox=null,locationAutoUsable=false,aiLocationCode=null,locationRecalcRequest=0;
 let locationReferenceQuad=null,faceMarkMode=false,faceMarkPoints=[],faceMarkResumeMode="AREA";
@@ -651,6 +654,8 @@ createFindingBtn.addEventListener("click",async()=>{
     geometryReference.hidden=true;
     geometryReferenceText.textContent="";
     currentGeometry=null;currentFixedCalibration=null;overviewCaptureMeta=null;closeupCaptureMeta=null;
+    currentAutoDamageMeasurement=null;currentOverviewDamageMeasurement=null;currentCloseupDamageMeasurement=null;
+    aiCloseupDamageBox=null;closeupMeasurementReview.hidden=true;closeupMeasurementText.textContent="";closeupMeasurementMeta.textContent="";
     locationReferenceBox=null;locationAutoUsable=false;aiLocationCode=null;locationRecalcRequest++;
     locationReferenceQuad=null;faceMarkMode=false;faceMarkPoints=[];faceMarkResumeMode="AREA";
     locationPoint=null;locationArea=null;aiLocationPoint=null;aiLocationArea=null;overviewEdited=false;overviewMarkMode="AREA";overviewDragStart=null;
