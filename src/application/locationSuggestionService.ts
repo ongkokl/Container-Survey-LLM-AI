@@ -495,7 +495,7 @@ export class LocationSuggestionService{
     const calculated=referenceBox?suggestCedexLocation({
       face:context.container_face as SurveyFace,
       lengthFt:Number(context.length_ft)||40,
-      damageBox,
+      damageBox:located.damageBox,
       referenceBox
     }):null;
 
@@ -533,7 +533,7 @@ export class LocationSuggestionService{
       status:selectedCode?"REVIEW_REQUIRED":"FAILED",
       response:{
         found:true,
-        damageBox,
+        damageBox:located.damageBox,
         point,
         referenceBox,
         referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
@@ -572,7 +572,7 @@ export class LocationSuggestionService{
       model:located.model,
       predictionId:prediction.predictionId,
       point,
-      damageBox,
+      damageBox:located.damageBox,
       referenceBox,
       referenceSource:fixedCameraMatches?(guided?"FIXED_CAMERA_GUIDED_FRAME":"FIXED_CAMERA_AI_GEOMETRY"):guided?"GUIDED_FRAME":"AI_FACE",
       geometryScore:score,
