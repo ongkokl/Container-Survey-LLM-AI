@@ -1,4 +1,5 @@
 const MODEL="@cf/moondream/moondream3.1-9B-A2B";
+const QWEN_MODEL="@cf/qwen/qwen3.8-27b";
 
 type AiRunner={run(model:string,input:unknown):Promise<unknown>};
 
@@ -51,6 +52,30 @@ function largestBox(raw:unknown):{x:number;y:number;width:number;height:number}|
   return boxes.sort((a,b)=>b.width*b.height-a.width*a.height)[0];
 }
 
+function record(value:unknown):Record<string,unknown>|null{
+  return value!==null&&typeof value==="object"&&!Array.isArray(value)
+    ?value as Record<string,unknown>
+    :null;
+}
+
+function parseQwenJson(raw:unknown):Record<string,unknown>|null{
+  const envelope=record(raw);
+  const first=Array.isArray(envelope?.choices)?record(envelope.choices[0]):null;
+  const message=record(first?.message);
+  const values=first?[message?.content]:[raw,envelope?.response,envelope?.result,envelope?.output_text];
+  for(const value of values){
+    const object=record(value);
+    if(object&&Object.hasOwn(object,"found"))return object;
+    if(typeof value!=="string")continue;
+    const text=value.trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
+    try{
+      const parsed=record(JSON.parse(text));
+      if(parsed)return parsed;
+    }catch{}
+  }
+  return null;
+}
+
 export class MoondreamDamageMarker {
   constructor(private readonly ai:AiRunner){}
 
@@ -90,6 +115,68 @@ export class MoondreamDamageMarker {
     return geometry
       ? {found:true,model:MODEL,geometry,raw}
       : {found:false,model:MODEL,geometry:null,raw};
+  }
+
+  async reasonedPointOverview(file:File,face:string){
+    const image=await this.imageData(file);
+    const faceName=String(face||"container").toLowerCase();
+    const prompt=`ZERO-TOUCH DAMAGE LOCALIZATION FALLBACK.
+This is a fixed-camera overview of the shipping container ${faceName} face.
+Moondream object detection and pinpoint both failed, so inspect the full image carefully.
+
+Find the SINGLE most obvious physical damage or previous repair area on the container itself.
+Look for dent, deformation, buckle, crease, bent profile, crack, cut, puncture, tear, repair patch, distorted rail or distorted panel.
+Ignore normal corrugations, perspective, logos, lettering, paint shade variation, reflections, shadows, dirt, timestamps and background objects.
+
+Return the CENTER of the damage as normalized image coordinates x and y from 0 to 1.
+If no physical defect is visually supportable, return found=false rather than guessing.
+Confidence is confidence that the returned point is on a real physical defect, not confidence in the CEDEX code.
+Return only JSON.`;
+
+    const raw=await this.ai.run(QWEN_MODEL,{
+      messages:[{role:"user",content:[
+        {type:"text",text:prompt},
+        {type:"image_url",image_url:{url:image}}
+      ]}],
+      max_completion_tokens:900,
+      reasoning_effort:"low",
+      temperature:0,
+      response_format:{
+        type:"json_schema",
+        json_schema:{
+          name:"overview_damage_point_fallback",
+          strict:true,
+          schema:{
+            type:"object",
+            properties:{
+              found:{type:"boolean"},
+              x:{type:["number","null"],minimum:0,maximum:1},
+              y:{type:["number","null"],minimum:0,maximum:1},
+              confidence:{type:["number","null"],minimum:0,maximum:1},
+              reason:{type:"string"}
+            },
+            required:["found","x","y","confidence","reason"],
+            additionalProperties:false
+          }
+        }
+      }
+    });
+
+    const parsed=parseQwenJson(raw);
+    const x=finite(parsed?.x),y=finite(parsed?.y),confidence=finite(parsed?.confidence);
+    const supported=Boolean(
+      parsed?.found===true&&
+      x!==null&&y!==null&&x>=0&&x<=1&&y>=0&&y<=1&&
+      confidence!==null&&confidence>=0.45
+    );
+    return {
+      found:supported,
+      model:QWEN_MODEL,
+      geometry:supported?{x,y}:null,
+      confidence:confidence!==null?Math.max(0,Math.min(1,confidence)):null,
+      reason:typeof parsed?.reason==="string"?parsed.reason.trim():"",
+      raw
+    };
   }
 
   async locateOverview(
