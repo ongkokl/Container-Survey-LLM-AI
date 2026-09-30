@@ -734,6 +734,11 @@ function applyPhysicalMeasurement(measurement){
   }else if(measurement.source==="OVERVIEW_DAMAGE_BOX"){
     currentOverviewDamageMeasurement=measurement;
     currentCloseupDamageMeasurement=null;
+    if(closeupMeasurementReview&&!closeupMeasurementReview.hidden){
+      closeupMeasurementReview.hidden=true;
+      closeupMeasurementText.textContent="";
+      closeupMeasurementMeta.textContent="";
+    }
   }
   const x=(measurement.spanXmm/10).toFixed(1);
   const y=(measurement.spanYmm/10).toFixed(1);
@@ -2087,8 +2092,22 @@ saveFindingBtn.addEventListener("click",async()=>{
     if(closeupCaptureMeta){
       closeupCaptureMeta.annotationCoordinateSpace="SOURCE_IMAGE_NORMALIZED";
       closeupCaptureMeta.pointerMapping=closeupPointerDebug;
+      closeupCaptureMeta.aiDamageBox=aiCloseupDamageBox?{...aiCloseupDamageBox}:null;
+      if(currentCloseupDamageMeasurement){
+        closeupCaptureMeta.closeupMeasurement={
+          source:currentCloseupDamageMeasurement.source,
+          method:currentCloseupDamageMeasurement.method,
+          spanXmm:currentCloseupDamageMeasurement.spanXmm,
+          spanYmm:currentCloseupDamageMeasurement.spanYmm,
+          majorCm:currentCloseupDamageMeasurement.majorCm,
+          minorCm:currentCloseupDamageMeasurement.minorCm,
+          framingAssumption:currentCloseupDamageMeasurement.framingAssumption,
+          requiresSurveyorVerification:true
+        };
+      }
     }
     const closeup=await uploadFindingPhoto(closeupFile,"DAMAGE_CLOSEUP",closeupPreview,closeupCaptureMeta);
+    if(aiCloseupDamageBox) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"DAMAGE",geometryType:"BOX",geometry:aiCloseupDamageBox,createdBy:"AI"})});
     if(aiCloseupTargetPoint) await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:aiCloseupTargetPoint,createdBy:"AI"})});
     await apiJson("/api/annotations",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({photoId:closeup.photoId,annotationType:"COMPONENT",geometryType:"POINT",geometry:closeupTargetPoint,createdBy:"SURVEYOR"})});
     const componentTarget=await createComponentTargetCrop(closeupFile,closeupTargetPoint);
@@ -2337,7 +2356,9 @@ function prepareRepairReasoning(componentCode,damageCode){
   repairDirection.value="UNKNOWN";
   repairCorrugations.value="";
   repairNotes.value=currentAutoDamageMeasurement
-    ?"Length/width prefilled from fixed-camera plane-projected measurement; surveyor verified/adjusted before recommendation."
+    ?currentAutoDamageMeasurement.source==="CLOSEUP_DAMAGE_BOX_RELATIVE_TO_OVERVIEW_ROI"
+      ?"Length/width prefilled from close-up refined POC estimate (AI extent × calibrated overview ROI); surveyor verified/adjusted before recommendation."
+      :"Length/width prefilled from fixed-camera plane-projected overview measurement; surveyor verified/adjusted before recommendation."
     :"";
 
   const mappedDent=componentCode==="PAA"&&damageCode==="DT"&&["LEFT","RIGHT","FRONT"].includes(findingFace.value);
