@@ -206,7 +206,7 @@ export class LocationSuggestionService{
           const prediction=await this.repo.saveLocationPrediction({
             findingId:input.findingId,
             surveyId:context.survey_id,
-            modelName:located.model,
+            modelName:localizationModel,
             selectedCode:null,
             status:"FAILED",
             response:{
@@ -278,21 +278,24 @@ export class LocationSuggestionService{
         }
       }
 
+      const resolvedDamageBox=damageBox;
+      if(!resolvedDamageBox)throw new Error("Automatic damage localization did not produce a usable target.");
       const point=pointFallback??{
-        x:damageBox.x+damageBox.width/2,
-        y:damageBox.y+damageBox.height/2
+        x:resolvedDamageBox.x+resolvedDamageBox.width/2,
+        y:resolvedDamageBox.y+resolvedDamageBox.height/2
       };
+      const localizationModel=pointFallbackModel??located.model;
       if(!calibration.available){
         const reason="Fixed Camera "+fixedCamera.id+" calibration is not configured for "+
           calibration.lengthFt+" ft / "+calibration.heightMm+" mm geometry. Run the one-time admin calibration before automatic CEDEX location.";
         const prediction=await this.repo.saveLocationPrediction({
           findingId:input.findingId,
           surveyId:context.survey_id,
-          modelName:located.model,
+          modelName:localizationModel,
           selectedCode:null,
           status:"FAILED",
           response:{
-            found:true,damageBox,point,localizationSource,pointFallbackModel,referenceBox:alignmentReferenceBox,
+            found:true,damageBox:resolvedDamageBox,point,localizationSource,pointFallbackModel,referenceBox:alignmentReferenceBox,
             referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
             doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -309,7 +312,7 @@ export class LocationSuggestionService{
           }
         });
         return {
-          found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox,localizationSource,pointFallbackModel,
+          found:true,model:localizationModel,predictionId:prediction.predictionId,point,damageBox:resolvedDamageBox,localizationSource,pointFallbackModel,
           referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -323,7 +326,7 @@ export class LocationSuggestionService{
       const calculated=await calibrationService.calculate({
         findingId:input.findingId,
         cameraId:fixedCamera.id,
-        damageBox:pointFallback?undefined:damageBox,
+        damageBox:pointFallback?undefined:resolvedDamageBox,
         damagePoint:pointFallback??undefined,
         alignmentReferenceBox,
         requireAlignment:true
@@ -337,11 +340,11 @@ export class LocationSuggestionService{
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
         surveyId:context.survey_id,
-        modelName:located.model,
+        modelName:localizationModel,
         selectedCode,
         status:selectedCode?"REVIEW_REQUIRED":"FAILED",
         response:{
-          found:true,damageBox,point,localizationSource,pointFallbackModel,referenceBox:alignmentReferenceBox,
+          found:true,damageBox:resolvedDamageBox,point,localizationSource,pointFallbackModel,referenceBox:alignmentReferenceBox,
           referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -359,7 +362,7 @@ export class LocationSuggestionService{
         }
       });
       return {
-        found:true,model:located.model,predictionId:prediction.predictionId,point,damageBox,localizationSource,pointFallbackModel,
+        found:true,model:localizationModel,predictionId:prediction.predictionId,point,damageBox:resolvedDamageBox,localizationSource,pointFallbackModel,
         referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",geometryScore:null,
         doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
         fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,
@@ -431,7 +434,7 @@ export class LocationSuggestionService{
       const prediction=await this.repo.saveLocationPrediction({
         findingId:input.findingId,
         surveyId:context.survey_id,
-        modelName:located.model,
+        modelName:localizationModel,
         selectedCode:null,
         status:"FAILED",
         response:{
@@ -527,7 +530,7 @@ export class LocationSuggestionService{
     const prediction=await this.repo.saveLocationPrediction({
       findingId:input.findingId,
       surveyId:context.survey_id,
-      modelName:located.model,
+      modelName:localizationModel,
       selectedCode,
       status:selectedCode?"REVIEW_REQUIRED":"FAILED",
       response:{
