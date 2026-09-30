@@ -263,8 +263,14 @@ Do not classify the CEDEX damage code here. Return only JSON.`;
 This is a fixed-camera overview of the shipping container ${faceName} face.
 Moondream object detection and pinpoint both failed, so inspect the full image carefully.
 
-Find the SINGLE most obvious physical damage or previous repair area on the container itself.
-Look for dent, deformation, buckle, crease, bent profile, crack, cut, puncture, tear, repair patch, distorted rail or distorted panel.
+Find the SINGLE primary physical damage or previous repair area on the container itself.
+For this one-finding POC use this priority when more than one visible condition competes:
+1. clear structural deformation — dent, buckle, crease, bent/distorted panel or rail;
+2. material break — crack, cut, puncture or tear;
+3. visible previous repair / repair patch;
+4. gouge, scrape, scratch or paint failure;
+5. dirt, staining or discoloration.
+A row or line of repeated dents across corrugations is one structural damage region and must outrank isolated dark scrape marks elsewhere.
 Ignore normal corrugations, perspective, logos, lettering, paint shade variation, reflections, shadows, dirt, timestamps and background objects.
 
 Return the CENTER of the damage as normalized image coordinates x and y from 0 to 1.
