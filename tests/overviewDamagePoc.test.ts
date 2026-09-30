@@ -103,6 +103,7 @@ describe("overview-only damage POC",()=>{
     expect(result.componentAssumed).toBe(true);
     expect(result.locationCode).toBe("RB3N");
     expect(result.selectedCode).toBe("DT");
+    expect(result.selectedName).toBe("Dent / Bent");
     expect(result.confidence).toBe(0.88);
     expect(result.needsReview).toBe(false);
     expect(result.aiEligibleDamageCodes).toContain("IR");
