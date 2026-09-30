@@ -19,6 +19,7 @@ import { CedexRepository } from "./infrastructure/d1/cedexRepository";
 import { CedexClassificationService } from "./application/cedexClassificationService";
 import { DamageClassificationService } from "./application/damageClassificationService";
 import { OverviewDamagePocService } from "./application/overviewDamagePocService";
+import { OverviewAutoAnalysisService } from "./application/overviewAutoAnalysisService";
 import { RepairRecommendationService } from "./application/repairRecommendationService";
 import { LocationSuggestionService } from "./application/locationSuggestionService";
 import { FixedCameraCalibrationService } from "./application/fixedCameraCalibrationService";
@@ -156,6 +157,34 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return json({ok:true,result});
     } catch(error) {
       return json({ok:false,error:"LOCATION_SUGGEST_FAILED",message:error instanceof Error?error.message:"Unable to suggest damage location."},422);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/poc/overview-auto-analyse") {
+    try {
+      const form=await request.formData();
+      const file=form.get("photo");
+      if(!(file instanceof File)) throw new Error("A cropped overview damage photo is required.");
+      if(file.size>8*1024*1024) throw new Error("Photo must be below 8 MB.");
+      let damageBox:unknown=null;
+      const rawBox=String(form.get("damageBox")??"").trim();
+      if(rawBox){
+        try{damageBox=JSON.parse(rawBox);}
+        catch{throw new Error("Invalid damage box.");}
+      }
+      const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
+      const result=await new OverviewAutoAnalysisService(new CedexRepository(env.DB),ai).analyse({
+        findingId:String(form.get("findingId")??""),
+        file,
+        damageBox,
+        locationCode:String(form.get("locationCode")??"")||null
+      });
+      if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
+        return json({ok:false,error:"OVERVIEW_AUTO_"+result.analysisStatus,message:"Zero-touch AI analysis did not complete.",result},422);
+      }
+      return json({ok:true,result});
+    } catch(error) {
+      return json({ok:false,error:"OVERVIEW_AUTO_FAILED",message:error instanceof Error?error.message:"Unable to run zero-touch overview analysis."},422);
     }
   }
 
