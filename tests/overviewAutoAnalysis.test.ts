@@ -27,11 +27,11 @@ describe("zero-touch overview analysis",()=>{
         }
       ]),
       damageCodesForComponent:vi.fn(async(_findingId:string,componentCode:string)=>{
-        expect(componentCode).toBe("PAA");
-        return {componentCode:"PAA",damages:[
+        if(componentCode==="PAA")return {componentCode:"PAA",damages:[
           {damage_code:"DT",damage_name:"Dent / Bent"},
           {damage_code:"CK",damage_name:"Cracked"}
         ]};
+        return {componentCode,damages:[{damage_code:"DT",damage_name:"Dent / Bent"}]};
       }),
       damageVisualRules:vi.fn(async()=>[
         {
@@ -49,22 +49,16 @@ describe("zero-touch overview analysis",()=>{
       saveDamagePrediction
     } as unknown as CedexRepository;
 
-    let call=0;
-    const ai={run:vi.fn(async()=>{
-      call++;
-      if(call===1){
-        return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
-          selected_code:"PAA",confidence:0.91,needs_review:false,
-          reason:"Central damage lies on broad corrugated panel.",
-          candidates:[{code:"PAA",confidence:0.91,reason:"Broad panel field."}]
-        })}}]};
-      }
-      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
-        selected_code:"DT",confidence:0.89,needs_review:false,
-        reason:"Permanent inward deformation without crack.",
-        candidates:[{code:"DT",confidence:0.89,reason:"Visible deformation."}]
-      })}}]};
-    })};
+    const ai={run:vi.fn(async()=>({
+      choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        component_code:"PAA",component_confidence:0.91,component_needs_review:false,
+        component_reason:"Central damage lies on broad corrugated panel.",
+        component_candidates:[{code:"PAA",confidence:0.91,reason:"Broad panel field."}],
+        damage_code:"DT",damage_confidence:0.89,damage_needs_review:false,
+        damage_reason:"Permanent inward deformation without crack.",
+        damage_candidates:[{code:"DT",confidence:0.89,reason:"Visible deformation."}]
+      })}}]
+    }))};
 
     const result=await new OverviewAutoAnalysisService(repo,ai).analyse({
       findingId:"f1",file:photo(),
@@ -78,11 +72,14 @@ describe("zero-touch overview analysis",()=>{
     expect(result.selectedName).toBe("Dent / Bent");
     expect(result.locationCode).toBe("RT3N");
     expect(result.needsReview).toBe(false);
-    expect(ai.run).toHaveBeenCalledTimes(2);
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(result.classificationMode).toBe("SINGLE_QWEN_COMPONENT_DAMAGE");
+    expect(result.timings.classificationAiMs).toBeGreaterThanOrEqual(0);
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       selectedCode:"PAA",
       requestContext:expect.objectContaining({
         source:"ZERO_TOUCH_OVERVIEW_POC",
+        classificationMode:"SINGLE_QWEN_COMPONENT_DAMAGE",
         manualTargetUsed:false,
         componentPinpointUsed:false
       })
