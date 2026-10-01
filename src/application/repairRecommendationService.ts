@@ -6,7 +6,8 @@ import {
 } from "../infrastructure/d1/cedexRepository";
 
 const MODEL="@cf/qwen/qwen3.8-27b";
-const MAX_COMPLETION_TOKENS=800;
+const INITIAL_COMPLETION_TOKENS=1600;
+const RETRY_COMPLETION_TOKENS=2200;
 const MAX_HISTORY_EXAMPLES=6;
 
 type AiRunner={run(model:string,input:unknown):Promise<unknown>};
@@ -225,9 +226,9 @@ This is decision support only: needs_review must be true.
 
 Return only JSON with selected_code, confidence, needs_review, reason (maximum 35 words), and up to 3 candidates with code, confidence and reason.`;
 
-    const raw=await this.ai.run(MODEL,{
+    const runRepairAi=(maxCompletionTokens:number)=>this.ai!.run(MODEL,{
       messages:[{role:"user",content:prompt}],
-      max_completion_tokens:MAX_COMPLETION_TOKENS,
+      max_completion_tokens:maxCompletionTokens,
       reasoning_effort:"medium",
       temperature:0,
       response_format:{
@@ -263,9 +264,23 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
       }
     });
 
-    const envelope=record(raw);
-    const choice=Array.isArray(envelope?.choices)?record(envelope.choices[0]):null;
-    const finishReason=typeof choice?.finish_reason==="string"?choice.finish_reason:null;
+    let aiAttempts=1;
+    let completionTokenLimit=INITIAL_COMPLETION_TOKENS;
+    let raw=await runRepairAi(completionTokenLimit);
+    let envelope=record(raw);
+    let choice=Array.isArray(envelope?.choices)?record(envelope.choices[0]):null;
+    let finishReason=typeof choice?.finish_reason==="string"?choice.finish_reason:null;
+    const initialFinishReason=finishReason;
+
+    if(finishReason==="length"){
+      aiAttempts=2;
+      completionTokenLimit=RETRY_COMPLETION_TOKENS;
+      raw=await runRepairAi(completionTokenLimit);
+      envelope=record(raw);
+      choice=Array.isArray(envelope?.choices)?record(envelope.choices[0]):null;
+      finishReason=typeof choice?.finish_reason==="string"?choice.finish_reason:null;
+    }
+
     const parsed=parseJson(raw);
     const allowedSet=new Set(allowedCodes);
 
@@ -276,8 +291,8 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
     let candidates:Candidate[]=[];
 
     if(finishReason==="length"){
-      analysisStatus="INCOMPLETE";
-      reason="AI repair recommendation was incomplete. Retry or select a repair method manually.";
+      analysisStatus="ABSTAINED";
+      reason="AI repair recommendation remained incomplete after one automatic retry. Select a GP.xlsx-verified repair method manually.";
     }else if((!finishReason||finishReason==="stop")&&!record(choice?.message)?.refusal&&parsed&&
       (parsed.selected_code===null||typeof parsed.selected_code==="string")&&
       validConfidence(parsed.confidence)&&parsed.needs_review===true&&
@@ -303,7 +318,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
     await this.repo.saveRepairPrediction({
       findingId,surveyId:context.survey_id,modelName:MODEL,
       selectedCode,confidence:selectedConfidence,candidates,response:raw,
-      status:analysisStatus==="INCOMPLETE"||analysisStatus==="INVALID_RESPONSE"?"FAILED":"REVIEW_REQUIRED",
+      status:analysisStatus==="INVALID_RESPONSE"?"FAILED":"REVIEW_REQUIRED",
       requestContext:{
         equipment:"GP",componentCode:"PAA",damageCode:"DT",
         containerFace:context.container_face,locationCode:context.final_location_code,
@@ -317,7 +332,8 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
           containerFace:x.containerFace,locationCode:x.locationCode
         })),
         reviewPolicy:"SURVEYOR_CONFIRMATION_REQUIRED",
-        finishReason
+        finishReason,initialFinishReason,aiAttempts,completionTokenLimit,
+        retryUsed:aiAttempts>1
       }
     });
 
@@ -337,7 +353,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
         corrugationsAffected:x.corrugationsAffected,direction:x.deformationDirection,
         face:x.containerFace,locationCode:x.locationCode
       })),
-      finishReason
+      finishReason,initialFinishReason,aiAttempts,completionTokenLimit,retryUsed:aiAttempts>1
     };
   }
 }
