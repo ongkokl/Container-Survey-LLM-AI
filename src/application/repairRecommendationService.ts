@@ -318,7 +318,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
     await this.repo.saveRepairPrediction({
       findingId,surveyId:context.survey_id,modelName:MODEL,
       selectedCode,confidence:selectedConfidence,candidates,response:raw,
-      status:analysisStatus==="INCOMPLETE"||analysisStatus==="INVALID_RESPONSE"?"FAILED":"REVIEW_REQUIRED",
+      status:analysisStatus==="INVALID_RESPONSE"?"FAILED":"REVIEW_REQUIRED",
       requestContext:{
         equipment:"GP",componentCode:"PAA",damageCode:"DT",
         containerFace:context.container_face,locationCode:context.final_location_code,
