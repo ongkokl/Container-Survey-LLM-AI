@@ -1066,8 +1066,8 @@ async function recalculateLocationFromMark(){
     locationCodeInput.value="";
     locationSuggestion.textContent=e instanceof Error?e.message:"Unable to recalculate location. Enter it manually.";
   }
-  if(overviewDamagePocToggle?.checked&&usingArea&&validNormalizedBox(locationArea)){
-    void runOverviewDamagePoc(locationArea);
+  if(overviewDamagePocToggle?.checked&&overviewEdited&&usingArea&&validNormalizedBox(locationArea)){
+    void runOverviewManualDamagePoc(locationArea);
   }
   updateFindingReady();
 }
@@ -1486,6 +1486,38 @@ function renderOverviewDamagePocResult(result){
     " · one overview photo · AI-detected damage region · no manual box/pinpoint used"+timingText+".";
   overviewDamagePocRetry.hidden=!validNormalizedBox(locationArea??aiLocationArea);
   drawOverviewComposite();
+}
+
+async function runOverviewManualDamagePoc(box){
+  if(!overviewDamagePocToggle?.checked||!currentFinding||!overviewFile||!validNormalizedBox(box))return;
+  const requestId=++overviewDamagePocRequest;
+  currentOverviewDamagePocResult=null;
+  overviewDamagePocReview.hidden=false;
+  overviewDamagePocSuggestion.textContent="Classifying the surveyor-corrected damage area…";
+  overviewDamagePocCandidates.textContent="";
+  overviewDamagePocMeta.textContent="Manual fallback area · CEDEX location recalculated from the corrected mark.";
+  overviewDamagePocRetry.hidden=true;
+  try{
+    const crop=await createOverviewDamagePocCrop(overviewFile,box);
+    if(!crop)throw new Error("Unable to create the corrected damage crop.");
+    const form=new FormData();
+    form.append("photo",crop,crop.name);
+    form.append("findingId",currentFinding.id);
+    form.append("damageBox",JSON.stringify(box));
+    form.append("locationCode",normalizedLocationCode(locationCodeInput.value||aiLocationCode||""));
+    const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
+    if(requestId!==overviewDamagePocRequest)return;
+    renderOverviewDamagePocResult(result);
+  }catch(e){
+    if(requestId!==overviewDamagePocRequest)return;
+    currentOverviewDamagePocResult=null;
+    drawOverviewComposite();
+    overviewDamagePocReview.hidden=false;
+    overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Corrected-area analysis failed.";
+    overviewDamagePocCandidates.textContent="";
+    overviewDamagePocMeta.textContent="The corrected CEDEX location remains available for manual review.";
+    overviewDamagePocRetry.hidden=false;
+  }
 }
 
 async function runOverviewDamagePoc(){
