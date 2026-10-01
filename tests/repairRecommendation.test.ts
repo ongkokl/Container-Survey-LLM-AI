@@ -71,9 +71,10 @@ describe("measurement-aware repair reasoning",()=>{
         confidence:0.86,
         needs_review:true,
         reason:"Measured extent and similar confirmed repairs support RP over GS.",
+        evidence_sources:["MEASUREMENTS","IICL_CRITERION","HISTORICAL_CASE"],
         candidates:[
-          {code:"RP",confidence:0.86,reason:"Closest measured historical cases used RP."},
-          {code:"GS",confidence:0.14,reason:"Smaller comparable cases used GS."}
+          {code:"RP",confidence:0.86,reason:"Closest measured historical cases used RP.",evidence_sources:["MEASUREMENTS","HISTORICAL_CASE"]},
+          {code:"GS",confidence:0.14,reason:"Smaller comparable cases used GS.",evidence_sources:["MEASUREMENTS","HISTORICAL_CASE"]}
         ]
       })}}]};
     })};
@@ -90,6 +91,9 @@ describe("measurement-aware repair reasoning",()=>{
     expect(result.selectedCode).toBe("RP");
     expect(result.needsReview).toBe(true);
     expect(result.recommendationMode).toBe("MEASUREMENT_RULES_HISTORY_QWEN");
+    expect(result.groundingStatus).toBe("GROUNDED");
+    expect(result.evidenceSources).toContain("HISTORICAL_CASE");
+    expect(result.reason).toContain("surveyor-confirmed RP cases");
     expect(result.historicalCaseCount).toBe(2);
     expect(repo.saveRepairMeasurements).toHaveBeenCalled();
     expect(repo.saveRepairPrediction).toHaveBeenCalledWith(expect.objectContaining({
@@ -117,6 +121,7 @@ describe("measurement-aware repair reasoning",()=>{
         confidence:null,
         needs_review:true,
         reason:"Depth and corrugation evidence are insufficient to distinguish the allowed repair methods.",
+        evidence_sources:[],
         candidates:[]
       })}}]};
     })};
@@ -177,6 +182,80 @@ describe("measurement-aware repair reasoning",()=>{
     expect(repo.saveRepairPrediction).toHaveBeenCalledWith(expect.objectContaining({
       status:"REVIEW_REQUIRED"
     }));
+  });
+
+  it("abstains before Qwen when no comparable confirmed repair cases can distinguish multiple allowed methods",async()=>{
+    const repo=baseRepo();
+    repo.repairCodesForFinding=vi.fn(async()=>({
+      equipment:"GP",componentCode:"PAA",damageCode:"DT",
+      repairs:[
+        {repair_code:"GS",repair_name:"Straighten",description:null,standard_version:"GP.xlsx"},
+        {repair_code:"SN",repair_name:"Section",description:null,standard_version:"GP.xlsx"},
+        {repair_code:"RP",repair_name:"Replace",description:null,standard_version:"GP.xlsx"}
+      ]
+    }));
+    repo.historicalRepairCases=vi.fn(async()=>[]);
+    const ai={run:vi.fn()};
+
+    const result=await new RepairRecommendationService(
+      repo as unknown as CedexRepository,
+      ai
+    ).analyse("f1",{
+      damageLengthCm:223.1,damageWidthCm:49.7,damageDepthCm:2,
+      corrugationsAffected:null,deformationDirection:"INWARD"
+    });
+
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(result.analysisStatus).toBe("ABSTAINED");
+    expect(result.selectedCode).toBeNull();
+    expect(result.recommendationMode).toBe("GROUNDED_EVIDENCE_INSUFFICIENT");
+    expect(result.groundingStatus).toBe("INSUFFICIENT_EVIDENCE");
+    expect(result.reason).toContain("does not distinguish");
+    expect(repo.saveRepairPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      selectedCode:null,
+      status:"REVIEW_REQUIRED",
+      requestContext:expect.objectContaining({
+        groundingPolicy:"TRACEABLE_EVIDENCE_ONLY",
+        recommendationMode:"GROUNDED_EVIDENCE_INSUFFICIENT"
+      })
+    }));
+  });
+
+  it("rejects an AI repair choice that is not supported by a comparable confirmed case for that code",async()=>{
+    const repo=baseRepo();
+    repo.historicalRepairCases=vi.fn(async()=>[
+      {
+        ...measurement({findingId:"h1",damageLengthCm:30,damageWidthCm:17,damageDepthCm:1.5}),
+        repairCode:"RP",locationCode:"RT4N",containerFace:"RIGHT",decisionDate:"2026-09-20T00:00:00.000Z"
+      }
+    ]);
+    const ai={run:vi.fn(async()=>({
+      choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        selected_code:"GS",
+        confidence:0.75,
+        needs_review:true,
+        reason:"Straightening is the least-invasive first-line repair.",
+        evidence_sources:["MEASUREMENTS"],
+        candidates:[
+          {code:"GS",confidence:0.75,reason:"First-line repair.",evidence_sources:["MEASUREMENTS"]}
+        ]
+      })}}]
+    }))};
+
+    const result=await new RepairRecommendationService(
+      repo as unknown as CedexRepository,
+      ai
+    ).analyse("f1",{
+      damageLengthCm:32,damageWidthCm:18,damageDepthCm:1.8,
+      corrugationsAffected:2,deformationDirection:"INWARD"
+    });
+
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(result.analysisStatus).toBe("ABSTAINED");
+    expect(result.selectedCode).toBeNull();
+    expect(result.groundingStatus).toBe("INSUFFICIENT_OR_UNVERIFIED");
+    expect(result.reason).toContain("lacked traceable code-specific evidence");
+    expect(result.candidates).toEqual([]);
   });
 
   it("does not call Qwen until GP/PAA DT length and width are captured",async()=>{
