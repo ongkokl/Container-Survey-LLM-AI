@@ -165,7 +165,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     try {
       const form=await request.formData();
       const file=form.get("photo");
-      if(!(file instanceof File)) throw new Error("A cropped overview damage photo is required.");
+      if(!(file instanceof File)) throw new Error("An overview photo is required.");
       if(file.size>8*1024*1024) throw new Error("Photo must be below 8 MB.");
       let damageBox:unknown=null;
       const rawBox=String(form.get("damageBox")??"").trim();
@@ -173,12 +173,23 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         try{damageBox=JSON.parse(rawBox);}
         catch{throw new Error("Invalid damage box.");}
       }
+      const captureMetadataRaw=String(form.get("captureMetadata")??"").trim();
+      let captureMetadata:unknown=null;
+      if(captureMetadataRaw){
+        try{captureMetadata=JSON.parse(captureMetadataRaw);}
+        catch{throw new Error("Invalid capture metadata.");}
+      }
+      const orchestrateLocalization=String(form.get("orchestrateLocalization")??"").toLowerCase()==="true"||!damageBox;
       const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
       const result=await new OverviewAutoAnalysisService(new CedexRepository(env.DB),ai).analyse({
         findingId:String(form.get("findingId")??""),
         file,
         damageBox,
-        locationCode:String(form.get("locationCode")??"")||null
+        locationCode:String(form.get("locationCode")??"")||null,
+        imageWidth:Number(form.get("width"))||0,
+        imageHeight:Number(form.get("height"))||0,
+        captureMetadata,
+        orchestrateLocalization
       });
       if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
         return json({ok:false,error:"OVERVIEW_AUTO_"+result.analysisStatus,message:"Zero-touch AI analysis did not complete.",result},422);
