@@ -94,7 +94,7 @@ describe("zero-touch overview analysis",()=>{
     }));
   });
 
-  it("orchestrates localization and single-pass classification from one full overview request",async()=>{
+  it("uses one unified Qwen result for full-overview localization, component and damage",async()=>{
     const saveComponentPrediction=vi.fn(async()=>({predictionId:"cp-orch"}));
     const saveDamagePrediction=vi.fn(async()=>({predictionId:"dp-orch"}));
     const repo={
@@ -106,26 +106,14 @@ describe("zero-touch overview analysis",()=>{
       saveDamagePrediction
     } as unknown as CedexRepository;
 
-    const locationService={
+    const unifiedService={
       analyse:vi.fn(async()=>({
-        found:true,
-        model:"@cf/qwen/qwen3.8-27b",
-        predictionId:"lp2",
-        point:{x:0.32,y:0.57},
-        damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
-        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT",
-        location:{code:"LB4N",reviewRequired:true,reason:"Review location."}
-      }))
-    } as any;
-
-    const combinedService={
-      analyse:vi.fn(async(input:any)=>({
         pocMode:"ZERO_TOUCH_OVERVIEW",
-        source:"AI_DETECTED_OVERVIEW_CROP",
-        classificationMode:"SINGLE_QWEN_COMPONENT_DAMAGE",
-        imageScope:input.imageScope,
-        damageBox:input.damageBox,
-        locationCode:input.locationCode,
+        source:"FULL_OVERVIEW_ORCHESTRATOR",
+        classificationMode:"SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE",
+        imageScope:"FULL_OVERVIEW",
+        damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
+        locationCode:"LB4N",
         componentCode:"PAA",
         componentName:"Panel Assembly",
         componentConfidence:0.9,
@@ -138,17 +126,30 @@ describe("zero-touch overview analysis",()=>{
         damageNeedsReview:false,
         damageReason:"Visible deformation.",
         candidates:[{code:"DT",confidence:0.85,reason:"Visible deformation."}],
-        needsReview:false,
+        needsReview:true,
         analysisStatus:"SUGGESTED",
         model:"@cf/qwen/qwen3.8-27b",
         finishReason:"stop",
-        completionTokenLimit:2200,
-        timings:{classificationAiMs:100,totalClassificationMs:120}
+        completionTokenLimit:1800,
+        localization:{
+          localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT",
+          location:{code:"LB4N",reviewRequired:true,reason:"Review location."}
+        },
+        timings:{
+          moondreamCandidateMs:80,
+          unifiedQwenMs:1200,
+          classificationAiMs:1200,
+          totalClassificationMs:1210,
+          totalAutoAnalysisMs:1300,
+          qwenCalls:1,
+          sharedQwenLocalizationClassification:true
+        }
       }))
     } as any;
+    const combinedService={analyse:vi.fn()} as any;
 
     const service=new OverviewAutoAnalysisService(repo,{run:vi.fn()},{
-      locationService,
+      unifiedService,
       combinedService
     });
     const result=await service.analyse({
@@ -160,28 +161,28 @@ describe("zero-touch overview analysis",()=>{
       orchestrateLocalization:true
     });
 
-    expect(locationService.analyse).toHaveBeenCalledTimes(1);
-    expect(combinedService.analyse).toHaveBeenCalledWith(expect.objectContaining({
-      findingId:"f2",
-      damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
-      locationCode:"LB4N",
-      imageScope:"FULL_OVERVIEW"
-    }));
+    expect(unifiedService.analyse).toHaveBeenCalledTimes(1);
+    expect(combinedService.analyse).not.toHaveBeenCalled();
     expect(result.source).toBe("FULL_OVERVIEW_ORCHESTRATOR");
-    expect(result.localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
+    expect(result.classificationMode).toBe("SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE");
+    expect((result as any).localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
     expect(result.locationCode).toBe("LB4N");
     expect(result.componentCode).toBe("PAA");
     expect(result.selectedCode).toBe("DT");
+    expect(result.needsReview).toBe(true);
+    expect((result.timings as any).qwenCalls).toBe(1);
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         imageScope:"FULL_OVERVIEW",
-        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT"
+        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT",
+        unifiedQwen:true
       })
     }));
     expect(saveDamagePrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         imageScope:"FULL_OVERVIEW",
-        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT"
+        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT",
+        unifiedQwen:true
       })
     }));
   });
