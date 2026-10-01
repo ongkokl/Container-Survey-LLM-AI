@@ -12,7 +12,12 @@ const MAX_HISTORY_EXAMPLES=6;
 
 type AiRunner={run(model:string,input:unknown):Promise<unknown>};
 type AnalysisStatus="SUGGESTED"|"ABSTAINED"|"INCOMPLETE"|"INVALID_RESPONSE";
-type Candidate={code:string;confidence:number|null;reason:string};
+type EvidenceSource="MEASUREMENTS"|"IICL_CRITERION"|"GP_XLSX_DESCRIPTION"|"HISTORICAL_CASE";
+type Candidate={code:string;confidence:number|null;reason:string;evidenceSources:EvidenceSource[]};
+
+const EVIDENCE_SOURCES=new Set<EvidenceSource>([
+  "MEASUREMENTS","IICL_CRITERION","GP_XLSX_DESCRIPTION","HISTORICAL_CASE"
+]);
 
 function record(value:unknown):Record<string,unknown>|null{
   return value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:null;
@@ -38,6 +43,15 @@ function parseJson(raw:unknown):Record<string,unknown>|null{
 
 function validConfidence(value:unknown):value is number|null{
   return value===null||(typeof value==="number"&&Number.isFinite(value)&&value>=0&&value<=1);
+}
+
+function evidenceSources(value:unknown):EvidenceSource[]|null{
+  if(!Array.isArray(value))return null;
+  const sources=value.filter((item):item is EvidenceSource=>
+    typeof item==="string"&&EVIDENCE_SOURCES.has(item as EvidenceSource)
+  );
+  if(sources.length!==value.length)return null;
+  return [...new Set(sources)];
 }
 
 function numericDistance(current:number|null,historical:number|null,scale:number){
@@ -177,15 +191,51 @@ export class RepairRecommendationService{
       };
     }
 
-    if(!this.ai){
-      throw new Error("Workers AI is unavailable for measurement-aware repair reasoning.");
-    }
-
     const historical=await this.repo.historicalRepairCases({
       findingId,equipment:"GP",componentCode:"PAA",damageCode:"DT",
       allowedRepairCodes:allowedCodes,limit:40
     });
     const similar=rankHistoricalCases(measurement,historical,context.container_face,context.final_location_code);
+    const historicalCodes=new Set(similar.map(item=>item.repairCode));
+    const descriptionsByCode=new Map(
+      allowed.repairs.map(item=>[item.repair_code,item.description?.trim()||null] as const)
+    );
+
+    if(!similar.length){
+      const reason="Available verified evidence does not distinguish the permitted GP.xlsx repair methods. Add comparable confirmed repair cases or verified repair-selection rules, then retry.";
+      await this.repo.saveRepairPrediction({
+        findingId,surveyId:context.survey_id,modelName:"RULE_ENGINE_GP_XLSX",
+        selectedCode:null,confidence:null,candidates:[],
+        response:{skippedModel:true,reason,allowedRepairCodes:allowedCodes,groundingStatus:"INSUFFICIENT_EVIDENCE"},
+        status:"REVIEW_REQUIRED",
+        requestContext:{
+          equipment:"GP",componentCode:"PAA",damageCode:"DT",
+          containerFace:context.container_face,locationCode:context.final_location_code,
+          measurement,allowedRepairCodes:allowedCodes,
+          recommendationMode:"GROUNDED_EVIDENCE_INSUFFICIENT",
+          historicalCaseCount:historical.length,historicalExamplesUsed:[],
+          groundingPolicy:"TRACEABLE_EVIDENCE_ONLY",
+          reviewPolicy:"SURVEYOR_SELECTION_REQUIRED"
+        }
+      });
+      return {
+        equipment:"GP",componentCode:"PAA",damageCode:"DT",
+        analysisStatus:"ABSTAINED" as AnalysisStatus,selectedCode:null,confidence:null,needsReview:true,
+        reviewPolicy:"SURVEYOR_SELECTION_REQUIRED",
+        recommendationMode:"GROUNDED_EVIDENCE_INSUFFICIENT",
+        measurementRequired:false,reason,candidates:[],
+        allowedRepairs:allowed.repairs,allowedRepairCount:allowed.repairs.length,
+        repairRuleSource:allowed.repairs.every(x=>x.standard_version==="GP.xlsx")?"GP.xlsx":"MIXED",
+        model:null,measurement,
+        groundingPolicy:"TRACEABLE_EVIDENCE_ONLY",groundingStatus:"INSUFFICIENT_EVIDENCE",
+        evidenceSources:[] as EvidenceSource[],
+        historicalCaseCount:historical.length,historicalExamples:[]
+      };
+    }
+
+    if(!this.ai){
+      throw new Error("Workers AI is unavailable for measurement-aware repair reasoning.");
+    }
 
     const ruleSignals=[
       "GP.xlsx is the hard applicability filter: only the supplied allowed repair codes may be selected.",
@@ -220,11 +270,16 @@ ${repairText}
 Most comparable surveyor-confirmed historical cases:
 ${historyText(similar)}
 
-Choose only among the GP.xlsx-allowed repair codes. Reason from the measured extent, structural context, supplied deterministic signals, repair descriptions and genuinely comparable historical cases.
-Do not invent engineering thresholds. Do not treat historical frequency as a rule. If evidence is insufficient or conflicting, return selected_code null.
+Choose only among the GP.xlsx-allowed repair codes.
+Every recommendation statement must be traceable only to the supplied measurements, mapped IICL criterion, GP.xlsx repair description text, or the listed historical cases.
+Do not use unstated general repair practice. Do not claim "first-line", "least-invasive", "last-resort", practical size limits, feasibility, metal fatigue, tearing, or other conditions unless that exact evidence is supplied above.
+Measurements and the mapped IICL depth criterion describe the damage but do not by themselves choose among multiple repair codes.
+For a non-null selected_code, HISTORICAL_CASE must be included in evidence_sources and at least one supplied comparable historical case must use that selected code.
+If the supplied evidence does not distinguish the allowed methods, return selected_code null, confidence null, evidence_sources [], and an empty candidates array.
+Do not invent engineering thresholds. Do not treat historical frequency as a rule.
 This is decision support only: needs_review must be true.
 
-Return only JSON with selected_code, confidence, needs_review, reason (maximum 35 words), and up to 3 candidates with code, confidence and reason.`;
+Return only JSON with selected_code, confidence, needs_review, reason (maximum 35 words), evidence_sources, and up to 3 candidates with code, confidence, reason and evidence_sources.`;
 
     const runRepairAi=(maxCompletionTokens:number)=>this.ai!.run(MODEL,{
       messages:[{role:"user",content:prompt}],
@@ -243,6 +298,10 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
               confidence:{type:["number","null"],minimum:0,maximum:1},
               needs_review:{type:"boolean",const:true},
               reason:{type:"string"},
+              evidence_sources:{
+                type:"array",maxItems:4,uniqueItems:true,
+                items:{type:"string",enum:["MEASUREMENTS","IICL_CRITERION","GP_XLSX_DESCRIPTION","HISTORICAL_CASE"]}
+              },
               candidates:{
                 type:"array",maxItems:3,
                 items:{
@@ -250,14 +309,18 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
                   properties:{
                     code:{type:"string",enum:allowedCodes},
                     confidence:{type:["number","null"],minimum:0,maximum:1},
-                    reason:{type:"string"}
+                    reason:{type:"string"},
+                    evidence_sources:{
+                      type:"array",maxItems:4,uniqueItems:true,
+                      items:{type:"string",enum:["MEASUREMENTS","IICL_CRITERION","GP_XLSX_DESCRIPTION","HISTORICAL_CASE"]}
+                    }
                   },
-                  required:["code","confidence","reason"],
+                  required:["code","confidence","reason","evidence_sources"],
                   additionalProperties:false
                 }
               }
             },
-            required:["selected_code","confidence","needs_review","reason","candidates"],
+            required:["selected_code","confidence","needs_review","reason","evidence_sources","candidates"],
             additionalProperties:false
           }
         }
@@ -289,6 +352,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
     let selectedConfidence:number|null=null;
     let reason="AI returned an unreadable repair recommendation. Select a repair method manually.";
     let candidates:Candidate[]=[];
+    let selectedEvidenceSources:EvidenceSource[]=[];
 
     if(finishReason==="length"){
       analysisStatus="ABSTAINED";
@@ -296,22 +360,69 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
     }else if((!finishReason||finishReason==="stop")&&!record(choice?.message)?.refusal&&parsed&&
       (parsed.selected_code===null||typeof parsed.selected_code==="string")&&
       validConfidence(parsed.confidence)&&parsed.needs_review===true&&
-      typeof parsed.reason==="string"&&Array.isArray(parsed.candidates)&&parsed.candidates.length<=3){
+      typeof parsed.reason==="string"&&evidenceSources(parsed.evidence_sources)!==null&&
+      Array.isArray(parsed.candidates)&&parsed.candidates.length<=3){
       const code=typeof parsed.selected_code==="string"?parsed.selected_code.trim().toUpperCase():null;
+      const requestedSelectedSources=evidenceSources(parsed.evidence_sources)??[];
       if(code===null||allowedSet.has(code)){
-        selectedCode=code;
-        selectedConfidence=parsed.confidence as number|null;
-        reason=parsed.reason.trim()||(code?"Surveyor confirmation required.":"Evidence is insufficient for a reliable repair recommendation.");
-        candidates=(parsed.candidates as unknown[]).flatMap(value=>{
-          const item=record(value);
-          if(!item||typeof item.code!=="string"||!validConfidence(item.confidence)||typeof item.reason!=="string")return [];
-          const candidateCode=item.code.trim().toUpperCase();
-          if(!allowedSet.has(candidateCode))return [];
-          return [{code:candidateCode,confidence:item.confidence as number|null,reason:item.reason.trim()}];
+        const supportedSelectedSources=code===null?[]:requestedSelectedSources.filter(source=>{
+          if(source==="MEASUREMENTS")return true;
+          if(source==="IICL_CRITERION")return measurement.applicableIiclLimitMm!==null&&
+            ["WITHIN_DIMENSIONAL_CRITERION","EXCEEDS_DIMENSIONAL_CRITERION"].includes(measurement.iiclDepthStatus??"");
+          if(source==="GP_XLSX_DESCRIPTION")return Boolean(descriptionsByCode.get(code));
+          if(source==="HISTORICAL_CASE")return historicalCodes.has(code);
+          return false;
         });
-        if(code&&!candidates.some(x=>x.code===code))candidates.unshift({code,confidence:selectedConfidence,reason});
-        candidates=candidates.slice(0,3);
-        analysisStatus=code?"SUGGESTED":"ABSTAINED";
+        const selectedGrounded=code===null||(
+          requestedSelectedSources.length===supportedSelectedSources.length&&
+          supportedSelectedSources.includes("HISTORICAL_CASE")&&
+          historicalCodes.has(code)
+        );
+
+        if(selectedGrounded){
+          selectedCode=code;
+          selectedConfidence=code===null?null:parsed.confidence as number|null;
+          selectedEvidenceSources=code===null?[]:supportedSelectedSources;
+          reason=code
+            ? `Supplied measurements and comparable surveyor-confirmed ${code} cases support this candidate; surveyor confirmation is required.`
+            : "Available verified evidence does not distinguish the permitted repair methods.";
+
+          candidates=(parsed.candidates as unknown[]).flatMap(value=>{
+            const item=record(value);
+            if(!item||typeof item.code!=="string"||!validConfidence(item.confidence)||
+              typeof item.reason!=="string")return [];
+            const candidateCode=item.code.trim().toUpperCase();
+            const requested=evidenceSources(item.evidence_sources);
+            if(!allowedSet.has(candidateCode)||!requested)return [];
+            const supported=requested.filter(source=>{
+              if(source==="MEASUREMENTS")return true;
+              if(source==="IICL_CRITERION")return measurement.applicableIiclLimitMm!==null&&
+                ["WITHIN_DIMENSIONAL_CRITERION","EXCEEDS_DIMENSIONAL_CRITERION"].includes(measurement.iiclDepthStatus??"");
+              if(source==="GP_XLSX_DESCRIPTION")return Boolean(descriptionsByCode.get(candidateCode));
+              if(source==="HISTORICAL_CASE")return historicalCodes.has(candidateCode);
+              return false;
+            });
+            if(requested.length!==supported.length||!supported.includes("HISTORICAL_CASE")||!historicalCodes.has(candidateCode))return [];
+            return [{
+              code:candidateCode,
+              confidence:item.confidence as number|null,
+              reason:`Comparable surveyor-confirmed ${candidateCode} cases were supplied for this candidate; surveyor confirmation is required.`,
+              evidenceSources:supported
+            }];
+          });
+          if(code&&!candidates.some(x=>x.code===code)){
+            candidates.unshift({code,confidence:selectedConfidence,reason,evidenceSources:selectedEvidenceSources});
+          }
+          candidates=candidates.slice(0,3);
+          analysisStatus=code?"SUGGESTED":"ABSTAINED";
+        }else{
+          analysisStatus="ABSTAINED";
+          selectedCode=null;
+          selectedConfidence=null;
+          selectedEvidenceSources=[];
+          candidates=[];
+          reason="AI suggestion lacked traceable code-specific evidence. Select a GP.xlsx-verified repair method manually.";
+        }
       }
     }
 
@@ -324,6 +435,9 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
         containerFace:context.container_face,locationCode:context.final_location_code,
         measurement,allowedRepairCodes:allowedCodes,ruleSignals,
         recommendationMode:"MEASUREMENT_RULES_HISTORY_QWEN",
+        groundingPolicy:"TRACEABLE_EVIDENCE_ONLY",
+        groundingStatus:analysisStatus==="SUGGESTED"?"GROUNDED":"INSUFFICIENT_OR_UNVERIFIED",
+        evidenceSources:selectedEvidenceSources,
         historicalCaseCount:historical.length,
         historicalExamplesUsed:similar.map(x=>({
           repairCode:x.repairCode,similarityScore:x.similarityScore,
@@ -343,6 +457,9 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
       reviewPolicy:"SURVEYOR_CONFIRMATION_REQUIRED",
       recommendationMode:"MEASUREMENT_RULES_HISTORY_QWEN",
       measurementRequired:false,reason,candidates,
+      groundingPolicy:"TRACEABLE_EVIDENCE_ONLY",
+      groundingStatus:analysisStatus==="SUGGESTED"?"GROUNDED":"INSUFFICIENT_OR_UNVERIFIED",
+      evidenceSources:selectedEvidenceSources,
       allowedRepairs:allowed.repairs,allowedRepairCount:allowed.repairs.length,
       repairRuleSource:allowed.repairs.every(x=>x.standard_version==="GP.xlsx")?"GP.xlsx":"MIXED",
       model:MODEL,measurement,ruleSignals,
