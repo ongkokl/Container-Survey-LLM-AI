@@ -93,4 +93,96 @@ describe("zero-touch overview analysis",()=>{
       })
     }));
   });
+
+  it("orchestrates localization and single-pass classification from one full overview request",async()=>{
+    const saveComponentPrediction=vi.fn(async()=>({predictionId:"cp-orch"}));
+    const saveDamagePrediction=vi.fn(async()=>({predictionId:"dp-orch"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f2",survey_id:"s2",container_face:"LEFT",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      saveComponentPrediction,
+      saveDamagePrediction
+    } as unknown as CedexRepository;
+
+    const locationService={
+      analyse:vi.fn(async()=>({
+        found:true,
+        model:"@cf/qwen/qwen3.8-27b",
+        predictionId:"lp2",
+        point:{x:0.32,y:0.57},
+        damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
+        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT",
+        location:{code:"LB4N",reviewRequired:true,reason:"Review location."}
+      }))
+    } as any;
+
+    const combinedService={
+      analyse:vi.fn(async(input:any)=>({
+        pocMode:"ZERO_TOUCH_OVERVIEW",
+        source:"AI_DETECTED_OVERVIEW_CROP",
+        classificationMode:"SINGLE_QWEN_COMPONENT_DAMAGE",
+        imageScope:input.imageScope,
+        damageBox:input.damageBox,
+        locationCode:input.locationCode,
+        componentCode:"PAA",
+        componentName:"Panel Assembly",
+        componentConfidence:0.9,
+        componentNeedsReview:false,
+        componentReason:"Panel field.",
+        componentCandidates:[{code:"PAA",confidence:0.9,reason:"Panel field."}],
+        selectedCode:"DT",
+        selectedName:"Dent / Bent",
+        confidence:0.85,
+        damageNeedsReview:false,
+        damageReason:"Visible deformation.",
+        candidates:[{code:"DT",confidence:0.85,reason:"Visible deformation."}],
+        needsReview:false,
+        analysisStatus:"SUGGESTED",
+        model:"@cf/qwen/qwen3.8-27b",
+        finishReason:"stop",
+        completionTokenLimit:2200,
+        timings:{classificationAiMs:100,totalClassificationMs:120}
+      }))
+    } as any;
+
+    const service=new OverviewAutoAnalysisService(repo,{run:vi.fn()},{
+      locationService,
+      combinedService
+    });
+    const result=await service.analyse({
+      findingId:"f2",
+      file:photo(),
+      imageWidth:1600,
+      imageHeight:900,
+      captureMetadata:{fixedCameraMode:true,fixedCameraId:"L"},
+      orchestrateLocalization:true
+    });
+
+    expect(locationService.analyse).toHaveBeenCalledTimes(1);
+    expect(combinedService.analyse).toHaveBeenCalledWith(expect.objectContaining({
+      findingId:"f2",
+      damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
+      locationCode:"LB4N",
+      imageScope:"FULL_OVERVIEW"
+    }));
+    expect(result.source).toBe("FULL_OVERVIEW_ORCHESTRATOR");
+    expect(result.localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
+    expect(result.locationCode).toBe("LB4N");
+    expect(result.componentCode).toBe("PAA");
+    expect(result.selectedCode).toBe("DT");
+    expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      requestContext:expect.objectContaining({
+        imageScope:"FULL_OVERVIEW",
+        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT"
+      })
+    }));
+    expect(saveDamagePrediction).toHaveBeenCalledWith(expect.objectContaining({
+      requestContext:expect.objectContaining({
+        imageScope:"FULL_OVERVIEW",
+        localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT"
+      })
+    }));
+  });
 });
