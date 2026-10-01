@@ -1478,9 +1478,12 @@ function renderOverviewDamagePocResult(result){
     ?"Damage candidates: "+result.candidates.map(x=>x.code+" "+(typeof x.confidence==="number"?Math.round(x.confidence*100)+"%":"—")).join(" / ")
     :"";
   overviewDamagePocCandidates.textContent=[componentCandidates,damageCandidates].filter(Boolean).join(" · ");
+  const timingText=typeof result?.timings?.totalAutoAnalysisMs==="number"
+    ?" · total "+(result.timings.totalAutoAnalysisMs/1000).toFixed(1)+"s"
+    :"";
   overviewDamagePocMeta.textContent=
     "Location "+(result?.locationCode||locationCodeInput.value||"—")+
-    " · one overview photo · AI-detected damage region · no manual box/pinpoint used.";
+    " · one overview photo · AI-detected damage region · no manual box/pinpoint used"+timingText+".";
   overviewDamagePocRetry.hidden=!validNormalizedBox(locationArea??aiLocationArea);
   drawOverviewComposite();
 }
@@ -1590,11 +1593,19 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
       form.append("width",String(dimensions.width));
       form.append("height",String(dimensions.height));
       form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
-      const result=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:form});
+      const zeroTouch=Boolean(overviewDamagePocToggle?.checked);
+      if(zeroTouch)form.append("orchestrateLocalization","true");
+      const result=await apiJson(
+        zeroTouch?"/api/poc/overview-auto-analyse":"/api/vision/locate-overview-damage",
+        {method:"POST",body:form}
+      );
       if(requestId!==overviewAiRequest)return;
-      renderLocationResult(result);
-      aiLocationArea=validNormalizedBox(result?.damageBox)?{...result.damageBox}:null;
-      aiLocationPoint=result?.point?{...result.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
+      const locationResult=zeroTouch?result?.localization:result;
+      if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
+      renderLocationResult(locationResult);
+      aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
+      aiLocationPoint=locationResult?.point?{...locationResult.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
+      if(zeroTouch)renderOverviewDamagePocResult(result);
       drawOverviewComposite();
 
       if(!overviewEdited&&aiLocationArea){
@@ -1609,7 +1620,6 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         if(overviewDamagePocToggle?.checked){
           overviewMarkTools.hidden=true;
           tapHelp.hidden=true;
-          void runOverviewDamagePoc(locationArea);
         }
       }else if(!overviewEdited&&aiLocationPoint){
         locationPoint={...aiLocationPoint};
