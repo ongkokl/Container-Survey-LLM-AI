@@ -1066,8 +1066,8 @@ async function recalculateLocationFromMark(){
     locationCodeInput.value="";
     locationSuggestion.textContent=e instanceof Error?e.message:"Unable to recalculate location. Enter it manually.";
   }
-  if(overviewDamagePocToggle?.checked&&usingArea&&validNormalizedBox(locationArea)){
-    void runOverviewDamagePoc(locationArea);
+  if(overviewDamagePocToggle?.checked&&overviewEdited&&usingArea&&validNormalizedBox(locationArea)){
+    void runOverviewManualDamagePoc(locationArea);
   }
   updateFindingReady();
 }
@@ -1488,8 +1488,40 @@ function renderOverviewDamagePocResult(result){
   drawOverviewComposite();
 }
 
-async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
+async function runOverviewManualDamagePoc(box){
   if(!overviewDamagePocToggle?.checked||!currentFinding||!overviewFile||!validNormalizedBox(box))return;
+  const requestId=++overviewDamagePocRequest;
+  currentOverviewDamagePocResult=null;
+  overviewDamagePocReview.hidden=false;
+  overviewDamagePocSuggestion.textContent="Classifying the surveyor-corrected damage area…";
+  overviewDamagePocCandidates.textContent="";
+  overviewDamagePocMeta.textContent="Manual fallback area · CEDEX location recalculated from the corrected mark.";
+  overviewDamagePocRetry.hidden=true;
+  try{
+    const crop=await createOverviewDamagePocCrop(overviewFile,box);
+    if(!crop)throw new Error("Unable to create the corrected damage crop.");
+    const form=new FormData();
+    form.append("photo",crop,crop.name);
+    form.append("findingId",currentFinding.id);
+    form.append("damageBox",JSON.stringify(box));
+    form.append("locationCode",normalizedLocationCode(locationCodeInput.value||aiLocationCode||""));
+    const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
+    if(requestId!==overviewDamagePocRequest)return;
+    renderOverviewDamagePocResult(result);
+  }catch(e){
+    if(requestId!==overviewDamagePocRequest)return;
+    currentOverviewDamagePocResult=null;
+    drawOverviewComposite();
+    overviewDamagePocReview.hidden=false;
+    overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Corrected-area analysis failed.";
+    overviewDamagePocCandidates.textContent="";
+    overviewDamagePocMeta.textContent="The corrected CEDEX location remains available for manual review.";
+    overviewDamagePocRetry.hidden=false;
+  }
+}
+
+async function runOverviewDamagePoc(){
+  if(!overviewDamagePocToggle?.checked||!currentFinding||!overviewFile)return;
   if(!["LEFT","RIGHT","FRONT"].includes(findingFace.value)){
     overviewDamagePocReview.hidden=false;
     overviewDamagePocSuggestion.textContent="Zero-touch POC currently supports GP side/front views only.";
@@ -1502,21 +1534,45 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
   currentOverviewDamagePocResult=null;
   drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
-  overviewDamagePocSuggestion.textContent="Detecting the component and damage from the AI-located overview region…";
+  overviewDamagePocSuggestion.textContent="Running full zero-touch analysis: locate damage, calculate CEDEX location, then classify component and damage…";
   overviewDamagePocCandidates.textContent="";
-  overviewDamagePocMeta.textContent="Location comes from the fixed-camera geometry; no manual box or pinpoint is used.";
+  overviewDamagePocMeta.textContent="One full overview request · no manual damage box or pinpoint used.";
   overviewDamagePocRetry.hidden=true;
   try{
-    const crop=await createOverviewDamagePocCrop(overviewFile,box);
-    if(!crop)throw new Error("Unable to create the detected damage crop.");
+    const upload=await compressForOcr(overviewFile);
+    const dimensions=await imageDimensions(upload,overviewPreview);
     const form=new FormData();
-    form.append("photo",crop,crop.name);
+    form.append("photo",upload,upload.name||"overview.jpg");
     form.append("findingId",currentFinding.id);
-    form.append("damageBox",JSON.stringify(box));
-    form.append("locationCode",normalizedLocationCode(locationCodeInput.value||aiLocationCode||""));
+    form.append("width",String(dimensions.width));
+    form.append("height",String(dimensions.height));
+    form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
+    form.append("orchestrateLocalization","true");
     const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
     if(requestId!==overviewDamagePocRequest)return;
+    const locationResult=result?.localization;
+    if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
+    renderLocationResult(locationResult);
+    aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
+    aiLocationPoint=locationResult?.point?{...locationResult.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
+    overviewEdited=false;
+    if(aiLocationArea){
+      locationArea={...aiLocationArea};
+      locationPoint=aiLocationPoint?{...aiLocationPoint}:centreOfBox(locationArea);
+      overviewMarkMode="AREA";
+      overviewStage.dataset.markMode="AREA";
+      markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
+      markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
+    }else if(aiLocationPoint){
+      locationArea=null;
+      locationPoint={...aiLocationPoint};
+      overviewMarkMode="POINT";
+      overviewStage.dataset.markMode="POINT";
+      markPointBtn.classList.add("active");markPointBtn.setAttribute("aria-pressed","true");
+      markAreaBtn.classList.remove("active");markAreaBtn.setAttribute("aria-pressed","false");
+    }
     renderOverviewDamagePocResult(result);
+    drawOverviewComposite();
   }catch(e){
     if(requestId!==overviewDamagePocRequest)return;
     if(["OVERVIEW_AUTO_INCOMPLETE","OVERVIEW_AUTO_INVALID_RESPONSE"].includes(e?.code)&&e.result){
@@ -1527,8 +1583,8 @@ async function runOverviewDamagePoc(box=locationArea??aiLocationArea){
       overviewDamagePocReview.hidden=false;
       overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Zero-touch overview analysis failed.";
       overviewDamagePocCandidates.textContent="";
-      overviewDamagePocMeta.textContent="The detected location remains available; component/damage can be reviewed manually.";
-      overviewDamagePocRetry.hidden=!validNormalizedBox(box);
+      overviewDamagePocMeta.textContent="Automatic full-overview analysis failed; manual review remains available.";
+      overviewDamagePocRetry.hidden=false;
     }
   }
 }
@@ -1545,8 +1601,7 @@ overviewDamagePocToggle?.addEventListener("change",()=>{
   }
   overviewMarkTools.hidden=true;
   tapHelp.hidden=true;
-  const box=validNormalizedBox(locationArea)?locationArea:aiLocationArea;
-  if(validNormalizedBox(box))void runOverviewDamagePoc(box);
+  if(overviewFile)void runOverviewDamagePoc();
   else{
     overviewDamagePocReview.hidden=false;
     overviewDamagePocSuggestion.textContent="Upload one overview and let AI locate the damage automatically.";
@@ -1555,7 +1610,7 @@ overviewDamagePocToggle?.addEventListener("change",()=>{
     overviewDamagePocRetry.hidden=true;
   }
 });
-overviewDamagePocRetry?.addEventListener("click",()=>void runOverviewDamagePoc(validNormalizedBox(locationArea)?locationArea:aiLocationArea));
+overviewDamagePocRetry?.addEventListener("click",()=>void runOverviewDamagePoc());
 
 function selectOverviewPhoto(file,source,captureMetadata=null){
   overviewDamagePocRequest++;
