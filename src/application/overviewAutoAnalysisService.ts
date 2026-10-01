@@ -131,7 +131,7 @@ export class OverviewAutoAnalysisService{
       locationCode:(input.locationCode??"").trim().toUpperCase()||null,
       imageScope:"CROP"
     });
-    await this.saveClassificationPredictions(context,input.findingId,combined,true);
+    await this.saveClassificationPredictions(context,input.findingId,combined,false);
     return combined;
   }
 }
