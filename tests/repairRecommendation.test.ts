@@ -29,8 +29,8 @@ function baseRepo(){
     repairCodesForFinding:vi.fn(async()=>({
       equipment:"GP",componentCode:"PAA",damageCode:"DT",
       repairs:[
-        {repair_code:"GS",repair_name:"Straighten",description:"Straighten damaged panel",standard_version:"GP.xlsx"},
-        {repair_code:"RP",repair_name:"Replace",description:"Replace damaged section",standard_version:"GP.xlsx"}
+        {repair_code:"GS",repair_name:"Straighten",description:"Straighten damaged panel" as string|null,standard_version:"GP.xlsx"},
+        {repair_code:"RP",repair_name:"Replace",description:"Replace damaged section" as string|null,standard_version:"GP.xlsx"}
       ]
     })),
     saveRepairMeasurements:vi.fn(async()=>measurement()),
