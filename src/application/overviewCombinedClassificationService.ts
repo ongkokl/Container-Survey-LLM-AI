@@ -81,7 +81,7 @@ function candidates(value:unknown,allowed:Set<string>):Candidate[]{
 export class OverviewCombinedClassificationService{
   constructor(private readonly repo:CedexRepository,private readonly ai:AiRunner){}
 
-  async analyse(input:{findingId:string;file:File;damageBox?:unknown;locationCode?:string|null;}){
+  async analyse(input:{findingId:string;file:File;damageBox?:unknown;locationCode?:string|null;imageScope?:"CROP"|"FULL_OVERVIEW";}){
     const startedAt=Date.now();
     const context=await this.repo.findingContext(input.findingId);
     if(!context)throw new Error("Finding not found.");
@@ -111,6 +111,7 @@ export class OverviewCombinedClassificationService{
     const byComponent=new Map(damageEntries.map(x=>[x.componentCode,x]));
     const unionDamageCodes=[...new Set(damageEntries.flatMap(x=>x.eligible.map(d=>d.damage_code)))];
     const location=(input.locationCode??"").trim().toUpperCase()||null;
+    const imageScope=input.imageScope??"CROP";
     const componentText=allowedComponents.map(x=>`${x.component_code} = ${x.component_name}`).join("\n");
     const damageMap=damageEntries
       .filter(x=>x.eligible.length)
@@ -121,7 +122,10 @@ export class OverviewCombinedClassificationService{
     const prompt=`ZERO-TOUCH POC FAST PATH: classify BOTH the CEDEX component and its visible damage in ONE reasoning pass.
 Container: GP. Face: ${context.container_face}. Overview zone: ${zone}.
 ${location?`Calculated CEDEX location: ${location}. Use only as geometry context.`:"CEDEX location unavailable."}
-The image is already cropped around the automatically localized primary damage. Identify the physical component underneath the central defect first, then classify the damage ONLY from codes valid for that selected component.
+${imageScope==="FULL_OVERVIEW"
+  ?`The supplied image is the FULL overview. The already-localized primary damage region is x=${damageBox.x.toFixed(4)}, y=${damageBox.y.toFixed(4)}, width=${damageBox.width.toFixed(4)}, height=${damageBox.height.toFixed(4)} in normalized image coordinates. Use that localized region as the target; ignore other defects elsewhere in the overview.`
+  :"The image is already cropped around the automatically localized primary damage. Identify the physical component underneath the central defect first."}
+Identify the physical component at the localized target first, then classify the damage ONLY from codes valid for that selected component.
 
 Component rules:
 ${componentGuidance(componentRules)}
@@ -221,6 +225,7 @@ Return only JSON with component_code, component_confidence, component_needs_revi
       pocMode:"ZERO_TOUCH_OVERVIEW",
       source:"AI_DETECTED_OVERVIEW_CROP",
       classificationMode:"SINGLE_QWEN_COMPONENT_DAMAGE",
+      imageScope,
       damageBox,locationCode:location,
       componentCode,componentName,componentConfidence,componentNeedsReview,componentReason,componentCandidates,
       selectedCode:damageCode,selectedName:damageName,confidence:damageConfidence,damageNeedsReview,damageReason,candidates:damageCandidates,
