@@ -55,6 +55,7 @@ describe("measurement-aware repair reasoning",()=>{
     const ai={run:vi.fn(async(_model:string,input:unknown)=>{
       const request=input as {
         messages:Array<{content:string}>,
+        max_completion_tokens:number,
         response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}
       };
       const prompt=request.messages[0].content;
@@ -63,6 +64,7 @@ describe("measurement-aware repair reasoning",()=>{
       expect(prompt).toContain("length=32 cm");
       expect(prompt).toContain("repair=RP");
       expect(prompt).toContain("Do not invent length/width/depth thresholds");
+      expect(request.max_completion_tokens).toBe(1600);
       expect(request.response_format.json_schema.schema.properties.selected_code.enum).toEqual(["GS","RP",null]);
       return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
         selected_code:"RP",
@@ -96,6 +98,84 @@ describe("measurement-aware repair reasoning",()=>{
         recommendationMode:"MEASUREMENT_RULES_HISTORY_QWEN",
         reviewPolicy:"SURVEYOR_CONFIRMATION_REQUIRED"
       })
+    }));
+  });
+
+  it("retries once at 2200 tokens when the first Qwen repair response is truncated",async()=>{
+    const repo=baseRepo();
+    let call=0;
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      call+=1;
+      const request=input as {max_completion_tokens:number};
+      if(call===1){
+        expect(request.max_completion_tokens).toBe(1600);
+        return {choices:[{finish_reason:"length",message:{content:""}}]};
+      }
+      expect(request.max_completion_tokens).toBe(2200);
+      return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
+        selected_code:null,
+        confidence:null,
+        needs_review:true,
+        reason:"Depth and corrugation evidence are insufficient to distinguish the allowed repair methods.",
+        candidates:[]
+      })}}]};
+    })};
+
+    const result=await new RepairRecommendationService(
+      repo as unknown as CedexRepository,
+      ai
+    ).analyse("f1",{
+      damageLengthCm:108.4,damageWidthCm:61,damageDepthCm:null,
+      corrugationsAffected:null,deformationDirection:"UNKNOWN"
+    });
+
+    expect(ai.run).toHaveBeenCalledTimes(2);
+    expect(result.analysisStatus).toBe("ABSTAINED");
+    expect(result.selectedCode).toBeNull();
+    expect(result.finishReason).toBe("stop");
+    expect(result.initialFinishReason).toBe("length");
+    expect(result.aiAttempts).toBe(2);
+    expect(result.completionTokenLimit).toBe(2200);
+    expect(result.retryUsed).toBe(true);
+    expect(repo.saveRepairPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      status:"REVIEW_REQUIRED",
+      requestContext:expect.objectContaining({
+        finishReason:"stop",
+        initialFinishReason:"length",
+        aiAttempts:2,
+        completionTokenLimit:2200,
+        retryUsed:true
+      })
+    }));
+  });
+
+  it("falls back to manual selection instead of INCOMPLETE when both Qwen attempts hit the token limit",async()=>{
+    const repo=baseRepo();
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      const request=input as {max_completion_tokens:number};
+      expect([1600,2200]).toContain(request.max_completion_tokens);
+      return {choices:[{finish_reason:"length",message:{content:""}}]};
+    })};
+
+    const result=await new RepairRecommendationService(
+      repo as unknown as CedexRepository,
+      ai
+    ).analyse("f1",{
+      damageLengthCm:108.4,damageWidthCm:61,damageDepthCm:null,
+      corrugationsAffected:null,deformationDirection:"UNKNOWN"
+    });
+
+    expect(ai.run).toHaveBeenCalledTimes(2);
+    expect(result.analysisStatus).toBe("ABSTAINED");
+    expect(result.selectedCode).toBeNull();
+    expect(result.needsReview).toBe(true);
+    expect(result.reason).toContain("automatic retry");
+    expect(result.finishReason).toBe("length");
+    expect(result.initialFinishReason).toBe("length");
+    expect(result.aiAttempts).toBe(2);
+    expect(result.retryUsed).toBe(true);
+    expect(repo.saveRepairPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      status:"REVIEW_REQUIRED"
     }));
   });
 
