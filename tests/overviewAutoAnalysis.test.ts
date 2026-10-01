@@ -165,12 +165,12 @@ describe("zero-touch overview analysis",()=>{
     expect(combinedService.analyse).not.toHaveBeenCalled();
     expect(result.source).toBe("FULL_OVERVIEW_ORCHESTRATOR");
     expect(result.classificationMode).toBe("SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE");
-    expect(result.localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
+    expect((result as any).localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
     expect(result.locationCode).toBe("LB4N");
     expect(result.componentCode).toBe("PAA");
     expect(result.selectedCode).toBe("DT");
     expect(result.needsReview).toBe(true);
-    expect(result.timings.qwenCalls).toBe(1);
+    expect((result.timings as any).qwenCalls).toBe(1);
     expect(saveComponentPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         imageScope:"FULL_OVERVIEW",
