@@ -56,7 +56,11 @@ describe("measurement-aware repair reasoning",()=>{
       const request=input as {
         messages:Array<{content:string}>,
         max_completion_tokens:number,
-        response_format:{json_schema:{schema:{properties:{selected_code:{enum:Array<string|null>}}}}}
+        response_format:{json_schema:{schema:{properties:{
+          selected_code:{enum:Array<string|null>},
+          evidence_sources:Record<string,unknown>,
+          candidates:{items:{properties:{evidence_sources:Record<string,unknown>}}}
+        }}}}
       };
       const prompt=request.messages[0].content;
       expect(prompt).toContain("Component: PAA");
@@ -66,6 +70,8 @@ describe("measurement-aware repair reasoning",()=>{
       expect(prompt).toContain("Do not invent length/width/depth thresholds");
       expect(request.max_completion_tokens).toBe(1600);
       expect(request.response_format.json_schema.schema.properties.selected_code.enum).toEqual(["GS","RP",null]);
+      expect(request.response_format.json_schema.schema.properties.evidence_sources).not.toHaveProperty("uniqueItems");
+      expect(request.response_format.json_schema.schema.properties.candidates.items.properties.evidence_sources).not.toHaveProperty("uniqueItems");
       return {choices:[{finish_reason:"stop",message:{content:JSON.stringify({
         selected_code:"RP",
         confidence:0.86,
