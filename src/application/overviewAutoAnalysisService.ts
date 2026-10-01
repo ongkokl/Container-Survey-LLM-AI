@@ -9,9 +9,16 @@ export class OverviewAutoAnalysisService{
   private readonly combinedService:OverviewCombinedClassificationService;
   private readonly locationService:LocationSuggestionService;
 
-  constructor(private readonly repo:CedexRepository,private readonly ai:AiRunner){
-    this.combinedService=new OverviewCombinedClassificationService(repo,ai);
-    this.locationService=new LocationSuggestionService(repo,new MoondreamDamageMarker(ai));
+  constructor(
+    private readonly repo:CedexRepository,
+    private readonly ai:AiRunner,
+    dependencies?:{
+      combinedService?:OverviewCombinedClassificationService;
+      locationService?:LocationSuggestionService;
+    }
+  ){
+    this.combinedService=dependencies?.combinedService??new OverviewCombinedClassificationService(repo,ai);
+    this.locationService=dependencies?.locationService??new LocationSuggestionService(repo,new MoondreamDamageMarker(ai));
   }
 
   async analyse(input:{
