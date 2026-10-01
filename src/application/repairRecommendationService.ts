@@ -299,7 +299,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
               needs_review:{type:"boolean",const:true},
               reason:{type:"string"},
               evidence_sources:{
-                type:"array",maxItems:4,uniqueItems:true,
+                type:"array",maxItems:4,
                 items:{type:"string",enum:["MEASUREMENTS","IICL_CRITERION","GP_XLSX_DESCRIPTION","HISTORICAL_CASE"]}
               },
               candidates:{
@@ -311,7 +311,7 @@ Return only JSON with selected_code, confidence, needs_review, reason (maximum 3
                     confidence:{type:["number","null"],minimum:0,maximum:1},
                     reason:{type:"string"},
                     evidence_sources:{
-                      type:"array",maxItems:4,uniqueItems:true,
+                      type:"array",maxItems:4,
                       items:{type:"string",enum:["MEASUREMENTS","IICL_CRITERION","GP_XLSX_DESCRIPTION","HISTORICAL_CASE"]}
                     }
                   },
