@@ -172,13 +172,18 @@ export class LocationSuggestionService{
             :"Face orientation comes from fixed Camera "+fixedCamera.id+"."
         };
 
+        const locatorProfile=(context.container_face==="LEFT"||context.container_face==="RIGHT")
+          ?"PANEL_DEFORMATION_POINT_V1"
+          :"GENERAL_DAMAGE_POINT_V1";
         const pointStartedAt=Date.now();
-        const pointed=await this.marker.pointOverview(input.file,context.container_face);
+        const pointed=(context.container_face==="LEFT"||context.container_face==="RIGHT")
+          ?await this.marker.pointPanelDeformationOverview(input.file,context.container_face)
+          :await this.marker.pointOverview(input.file,context.container_face);
         const moondreamPointMs=Date.now()-pointStartedAt;
         const point=pointed.found&&pointed.geometry?pointed.geometry:null;
 
         if(!point){
-          const reason="Fast Moondream pinpoint did not find a reliable damage target. Full-overview Qwen fallback is required.";
+          const reason="Targeted Moondream deformation pinpoint did not find a reliable damage target. Full-overview Qwen fallback is required.";
           const prediction=await this.repo.saveLocationPrediction({
             findingId:input.findingId,
             surveyId:context.survey_id,
@@ -191,6 +196,7 @@ export class LocationSuggestionService{
               doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
               fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
               orientationConflict:false,autoUsable:false,
+              locatorProfile,
               timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
               reason
             },
@@ -199,7 +205,7 @@ export class LocationSuggestionService{
               fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
               calibrationAvailable:Boolean(calibration.available),calibrationVersion:calibration.calibrationVersion??null,
               alignmentStatus:alignment.status,alignmentSource,
-              localizationSource:"MOONDREAM_POINT_FAST_MISS",fastPointOnly:true
+              localizationSource:"MOONDREAM_POINT_FAST_MISS",fastPointOnly:true,locatorProfile
             }
           });
           return {
@@ -209,6 +215,8 @@ export class LocationSuggestionService{
             doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
             orientationConflict:false,autoUsable:false,
+            locatorProfile,
+            locatorProfile,
             timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
             location:{code:null,reviewRequired:true,reason}
           };
@@ -226,6 +234,7 @@ export class LocationSuggestionService{
               doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
               fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
               orientationConflict:false,autoUsable:false,
+              locatorProfile,
               timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},reason
             },
             requestContext:{
@@ -233,7 +242,7 @@ export class LocationSuggestionService{
               fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
               calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,
               alignmentStatus:alignment.status,alignmentSource,
-              localizationSource:"MOONDREAM_POINT_FAST",fastPointOnly:true
+              localizationSource:"MOONDREAM_POINT_FAST",fastPointOnly:true,locatorProfile
             }
           });
           return {
@@ -243,6 +252,8 @@ export class LocationSuggestionService{
             doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
             orientationConflict:false,autoUsable:false,
+            locatorProfile,
+            locatorProfile,
             timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
             location:{code:null,reviewRequired:true,reason}
           };
@@ -265,6 +276,7 @@ export class LocationSuggestionService{
           doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
           fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
           orientationConflict:false,autoUsable:Boolean(selectedCode),
+          locatorProfile,
           timings:{moondreamPointMs,totalLocalizationMs},
           location:{...calculated,code:selectedCode,reviewRequired,reason}
         };
