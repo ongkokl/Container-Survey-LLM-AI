@@ -5,7 +5,7 @@ import { FixedCameraCalibrationService } from "./fixedCameraCalibrationService";
 
 const MODEL="@cf/qwen/qwen3.8-27b";
 const MAX_COMPLETION_TOKENS=1200;
-const SPEED_PROFILE="ZERO_TOUCH_FAST_1536_1200";
+const SPEED_PROFILE="ZERO_TOUCH_FAST_768_1200";
 const COMPONENT_REVIEW_THRESHOLD=0.8;
 const DAMAGE_REVIEW_THRESHOLD=0.8;
 const TARGET_REVIEW_THRESHOLD=0.45;
