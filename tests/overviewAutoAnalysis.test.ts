@@ -112,6 +112,8 @@ describe("zero-touch overview analysis",()=>{
         source:"FULL_OVERVIEW_ORCHESTRATOR",
         classificationMode:"SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE",
         imageScope:"FULL_OVERVIEW",
+        speedProfile:"ZERO_TOUCH_FAST_1536_1200",
+        aiInput:{width:1536,height:864,bytes:320000,longSide:1536},
         damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
         locationCode:"LB4N",
         componentCode:"PAA",
@@ -130,7 +132,7 @@ describe("zero-touch overview analysis",()=>{
         analysisStatus:"SUGGESTED",
         model:"@cf/qwen/qwen3.8-27b",
         finishReason:"stop",
-        completionTokenLimit:1800,
+        completionTokenLimit:1200,
         localization:{
           localizationSource:"QWEN_PRIMARY_OVERRIDE_POINT",
           location:{code:"LB4N",reviewRequired:true,reason:"Review location."}
@@ -141,6 +143,10 @@ describe("zero-touch overview analysis",()=>{
           classificationAiMs:1200,
           totalClassificationMs:1210,
           totalAutoAnalysisMs:1300,
+          aiInputWidth:1536,
+          aiInputHeight:864,
+          aiInputBytes:320000,
+          aiInputLongSide:1536,
           qwenCalls:1,
           sharedQwenLocalizationClassification:true
         }
@@ -165,6 +171,9 @@ describe("zero-touch overview analysis",()=>{
     expect(combinedService.analyse).not.toHaveBeenCalled();
     expect(result.source).toBe("FULL_OVERVIEW_ORCHESTRATOR");
     expect(result.classificationMode).toBe("SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE");
+    expect((result as any).speedProfile).toBe("ZERO_TOUCH_FAST_1536_1200");
+    expect((result as any).completionTokenLimit).toBe(1200);
+    expect((result as any).aiInput?.longSide).toBe(1536);
     expect((result as any).localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
     expect(result.locationCode).toBe("LB4N");
     expect(result.componentCode).toBe("PAA");
