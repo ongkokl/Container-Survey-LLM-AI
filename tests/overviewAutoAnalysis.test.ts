@@ -94,6 +94,73 @@ describe("zero-touch overview analysis",()=>{
     }));
   });
 
+  it("merges fast Moondream localization with one Qwen crop classification",async()=>{
+    const saveComponentPrediction=vi.fn(async()=>({predictionId:"cp-fast"}));
+    const saveDamagePrediction=vi.fn(async()=>({predictionId:"dp-fast"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"ff",survey_id:"sf",container_face:"LEFT",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      saveComponentPrediction,
+      saveDamagePrediction
+    } as unknown as CedexRepository;
+
+    const combinedService={
+      analyse:vi.fn(async(input:any)=>{
+        expect(input.imageScope).toBe("CROP");
+        expect(input.completionTokenLimit).toBe(1200);
+        return {
+          pocMode:"ZERO_TOUCH_OVERVIEW",
+          source:"AI_DETECTED_OVERVIEW_CROP",
+          classificationMode:"SINGLE_QWEN_COMPONENT_DAMAGE",
+          imageScope:"CROP",
+          damageBox:{x:0.29,y:0.39,width:0.18,height:0.18},
+          locationCode:"LB4N",
+          componentCode:"PAA",componentName:"Panel Assembly",
+          componentConfidence:0.9,componentNeedsReview:false,
+          componentReason:"Panel field.",componentCandidates:[],
+          selectedCode:"DT",selectedName:"Dent / Bent",
+          confidence:0.85,damageNeedsReview:false,
+          damageReason:"Visible deformation.",candidates:[],
+          needsReview:false,analysisStatus:"SUGGESTED",
+          model:"@cf/qwen/qwen3.8-27b",finishReason:"stop",
+          completionTokenLimit:1200,
+          timings:{classificationAiMs:900,totalClassificationMs:940}
+        };
+      })
+    } as any;
+    const unifiedService={analyse:vi.fn()} as any;
+    const service=new OverviewAutoAnalysisService(repo,{run:vi.fn()},{combinedService,unifiedService});
+    const localization={
+      found:true,point:{x:0.38,y:0.48},
+      damageBox:{x:0.29,y:0.39,width:0.18,height:0.18},
+      localizationSource:"MOONDREAM_POINT_FAST",
+      location:{code:"LB4N",reviewRequired:true,reason:"Review."},
+      timings:{moondreamPointMs:300,totalLocalizationMs:360}
+    };
+
+    const result=await service.analyse({
+      findingId:"ff",file:photo(),
+      damageBox:localization.damageBox,locationCode:"LB4N",
+      imageWidth:640,imageHeight:242,
+      fastPointCrop:true,localizationContext:localization
+    });
+
+    expect(unifiedService.analyse).not.toHaveBeenCalled();
+    expect(combinedService.analyse).toHaveBeenCalledTimes(1);
+    expect(result.source).toBe("MOONDREAM_POINT_CROP_ORCHESTRATOR");
+    expect((result as any).speedProfile).toBe("ZERO_TOUCH_POINT_CROP_FAST_V1");
+    expect((result as any).localization.localizationSource).toBe("MOONDREAM_POINT_FAST");
+    expect((result as any).timings.moondreamPointMs).toBe(300);
+    expect((result as any).timings.totalAutoAnalysisMs).toBe(1300);
+    expect((result as any).aiInput.longSide).toBe(640);
+    expect(result.componentCode).toBe("PAA");
+    expect(result.selectedCode).toBe("DT");
+    expect(saveComponentPrediction).toHaveBeenCalled();
+    expect(saveDamagePrediction).toHaveBeenCalled();
+  });
+
   it("uses one unified Qwen result for full-overview localization, component and damage",async()=>{
     const saveComponentPrediction=vi.fn(async()=>({predictionId:"cp-orch"}));
     const saveDamagePrediction=vi.fn(async()=>({predictionId:"dp-orch"}));
@@ -112,7 +179,7 @@ describe("zero-touch overview analysis",()=>{
         source:"FULL_OVERVIEW_ORCHESTRATOR",
         classificationMode:"SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE",
         imageScope:"FULL_OVERVIEW",
-        speedProfile:"ZERO_TOUCH_FAST_768_1200",
+        speedProfile:"ZERO_TOUCH_FULL_FALLBACK_1536_1200",
         aiInput:{width:768,height:432,bytes:180000,longSide:768},
         damageBox:{x:0.23,y:0.48,width:0.18,height:0.18},
         locationCode:"LB4N",
@@ -171,7 +238,7 @@ describe("zero-touch overview analysis",()=>{
     expect(combinedService.analyse).not.toHaveBeenCalled();
     expect(result.source).toBe("FULL_OVERVIEW_ORCHESTRATOR");
     expect(result.classificationMode).toBe("SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE");
-    expect((result as any).speedProfile).toBe("ZERO_TOUCH_FAST_768_1200");
+    expect((result as any).speedProfile).toBe("ZERO_TOUCH_FULL_FALLBACK_1536_1200");
     expect((result as any).completionTokenLimit).toBe(1200);
     expect((result as any).aiInput?.longSide).toBe(768);
     expect((result as any).localization?.localizationSource).toBe("QWEN_PRIMARY_OVERRIDE_POINT");
