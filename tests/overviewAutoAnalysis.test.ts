@@ -161,6 +161,69 @@ describe("zero-touch overview analysis",()=>{
     expect(saveDamagePrediction).toHaveBeenCalled();
   });
 
+  it("labels detector-box crop classification separately from the old point-crop path",async()=>{
+    const saveComponentPrediction=vi.fn(async()=>({predictionId:"cp-box"}));
+    const saveDamagePrediction=vi.fn(async()=>({predictionId:"dp-box"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"fb",survey_id:"sb",container_face:"LEFT",
+        equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      saveComponentPrediction,
+      saveDamagePrediction
+    } as unknown as CedexRepository;
+
+    const combinedService={
+      analyse:vi.fn(async(input:any)=>({
+        pocMode:"ZERO_TOUCH_OVERVIEW",
+        source:"AI_DETECTED_OVERVIEW_CROP",
+        classificationMode:"SINGLE_QWEN_COMPONENT_DAMAGE",
+        imageScope:"CROP",
+        damageBox:input.damageBox,
+        locationCode:"LB4N",
+        componentCode:"PAA",componentName:"Panel Assembly",
+        componentConfidence:0.9,componentNeedsReview:false,
+        componentReason:"Panel field.",componentCandidates:[],
+        selectedCode:"DT",selectedName:"Dent / Bent",
+        confidence:0.85,damageNeedsReview:false,
+        damageReason:"Visible deformation.",candidates:[],
+        needsReview:false,analysisStatus:"SUGGESTED",
+        model:"@cf/qwen/qwen3.8-27b",finishReason:"stop",
+        completionTokenLimit:1200,
+        timings:{classificationAiMs:900,totalClassificationMs:940}
+      }))
+    } as any;
+    const unifiedService={analyse:vi.fn()} as any;
+    const service=new OverviewAutoAnalysisService(repo,{run:vi.fn()},{combinedService,unifiedService});
+    const localization={
+      found:true,
+      damageBox:{x:0.29,y:0.39,width:0.18,height:0.18},
+      localizationSource:"DETECT_BOX",
+      location:{code:"LB4N",reviewRequired:true,reason:"Review."},
+      timings:{detectBoxMs:300,totalLocalizationMs:360}
+    };
+
+    const result=await service.analyse({
+      findingId:"fb",file:photo(),
+      damageBox:localization.damageBox,locationCode:"LB4N",
+      imageWidth:640,imageHeight:360,
+      targetedCrop:true,localizationContext:localization
+    });
+
+    expect(unifiedService.analyse).not.toHaveBeenCalled();
+    expect(combinedService.analyse).toHaveBeenCalledTimes(1);
+    expect(combinedService.analyse).toHaveBeenCalledWith(expect.objectContaining({
+      imageScope:"CROP",
+      completionTokenLimit:1200
+    }));
+    expect(result.source).toBe("DETECTED_DAMAGE_BOX_CROP_ORCHESTRATOR");
+    expect((result as any).speedProfile).toBe("ZERO_TOUCH_DETECT_BOX_CROP_V1");
+    expect((result as any).localizationMode).toBe("DETECTED_DAMAGE_BOX");
+    expect((result as any).localization.localizationSource).toBe("DETECT_BOX");
+    expect(result.componentCode).toBe("PAA");
+    expect(result.selectedCode).toBe("DT");
+  });
+
   it("uses one unified Qwen result for full-overview localization, component and damage",async()=>{
     const saveComponentPrediction=vi.fn(async()=>({predictionId:"cp-orch"}));
     const saveDamagePrediction=vi.fn(async()=>({predictionId:"dp-orch"}));
