@@ -154,7 +154,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         imageWidth:Number(form.get("width"))||0,
         imageHeight:Number(form.get("height"))||0,
         captureMetadata,
-        fastPointOnly:String(form.get("fastPointOnly")??"").toLowerCase()==="true"
+        fastPointOnly:String(form.get("fastPointOnly")??"").toLowerCase()==="true",
+        detectBoxOnly:String(form.get("detectBoxOnly")??"").toLowerCase()==="true"
       });
       return json({ok:true,result});
     } catch(error) {
@@ -182,6 +183,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       }
       const orchestrateLocalization=String(form.get("orchestrateLocalization")??"").toLowerCase()==="true"||!damageBox;
       const fastPointCrop=String(form.get("fastPointCrop")??"").toLowerCase()==="true";
+      const targetedCrop=String(form.get("targetedCrop")??"").toLowerCase()==="true";
       const localizationContextRaw=String(form.get("localizationContext")??"").trim();
       let localizationContext:unknown=null;
       if(localizationContextRaw){
@@ -199,6 +201,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         captureMetadata,
         orchestrateLocalization,
         fastPointCrop,
+        targetedCrop,
         localizationContext
       });
       if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
