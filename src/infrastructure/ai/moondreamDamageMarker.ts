@@ -115,6 +115,28 @@ export class MoondreamDamageMarker {
     return {found:true,model:MODEL,geometry:{x:normalize(x),y:normalize(y)},raw,target};
   }
 
+  async pointPanelDeformationOverview(file:File,face:string){
+    const image=await this.imageData(file);
+    const faceName=String(face||"container").toLowerCase();
+    const target=
+      "single most prominent inward or outward dent, buckle, bend, crease, crushed corrugation or permanently deformed corrugation "+
+      "on the shipping container "+faceName+" side-wall panel field; point to the centre of the strongest structural deformation; "+
+      "ignore normal corrugation shape, rails, corner posts, logos, lettering, paint variation, rust colour, scratches, dirt, stains, shadows, reflections, patches and background objects";
+    const raw=await this.ai.run(MODEL,{task:"point",image,target,max_objects:1});
+    const points=arrayAt(raw,"points");
+    if(!points.length)return {found:false,model:MODEL,geometry:null,raw,target,locatorProfile:"PANEL_DEFORMATION_POINT_V1"};
+    const p=points[0],x=finite(p.x),y=finite(p.y);
+    if(x===null||y===null)return {found:false,model:MODEL,geometry:null,raw,target,locatorProfile:"PANEL_DEFORMATION_POINT_V1"};
+    return {
+      found:true,
+      model:MODEL,
+      geometry:{x:normalize(x),y:normalize(y)},
+      raw,
+      target,
+      locatorProfile:"PANEL_DEFORMATION_POINT_V1"
+    };
+  }
+
   async detect(file:File){
     const image=await this.imageData(file);
     const raw=await this.ai.run(MODEL,{task:"detect",image,target:"visible damaged area on the shipping container component",max_objects:3});

@@ -1573,9 +1573,9 @@ async function runOverviewDamagePoc(){
   currentOverviewDamagePocResult=null;
   drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
-  overviewDamagePocSuggestion.textContent="Fast zero-touch: Moondream pinpoint → local crop → Qwen component + damage…";
+  overviewDamagePocSuggestion.textContent="Fast zero-touch: targeted deformation pinpoint → local crop → Qwen component + damage…";
   overviewDamagePocCandidates.textContent="";
-  overviewDamagePocMeta.textContent="Trying fast pinpoint/crop path first; full-overview Qwen remains the fallback.";
+  overviewDamagePocMeta.textContent="Trying targeted panel-deformation pinpoint first; full-overview Qwen remains the fallback.";
   overviewDamagePocRetry.hidden=true;
   try{
     const fullUpload=await compressForOcr(overviewFile);
@@ -1607,7 +1607,7 @@ async function runOverviewDamagePoc(){
       classifyForm.append("localizationContext",JSON.stringify(locationResult));
       result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:classifyForm});
     }else{
-      overviewDamagePocSuggestion.textContent="Fast pinpoint missed; running full-overview Qwen fallback…";
+      overviewDamagePocSuggestion.textContent="Targeted deformation pinpoint missed; running full-overview Qwen fallback…";
       const fallbackUpload=await compressForZeroTouchAi(overviewFile);
       const fallbackDimensions=await imageDimensions(fallbackUpload,overviewPreview);
       const requestCaptureMetadata={
