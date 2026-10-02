@@ -24,6 +24,26 @@ describe("zero-touch overview point fallback",()=>{
     expect(result.geometry).toEqual({x:0.43,y:0.58});
   });
 
+  it("uses a narrow deformation-only Moondream target for the PAA/DT speed experiment",async()=>{
+    const ai={run:vi.fn(async(_model:string,input:unknown)=>{
+      const req=input as {task:string;target:string;max_objects:number};
+      expect(req.task).toBe("point");
+      expect(req.max_objects).toBe(1);
+      expect(req.target).toContain("single most prominent inward or outward dent");
+      expect(req.target).toContain("permanently deformed corrugation");
+      expect(req.target).toContain("side-wall panel field");
+      expect(req.target).toContain("ignore normal corrugation shape");
+      expect(req.target).not.toContain("PAA");
+      expect(req.target).not.toContain("DT");
+      return {points:[{x:38,y:48}]};
+    })};
+    const marker=new MoondreamDamageMarker(ai);
+    const result=await marker.pointPanelDeformationOverview(photo(),"LEFT");
+    expect(result.found).toBe(true);
+    expect(result.geometry).toEqual({x:0.38,y:0.48});
+    expect(result.locatorProfile).toBe("PANEL_DEFORMATION_POINT_V1");
+  });
+
   it("uses Qwen full-overview reasoning as the third automatic localization stage",async()=>{
     const ai={run:vi.fn(async(model:string,input:unknown)=>{
       expect(model).toBe("@cf/qwen/qwen3.8-27b");
@@ -74,9 +94,11 @@ describe("zero-touch overview point fallback",()=>{
     const markerMock={
       locateOverview:vi.fn(),
       selectPrimaryOverviewDamage:vi.fn(),
-      pointOverview:vi.fn(async()=>({
+      pointOverview:vi.fn(),
+      pointPanelDeformationOverview:vi.fn(async()=>({
         found:true,model:"@cf/moondream/moondream3.1-9B-A2B",
-        geometry:{x:0.38,y:0.48},raw:{points:[{x:38,y:48}]}
+        geometry:{x:0.38,y:0.48},raw:{points:[{x:38,y:48}]},
+        locatorProfile:"PANEL_DEFORMATION_POINT_V1"
       })),
       reasonedPointOverview:vi.fn()
     } as unknown as MoondreamDamageMarker;
@@ -87,12 +109,14 @@ describe("zero-touch overview point fallback",()=>{
       fastPointOnly:true
     });
 
-    expect(markerMock.pointOverview).toHaveBeenCalledTimes(1);
+    expect(markerMock.pointPanelDeformationOverview).toHaveBeenCalledWith(expect.any(File),"LEFT");
+    expect(markerMock.pointOverview).not.toHaveBeenCalled();
     expect(markerMock.locateOverview).not.toHaveBeenCalled();
     expect(markerMock.selectPrimaryOverviewDamage).not.toHaveBeenCalled();
     expect(markerMock.reasonedPointOverview).not.toHaveBeenCalled();
     expect(result.found).toBe(true);
     expect(result.localizationSource).toBe("MOONDREAM_POINT_FAST");
+    expect(result.locatorProfile).toBe("PANEL_DEFORMATION_POINT_V1");
     expect(result.point).toEqual({x:0.38,y:0.48});
     expect(result.damageBox).toEqual(expect.objectContaining({width:0.18,height:0.18}));
     expect((result.location as {code?:string|null}|null)?.code).toMatch(/^L/);
@@ -100,7 +124,8 @@ describe("zero-touch overview point fallback",()=>{
     expect(saveLocationPrediction).toHaveBeenCalledWith(expect.objectContaining({
       requestContext:expect.objectContaining({
         localizationSource:"MOONDREAM_POINT_FAST",
-        fastPointOnly:true
+        fastPointOnly:true,
+        locatorProfile:"PANEL_DEFORMATION_POINT_V1"
       })
     }));
   });
