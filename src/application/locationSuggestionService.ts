@@ -124,6 +124,7 @@ export class LocationSuggestionService{
     imageWidth:number;
     imageHeight:number;
     captureMetadata?:unknown;
+    fastPointOnly?:boolean;
   }){
     const context=await this.repo.findingContext(input.findingId);
     if(!context)throw new Error("Finding not found.");
@@ -134,6 +135,155 @@ export class LocationSuggestionService{
     if(fixedCameraMatches&&fixedCamera){
       const calibrationService=new FixedCameraCalibrationService(this.repo);
       const calibration=await calibrationService.get(input.findingId,fixedCamera.id);
+
+      if(input.fastPointOnly){
+        const fastStartedAt=Date.now();
+        const alignmentReferenceBox=capture.fixedAlignmentReferenceBox;
+        const alignment=alignmentReferenceBox
+          ?await calibrationService.alignment(input.findingId,fixedCamera.id,alignmentReferenceBox)
+          :await calibrationService.alignment(input.findingId,fixedCamera.id,null);
+        const alignmentSource=alignmentReferenceBox?(capture.fixedAlignmentSource??"FIXED_GEOMETRY_EDGE"):"NONE";
+        const sideFace=context.container_face==="LEFT"||context.container_face==="RIGHT";
+        const fixedFaceVerification=sideFace?{
+          selectedFace:context.container_face,
+          detectedFace:context.container_face as "LEFT"|"RIGHT",
+          confidence:1,
+          status:"MATCH" as const,
+          evidence:"FIXED_CAMERA_PROFILE" as const,
+          reason:"Container face and orientation come from the fixed POC camera profile."
+        }:{
+          selectedFace:context.container_face,
+          detectedFace:null,
+          confidence:1,
+          status:"UNVERIFIED" as const,
+          evidence:null,
+          reason:"Container face and orientation come from the fixed POC camera profile."
+        };
+        const fixedDoorEndDetection={
+          visible:false,
+          side:fixedCamera.doorEndInImage,
+          confidence:1,
+          expectedSide:fixedCamera.doorEndInImage,
+          matchesSelectedFace:true,
+          suggestedFace:sideFace?context.container_face as "LEFT"|"RIGHT":null,
+          doorDominant:false,
+          reason:fixedCamera.doorEndInImage
+            ?"Longitudinal orientation comes from fixed Camera "+fixedCamera.id+"."
+            :"Face orientation comes from fixed Camera "+fixedCamera.id+"."
+        };
+
+        const pointStartedAt=Date.now();
+        const pointed=await this.marker.pointOverview(input.file,context.container_face);
+        const moondreamPointMs=Date.now()-pointStartedAt;
+        const point=pointed.found&&pointed.geometry?pointed.geometry:null;
+
+        if(!point){
+          const reason="Fast Moondream pinpoint did not find a reliable damage target. Full-overview Qwen fallback is required.";
+          const prediction=await this.repo.saveLocationPrediction({
+            findingId:input.findingId,
+            surveyId:context.survey_id,
+            modelName:pointed.model,
+            selectedCode:null,
+            status:"FAILED",
+            response:{
+              found:false,point:null,damageBox:null,localizationSource:"MOONDREAM_POINT_FAST_MISS",
+              referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",
+              doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
+              fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
+              orientationConflict:false,autoUsable:false,
+              timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
+              reason
+            },
+            requestContext:{
+              face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
+              fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
+              calibrationAvailable:Boolean(calibration.available),calibrationVersion:calibration.calibrationVersion??null,
+              alignmentStatus:alignment.status,alignmentSource,
+              localizationSource:"MOONDREAM_POINT_FAST_MISS",fastPointOnly:true
+            }
+          });
+          return {
+            found:false,model:pointed.model,predictionId:prediction.predictionId,
+            point:null,damageBox:null,localizationSource:"MOONDREAM_POINT_FAST_MISS",
+            referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",
+            doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
+            fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
+            orientationConflict:false,autoUsable:false,
+            timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
+            location:{code:null,reviewRequired:true,reason}
+          };
+        }
+
+        const damageBox=contextBoxAroundPoint(point);
+        if(!calibration.available){
+          const reason="Fixed Camera "+fixedCamera.id+" calibration is not configured for this container geometry.";
+          const prediction=await this.repo.saveLocationPrediction({
+            findingId:input.findingId,surveyId:context.survey_id,modelName:pointed.model,
+            selectedCode:null,status:"FAILED",
+            response:{
+              found:true,point,damageBox,localizationSource:"MOONDREAM_POINT_FAST",
+              referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",
+              doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
+              fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
+              orientationConflict:false,autoUsable:false,
+              timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},reason
+            },
+            requestContext:{
+              face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
+              fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
+              calibrationAvailable:false,calibrationVersion:calibration.calibrationVersion??null,
+              alignmentStatus:alignment.status,alignmentSource,
+              localizationSource:"MOONDREAM_POINT_FAST",fastPointOnly:true
+            }
+          });
+          return {
+            found:true,model:pointed.model,predictionId:prediction.predictionId,
+            point,damageBox,localizationSource:"MOONDREAM_POINT_FAST",
+            referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",
+            doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
+            fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
+            orientationConflict:false,autoUsable:false,
+            timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
+            location:{code:null,reviewRequired:true,reason}
+          };
+        }
+
+        const calculated=await calibrationService.calculate({
+          findingId:input.findingId,
+          cameraId:fixedCamera.id,
+          damagePoint:point,
+          alignmentReferenceBox,
+          requireAlignment:true
+        });
+        const selectedCode=calculated.code??null;
+        const reviewRequired=Boolean(calculated.reviewRequired||!selectedCode);
+        const reason=calculated.reason??"Calculated from fixed-camera calibration and the fast Moondream damage pinpoint.";
+        const totalLocalizationMs=Date.now()-fastStartedAt;
+        const response={
+          found:true,point,damageBox,localizationSource:"MOONDREAM_POINT_FAST",
+          referenceBox:alignmentReferenceBox,referenceSource:"FIXED_CAMERA_CALIBRATION",
+          doorEndDetection:fixedDoorEndDetection,doorBox:null,faceVerification:fixedFaceVerification,
+          fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
+          orientationConflict:false,autoUsable:Boolean(selectedCode),
+          timings:{moondreamPointMs,totalLocalizationMs},
+          location:{...calculated,code:selectedCode,reviewRequired,reason}
+        };
+        const prediction=await this.repo.saveLocationPrediction({
+          findingId:input.findingId,surveyId:context.survey_id,modelName:pointed.model,
+          selectedCode,status:selectedCode?(reviewRequired?"REVIEW_REQUIRED":"SUGGESTED"):"FAILED",
+          response,
+          requestContext:{
+            face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
+            fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
+            calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,
+            alignmentStatus:alignment.status,alignmentSource,
+            localizationSource:"MOONDREAM_POINT_FAST",fastPointOnly:true,
+            moondreamPointMs
+          }
+        });
+        return {...response,model:pointed.model,predictionId:prediction.predictionId};
+      }
+
       const located=await this.marker.locateOverview(
         input.file,
         context.container_face,
