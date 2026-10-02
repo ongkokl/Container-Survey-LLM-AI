@@ -1573,9 +1573,9 @@ async function runOverviewDamagePoc(){
   currentOverviewDamagePocResult=null;
   drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
-  overviewDamagePocSuggestion.textContent="Zero-touch AI is locating the damage, calculating CEDEX location, then classifying component and damage…";
+  overviewDamagePocSuggestion.textContent="Zero-touch AI: detect damage box → focused Qwen classification.";
   overviewDamagePocCandidates.textContent="";
-  overviewDamagePocMeta.textContent="One zero-touch overview request · no separate locate-overview-damage call.";
+  overviewDamagePocMeta.textContent="Trying detector box + 35% context crop first; current full-overview Qwen remains the safety fallback.";
   overviewDamagePocRetry.hidden=true;
   try{
     const upload=await compressForZeroTouchAi(overviewFile);
@@ -1591,19 +1591,79 @@ async function runOverviewDamagePoc(){
         bytes:upload.size
       }
     };
-    const form=new FormData();
-    form.append("photo",upload,upload.name||"overview.jpg");
-    form.append("findingId",currentFinding.id);
-    form.append("width",String(dimensions.width));
-    form.append("height",String(dimensions.height));
-    form.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
-    form.append("orchestrateLocalization","true");
 
-    const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
+    const runFullQwenFallback=async(reason)=>{
+      if(requestId!==overviewDamagePocRequest)return null;
+      overviewDamagePocSuggestion.textContent=(reason?reason+" ":"")+"Running existing full-overview Qwen safety fallback…";
+      const fallbackForm=new FormData();
+      fallbackForm.append("photo",upload,upload.name||"overview.jpg");
+      fallbackForm.append("findingId",currentFinding.id);
+      fallbackForm.append("width",String(dimensions.width));
+      fallbackForm.append("height",String(dimensions.height));
+      fallbackForm.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
+      fallbackForm.append("orchestrateLocalization","true");
+      return apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:fallbackForm});
+    };
+
+    let result=null;
+    let locationResult=null;
+    try{
+      const locateForm=new FormData();
+      locateForm.append("photo",upload,upload.name||"overview.jpg");
+      locateForm.append("findingId",currentFinding.id);
+      locateForm.append("width",String(dimensions.width));
+      locateForm.append("height",String(dimensions.height));
+      locateForm.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
+      locateForm.append("detectBoxOnly","true");
+      locationResult=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:locateForm});
+      if(requestId!==overviewDamagePocRequest)return;
+
+      const box=locationResult?.damageBox;
+      const usableDetectedBox=Boolean(
+        locationResult?.found&&
+        locationResult?.localizationSource==="DETECT_BOX"&&
+        validNormalizedBox(box)&&
+        box.width>=0.02&&
+        box.height>=0.02
+      );
+
+      if(!usableDetectedBox){
+        result=await runFullQwenFallback("Detector did not return a usable physical damage box.");
+        locationResult=result?.localization??null;
+      }else{
+        const crop=await createOverviewDamagePocCrop(overviewFile,box);
+        if(!crop){
+          result=await runFullQwenFallback("Automatic damage crop could not be created.");
+          locationResult=result?.localization??null;
+        }else{
+          const cropDimensions=await imageDimensions(crop,null);
+          const classifyForm=new FormData();
+          classifyForm.append("photo",crop,crop.name||"overview-damage-poc.jpg");
+          classifyForm.append("findingId",currentFinding.id);
+          classifyForm.append("damageBox",JSON.stringify(box));
+          classifyForm.append("locationCode",String(locationResult?.location?.code??""));
+          classifyForm.append("width",String(cropDimensions.width));
+          classifyForm.append("height",String(cropDimensions.height));
+          classifyForm.append("targetedCrop","true");
+          classifyForm.append("localizationContext",JSON.stringify(locationResult));
+          try{
+            result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:classifyForm});
+          }catch{
+            result=await runFullQwenFallback("Targeted crop classification was not reliable.");
+            locationResult=result?.localization??null;
+          }
+        }
+      }
+    }catch{
+      result=await runFullQwenFallback("Detect-box path was unavailable.");
+      locationResult=result?.localization??null;
+    }
+
     if(requestId!==overviewDamagePocRequest)return;
-
-    const locationResult=result?.localization;
+    if(!result)throw new Error("Zero-touch analysis did not return a result.");
+    locationResult=result?.localization??locationResult;
     if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
+
     renderLocationResult(locationResult);
     aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
     aiLocationPoint=locationResult?.point?{...locationResult.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
