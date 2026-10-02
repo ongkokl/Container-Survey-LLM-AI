@@ -48,6 +48,63 @@ describe("zero-touch overview point fallback",()=>{
     expect(result.model).toBe("@cf/qwen/qwen3.8-27b");
   });
 
+  it("uses Moondream point directly for the fast zero-touch path and skips detect/Qwen localization",async()=>{
+    const saveLocationPrediction=vi.fn(async()=>({predictionId:"lp-fast"}));
+    const repo={
+      findingContext:vi.fn(async()=>({
+        id:"f-fast",survey_id:"s-fast",container_face:"LEFT",
+        final_location_code:null,equipment_type:"GP",length_ft:40,observed_iso_code:"45G1"
+      })),
+      geometryForFinding:vi.fn(async()=>({
+        isoCode:"45G1",equipmentType:"GP",lengthFt:40,heightDescription:"9'6",
+        lengthMm:12192,widthMm:2438,heightMm:2896,
+        geometrySource:"test",geometryVersion:"test"
+      })),
+      fixedCameraCalibration:vi.fn(async()=>({
+        cameraId:"L",containerFace:"LEFT",lengthFt:40,heightMm:2896,
+        doorEndInImage:"RIGHT",
+        corners:[
+          {x:0.1,y:0.1},{x:0.9,y:0.1},{x:0.9,y:0.9},{x:0.1,y:0.9}
+        ],
+        calibrationVersion:5,updatedAt:"2026-10-02T00:00:00.000Z"
+      })),
+      saveLocationPrediction
+    } as unknown as CedexRepository;
+
+    const markerMock={
+      locateOverview:vi.fn(),
+      selectPrimaryOverviewDamage:vi.fn(),
+      pointOverview:vi.fn(async()=>({
+        found:true,model:"@cf/moondream/moondream3.1-9B-A2B",
+        geometry:{x:0.38,y:0.48},raw:{points:[{x:38,y:48}]}
+      })),
+      reasonedPointOverview:vi.fn()
+    } as unknown as MoondreamDamageMarker;
+
+    const result=await new LocationSuggestionService(repo,markerMock).analyse({
+      findingId:"f-fast",file:photo(),imageWidth:1103,imageHeight:417,
+      captureMetadata:{fixedCameraMode:true,fixedCameraId:"L"},
+      fastPointOnly:true
+    });
+
+    expect(markerMock.pointOverview).toHaveBeenCalledTimes(1);
+    expect(markerMock.locateOverview).not.toHaveBeenCalled();
+    expect(markerMock.selectPrimaryOverviewDamage).not.toHaveBeenCalled();
+    expect(markerMock.reasonedPointOverview).not.toHaveBeenCalled();
+    expect(result.found).toBe(true);
+    expect(result.localizationSource).toBe("MOONDREAM_POINT_FAST");
+    expect(result.point).toEqual({x:0.38,y:0.48});
+    expect(result.damageBox).toEqual(expect.objectContaining({width:0.18,height:0.18}));
+    expect((result.location as {code?:string|null}|null)?.code).toMatch(/^L/);
+    expect((result as any).timings.moondreamPointMs).toBeGreaterThanOrEqual(0);
+    expect(saveLocationPrediction).toHaveBeenCalledWith(expect.objectContaining({
+      requestContext:expect.objectContaining({
+        localizationSource:"MOONDREAM_POINT_FAST",
+        fastPointOnly:true
+      })
+    }));
+  });
+
   it("continues fixed-camera CEDEX location from the automatic point when detect returns no box",async()=>{
     const saveLocationPrediction=vi.fn(async()=>({predictionId:"lp1"}));
     const repo={

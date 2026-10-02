@@ -136,9 +136,9 @@ async function compressForOcr(file) {
   }
 }
 
-const ZERO_TOUCH_AI_MAX_DIMENSION=768;
+const ZERO_TOUCH_AI_MAX_DIMENSION=1536;
 const ZERO_TOUCH_AI_JPEG_QUALITY=0.88;
-const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_FAST_768_1200";
+const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_FULL_FALLBACK_1536_1200";
 
 async function compressForZeroTouchAi(file){
   try{
@@ -158,7 +158,7 @@ async function compressForZeroTouchAi(file){
     bitmap.close();
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",ZERO_TOUCH_AI_JPEG_QUALITY));
     if(!blob)return file;
-    return new File([blob],"overview-zero-touch-768.jpg",{type:"image/jpeg",lastModified:Date.now()});
+    return new File([blob],"overview-zero-touch-fallback.jpg",{type:"image/jpeg",lastModified:Date.now()});
   }catch{
     return file;
   }
@@ -1509,9 +1509,12 @@ function renderOverviewDamagePocResult(result){
   const timingText=typeof result?.timings?.totalAutoAnalysisMs==="number"
     ?" · total "+(result.timings.totalAutoAnalysisMs/1000).toFixed(1)+"s"
     :"";
-  const qwenText=typeof result?.timings?.unifiedQwenMs==="number"
-    ?" · Qwen "+(result.timings.unifiedQwenMs/1000).toFixed(1)+"s"
-    :"";
+  const qwenMs=typeof result?.timings?.unifiedQwenMs==="number"
+    ?result.timings.unifiedQwenMs
+    :typeof result?.timings?.classificationAiMs==="number"
+      ?result.timings.classificationAiMs
+      :null;
+  const qwenText=typeof qwenMs==="number"?" · Qwen "+(qwenMs/1000).toFixed(1)+"s":"";
   const inputText=result?.aiInput?.width&&result?.aiInput?.height
     ?" · AI input "+result.aiInput.width+"×"+result.aiInput.height
     :"";
@@ -1570,34 +1573,67 @@ async function runOverviewDamagePoc(){
   currentOverviewDamagePocResult=null;
   drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
-  overviewDamagePocSuggestion.textContent="Running full zero-touch analysis: locate damage, calculate CEDEX location, then classify component and damage…";
+  overviewDamagePocSuggestion.textContent="Fast zero-touch: Moondream pinpoint → local crop → Qwen component + damage…";
   overviewDamagePocCandidates.textContent="";
-  overviewDamagePocMeta.textContent="One full overview request · no manual damage box or pinpoint used.";
+  overviewDamagePocMeta.textContent="Trying fast pinpoint/crop path first; full-overview Qwen remains the fallback.";
   overviewDamagePocRetry.hidden=true;
   try{
-    const upload=await compressForZeroTouchAi(overviewFile);
-    const dimensions=await imageDimensions(upload,overviewPreview);
-    const requestCaptureMetadata={
-      ...(overviewCaptureMeta??{}),
-      zeroTouchAiInput:{
-        profile:ZERO_TOUCH_AI_SPEED_PROFILE,
-        maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
-        jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
-        width:dimensions.width,
-        height:dimensions.height,
-        bytes:upload.size
-      }
-    };
-    const form=new FormData();
-    form.append("photo",upload,upload.name||"overview.jpg");
-    form.append("findingId",currentFinding.id);
-    form.append("width",String(dimensions.width));
-    form.append("height",String(dimensions.height));
-    form.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
-    form.append("orchestrateLocalization","true");
-    const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
+    const fullUpload=await compressForOcr(overviewFile);
+    const fullDimensions=await imageDimensions(fullUpload,overviewPreview);
+    const locateForm=new FormData();
+    locateForm.append("photo",fullUpload,fullUpload.name||"overview.jpg");
+    locateForm.append("findingId",currentFinding.id);
+    locateForm.append("width",String(fullDimensions.width));
+    locateForm.append("height",String(fullDimensions.height));
+    locateForm.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
+    locateForm.append("fastPointOnly","true");
+
+    let locationResult=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:locateForm});
     if(requestId!==overviewDamagePocRequest)return;
-    const locationResult=result?.localization;
+
+    let result;
+    if(locationResult?.found&&locationResult?.point&&validNormalizedBox(locationResult?.damageBox)){
+      const crop=await createOverviewDamagePocCrop(overviewFile,locationResult.damageBox);
+      if(!crop)throw new Error("Unable to create the automatic damage crop.");
+      const cropDimensions=await imageDimensions(crop,null);
+      const classifyForm=new FormData();
+      classifyForm.append("photo",crop,crop.name||"overview-damage-poc.jpg");
+      classifyForm.append("findingId",currentFinding.id);
+      classifyForm.append("damageBox",JSON.stringify(locationResult.damageBox));
+      classifyForm.append("locationCode",String(locationResult?.location?.code??""));
+      classifyForm.append("width",String(cropDimensions.width));
+      classifyForm.append("height",String(cropDimensions.height));
+      classifyForm.append("fastPointCrop","true");
+      classifyForm.append("localizationContext",JSON.stringify(locationResult));
+      result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:classifyForm});
+    }else{
+      overviewDamagePocSuggestion.textContent="Fast pinpoint missed; running full-overview Qwen fallback…";
+      const fallbackUpload=await compressForZeroTouchAi(overviewFile);
+      const fallbackDimensions=await imageDimensions(fallbackUpload,overviewPreview);
+      const requestCaptureMetadata={
+        ...(overviewCaptureMeta??{}),
+        zeroTouchAiInput:{
+          profile:ZERO_TOUCH_AI_SPEED_PROFILE,
+          maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
+          jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
+          width:fallbackDimensions.width,
+          height:fallbackDimensions.height,
+          bytes:fallbackUpload.size
+        }
+      };
+      const fallbackForm=new FormData();
+      fallbackForm.append("photo",fallbackUpload,fallbackUpload.name||"overview.jpg");
+      fallbackForm.append("findingId",currentFinding.id);
+      fallbackForm.append("width",String(fallbackDimensions.width));
+      fallbackForm.append("height",String(fallbackDimensions.height));
+      fallbackForm.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
+      fallbackForm.append("orchestrateLocalization","true");
+      result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:fallbackForm});
+      locationResult=result?.localization;
+    }
+
+    if(requestId!==overviewDamagePocRequest)return;
+    locationResult=result?.localization??locationResult;
     if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
     renderLocationResult(locationResult);
     aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
@@ -1630,7 +1666,7 @@ async function runOverviewDamagePoc(){
       overviewDamagePocReview.hidden=false;
       overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Zero-touch overview analysis failed.";
       overviewDamagePocCandidates.textContent="";
-      overviewDamagePocMeta.textContent="Automatic full-overview analysis failed; manual review remains available.";
+      overviewDamagePocMeta.textContent="Automatic analysis failed; manual review remains available.";
       overviewDamagePocRetry.hidden=false;
     }
   }
@@ -1688,39 +1724,27 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
         }
       }
       const zeroTouch=Boolean(overviewDamagePocToggle?.checked);
-      const upload=zeroTouch
-        ?await compressForZeroTouchAi(overviewFile)
-        :await compressForOcr(overviewFile);
+      if(zeroTouch){
+        await runOverviewDamagePoc();
+        if(requestId!==overviewAiRequest)return;
+        updateFindingReady();
+        return;
+      }
+      const upload=await compressForOcr(overviewFile);
       const dimensions=await imageDimensions(upload,overviewPreview);
-      const requestCaptureMetadata=zeroTouch?{
-        ...(overviewCaptureMeta??{}),
-        zeroTouchAiInput:{
-          profile:ZERO_TOUCH_AI_SPEED_PROFILE,
-          maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
-          jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
-          width:dimensions.width,
-          height:dimensions.height,
-          bytes:upload.size
-        }
-      }:(overviewCaptureMeta??{});
       const form=new FormData();
       form.append("photo",upload,upload.name||"overview.jpg");
       form.append("findingId",currentFinding.id);
       form.append("width",String(dimensions.width));
       form.append("height",String(dimensions.height));
-      form.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
-      if(zeroTouch)form.append("orchestrateLocalization","true");
-      const result=await apiJson(
-        zeroTouch?"/api/poc/overview-auto-analyse":"/api/vision/locate-overview-damage",
-        {method:"POST",body:form}
-      );
+      form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
+      const result=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:form});
       if(requestId!==overviewAiRequest)return;
-      const locationResult=zeroTouch?result?.localization:result;
+      const locationResult=result;
       if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
       renderLocationResult(locationResult);
       aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
       aiLocationPoint=locationResult?.point?{...locationResult.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
-      if(zeroTouch)renderOverviewDamagePocResult(result);
       drawOverviewComposite();
 
       if(!overviewEdited&&aiLocationArea){
@@ -1816,7 +1840,7 @@ function drawBox(canvas,box,isAi=false,clear=true){
 function overviewLocalizationSourceLabel(){
   if(overviewEdited)return "Manual";
   if(["QWEN_PRIMARY_BOX","QWEN_PRIMARY_OVERRIDE_POINT","QWEN_POINT_FALLBACK"].includes(aiLocalizationSource))return "AI · Qwen";
-  if(["DETECT_BOX","POINT_FALLBACK"].includes(aiLocalizationSource))return "AI · Moondream";
+  if(["DETECT_BOX","POINT_FALLBACK","MOONDREAM_POINT_FAST"].includes(aiLocalizationSource))return "AI · Moondream";
   return "AI";
 }
 

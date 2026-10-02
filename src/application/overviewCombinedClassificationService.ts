@@ -81,7 +81,14 @@ function candidates(value:unknown,allowed:Set<string>):Candidate[]{
 export class OverviewCombinedClassificationService{
   constructor(private readonly repo:CedexRepository,private readonly ai:AiRunner){}
 
-  async analyse(input:{findingId:string;file:File;damageBox?:unknown;locationCode?:string|null;imageScope?:"CROP"|"FULL_OVERVIEW";}){
+  async analyse(input:{
+    findingId:string;
+    file:File;
+    damageBox?:unknown;
+    locationCode?:string|null;
+    imageScope?:"CROP"|"FULL_OVERVIEW";
+    completionTokenLimit?:number;
+  }){
     const startedAt=Date.now();
     const context=await this.repo.findingContext(input.findingId);
     if(!context)throw new Error("Finding not found.");
@@ -112,6 +119,10 @@ export class OverviewCombinedClassificationService{
     const unionDamageCodes=[...new Set(damageEntries.flatMap(x=>x.eligible.map(d=>d.damage_code)))];
     const location=(input.locationCode??"").trim().toUpperCase()||null;
     const imageScope=input.imageScope??"CROP";
+    const requestedTokenLimit=Number(input.completionTokenLimit);
+    const completionTokenLimit=Number.isFinite(requestedTokenLimit)
+      ?Math.max(600,Math.min(MAX_COMPLETION_TOKENS,Math.trunc(requestedTokenLimit)))
+      :MAX_COMPLETION_TOKENS;
     const componentText=allowedComponents.map(x=>`${x.component_code} = ${x.component_name}`).join("\n");
     const damageMap=damageEntries
       .filter(x=>x.eligible.length)
@@ -151,7 +162,7 @@ Return only JSON with component_code, component_confidence, component_needs_revi
         {type:"text",text:prompt},
         {type:"image_url",image_url:{url:dataUri(await input.file.arrayBuffer(),input.file.type||"image/jpeg")}}
       ]}],
-      max_completion_tokens:MAX_COMPLETION_TOKENS,
+      max_completion_tokens:completionTokenLimit,
       reasoning_effort:"low",
       temperature:0,
       response_format:{type:"json_schema",json_schema:{name:"overview_combined_classification",strict:true,schema:{
@@ -230,7 +241,7 @@ Return only JSON with component_code, component_confidence, component_needs_revi
       componentCode,componentName,componentConfidence,componentNeedsReview,componentReason,componentCandidates,
       selectedCode:damageCode,selectedName:damageName,confidence:damageConfidence,damageNeedsReview,damageReason,candidates:damageCandidates,
       needsReview:Boolean(componentNeedsReview||damageNeedsReview||!location),
-      analysisStatus,model:MODEL,finishReason,completionTokenLimit:MAX_COMPLETION_TOKENS,
+      analysisStatus,model:MODEL,finishReason,completionTokenLimit,
       timings:{classificationAiMs:aiDurationMs,totalClassificationMs:totalDurationMs}
     };
   }
