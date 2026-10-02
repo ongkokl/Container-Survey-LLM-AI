@@ -138,7 +138,7 @@ async function compressForOcr(file) {
 
 const ZERO_TOUCH_AI_MAX_DIMENSION=1536;
 const ZERO_TOUCH_AI_JPEG_QUALITY=0.88;
-const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_FULL_FALLBACK_1536_1200";
+const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_DEFAULT_1536_1200";
 
 async function compressForZeroTouchAi(file){
   try{
