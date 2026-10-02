@@ -110,6 +110,7 @@ export class OverviewAutoAnalysisService{
     captureMetadata?:unknown;
     orchestrateLocalization?:boolean;
     fastPointCrop?:boolean;
+    targetedCrop?:boolean;
     localizationContext?:unknown;
   }){
     const context=await this.repo.findingContext(input.findingId);
@@ -130,16 +131,17 @@ export class OverviewAutoAnalysisService{
       return result;
     }
 
+    const cropMode=Boolean(input.fastPointCrop||input.targetedCrop);
     const combined=await this.combinedService.analyse({
       findingId:input.findingId,
       file:input.file,
       damageBox:input.damageBox,
       locationCode:(input.locationCode??"").trim().toUpperCase()||null,
       imageScope:"CROP",
-      completionTokenLimit:input.fastPointCrop?1200:undefined
+      completionTokenLimit:cropMode?1200:undefined
     });
 
-    if(input.fastPointCrop){
+    if(cropMode){
       const localization=record(input.localizationContext);
       const localizationTimings=record(localization?.timings);
       const classificationTimings=record(combined.timings);
@@ -155,9 +157,9 @@ export class OverviewAutoAnalysisService{
       const merged={
         ...combined,
         needsReview:Boolean(combined.needsReview||localizationLocation?.reviewRequired===true),
-        source:"MOONDREAM_POINT_CROP_ORCHESTRATOR",
-        speedProfile:"ZERO_TOUCH_POINT_CROP_FAST_V1",
-        localizationMode:"MOONDREAM_POINT",
+        source:input.targetedCrop?"DETECTED_DAMAGE_BOX_CROP_ORCHESTRATOR":"MOONDREAM_POINT_CROP_ORCHESTRATOR",
+        speedProfile:input.targetedCrop?"ZERO_TOUCH_DETECT_BOX_CROP_V1":"ZERO_TOUCH_POINT_CROP_FAST_V1",
+        localizationMode:input.targetedCrop?"DETECTED_DAMAGE_BOX":"MOONDREAM_POINT",
         aiInput:{
           width:Number(input.imageWidth)||0,
           height:Number(input.imageHeight)||0,
