@@ -136,9 +136,9 @@ async function compressForOcr(file) {
   }
 }
 
-const ZERO_TOUCH_AI_MAX_DIMENSION=1536;
+const ZERO_TOUCH_AI_MAX_DIMENSION=768;
 const ZERO_TOUCH_AI_JPEG_QUALITY=0.88;
-const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_FAST_1536_1200";
+const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_FAST_768_1200";
 
 async function compressForZeroTouchAi(file){
   try{
@@ -158,7 +158,7 @@ async function compressForZeroTouchAi(file){
     bitmap.close();
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",ZERO_TOUCH_AI_JPEG_QUALITY));
     if(!blob)return file;
-    return new File([blob],"overview-zero-touch-1536.jpg",{type:"image/jpeg",lastModified:Date.now()});
+    return new File([blob],"overview-zero-touch-768.jpg",{type:"image/jpeg",lastModified:Date.now()});
   }catch{
     return file;
   }
