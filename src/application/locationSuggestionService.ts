@@ -216,7 +216,6 @@ export class LocationSuggestionService{
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
             orientationConflict:false,autoUsable:false,
             locatorProfile,
-            locatorProfile,
             timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
             location:{code:null,reviewRequired:true,reason}
           };
@@ -253,7 +252,6 @@ export class LocationSuggestionService{
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,calibration,alignment,alignmentSource,
             orientationConflict:false,autoUsable:false,
             locatorProfile,
-            locatorProfile,
             timings:{moondreamPointMs,totalLocalizationMs:Date.now()-fastStartedAt},
             location:{code:null,reviewRequired:true,reason}
           };
@@ -268,7 +266,7 @@ export class LocationSuggestionService{
         });
         const selectedCode=calculated.code??null;
         const reviewRequired=Boolean(calculated.reviewRequired||!selectedCode);
-        const reason=calculated.reason??"Calculated from fixed-camera calibration and the fast Moondream damage pinpoint.";
+        const reason=calculated.reason??"Calculated from fixed-camera calibration and the targeted Moondream deformation pinpoint.";
         const totalLocalizationMs=Date.now()-fastStartedAt;
         const response={
           found:true,point,damageBox,localizationSource:"MOONDREAM_POINT_FAST",
@@ -289,7 +287,7 @@ export class LocationSuggestionService{
             fixedCameraId:fixedCamera.id,fixedCameraFace:fixedCamera.face,
             calibrationAvailable:true,calibrationVersion:calibration.calibrationVersion,
             alignmentStatus:alignment.status,alignmentSource,
-            localizationSource:"MOONDREAM_POINT_FAST",fastPointOnly:true,
+            localizationSource:"MOONDREAM_POINT_FAST",fastPointOnly:true,locatorProfile,
             moondreamPointMs
           }
         });
