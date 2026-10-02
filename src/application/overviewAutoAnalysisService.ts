@@ -151,8 +151,10 @@ export class OverviewAutoAnalysisService{
       const classificationMs=typeof classificationTimings?.totalClassificationMs==="number"
         ?classificationTimings.totalClassificationMs
         :0;
+      const localizationLocation=record(localization?.location);
       const merged={
         ...combined,
+        needsReview:Boolean(combined.needsReview||localizationLocation?.reviewRequired===true),
         source:"MOONDREAM_POINT_CROP_ORCHESTRATOR",
         speedProfile:"ZERO_TOUCH_POINT_CROP_FAST_V1",
         localizationMode:"MOONDREAM_POINT",
