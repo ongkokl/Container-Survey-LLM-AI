@@ -153,7 +153,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         file,
         imageWidth:Number(form.get("width"))||0,
         imageHeight:Number(form.get("height"))||0,
-        captureMetadata
+        captureMetadata,
+        fastPointOnly:String(form.get("fastPointOnly")??"").toLowerCase()==="true"
       });
       return json({ok:true,result});
     } catch(error) {
@@ -180,6 +181,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         catch{throw new Error("Invalid capture metadata.");}
       }
       const orchestrateLocalization=String(form.get("orchestrateLocalization")??"").toLowerCase()==="true"||!damageBox;
+      const fastPointCrop=String(form.get("fastPointCrop")??"").toLowerCase()==="true";
+      const localizationContextRaw=String(form.get("localizationContext")??"").trim();
+      let localizationContext:unknown=null;
+      if(localizationContextRaw){
+        try{localizationContext=JSON.parse(localizationContextRaw);}
+        catch{throw new Error("Invalid localization context.");}
+      }
       const ai=env.AI as unknown as {run(model:string,input:unknown):Promise<unknown>};
       const result=await new OverviewAutoAnalysisService(new CedexRepository(env.DB),ai).analyse({
         findingId:String(form.get("findingId")??""),
@@ -189,7 +197,9 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
         imageWidth:Number(form.get("width"))||0,
         imageHeight:Number(form.get("height"))||0,
         captureMetadata,
-        orchestrateLocalization
+        orchestrateLocalization,
+        fastPointCrop,
+        localizationContext
       });
       if(result.analysisStatus==="INCOMPLETE"||result.analysisStatus==="INVALID_RESPONSE"){
         return json({ok:false,error:"OVERVIEW_AUTO_"+result.analysisStatus,message:"Zero-touch AI analysis did not complete.",result},422);
