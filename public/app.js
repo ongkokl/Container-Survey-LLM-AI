@@ -1703,7 +1703,7 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
       return;
     }
 
-    // Uploading an overview no longer calls /api/vision/locate-overview-damage automatically.
+    // Uploading an overview no longer starts a separate legacy locator request.
     // With zero-touch disabled, the surveyor can use the existing manual area/pinpoint tools.
     locationReview.hidden=false;
     locationAutoUsable=false;
