@@ -125,6 +125,7 @@ export class LocationSuggestionService{
     imageHeight:number;
     captureMetadata?:unknown;
     fastPointOnly?:boolean;
+    detectBoxOnly?:boolean;
   }){
     const context=await this.repo.findingContext(input.findingId);
     if(!context)throw new Error("Finding not found.");
@@ -294,12 +295,14 @@ export class LocationSuggestionService{
         return {...response,model:pointed.model,predictionId:prediction.predictionId};
       }
 
+      const detectBoxStartedAt=Date.now();
       const located=await this.marker.locateOverview(
         input.file,
         context.container_face,
         null,
         {skipDoorDetection:true,skipReferenceDetection:!calibration.available}
       );
+      const detectBoxMs=Date.now()-detectBoxStartedAt;
       const aiReferenceBox=located.referenceBox??null;
       const edgeReferenceBox=capture.fixedAlignmentReferenceBox;
       const rank=(status:string)=>status==="GREEN"?4:status==="AMBER"?3:status==="RED"?1:status==="UNVERIFIED"?0:-1;
@@ -368,9 +371,10 @@ export class LocationSuggestionService{
       let primarySelectorReason:string|null=null;
       let selectedCandidateIndex:number|null=null;
 
-      primaryReviewAttempted=true;
-      try{
-        const primary=await this.marker.selectPrimaryOverviewDamage(
+      if(!input.detectBoxOnly){
+        primaryReviewAttempted=true;
+        try{
+          const primary=await this.marker.selectPrimaryOverviewDamage(
           input.file,
           context.container_face,
           detectedDamageCandidates
@@ -394,10 +398,11 @@ export class LocationSuggestionService{
       }catch(error){
         primarySelectorDecision="ERROR";
         primarySelectorReason=error instanceof Error?error.message:"Primary-damage selector unavailable.";
-        localizationSource="DETECT_BOX";
+          localizationSource="DETECT_BOX";
+        }
       }
 
-      if(!damageBox){
+      if(!damageBox&&!input.detectBoxOnly){
         const skipMoondreamPoint=primaryReviewAttempted&&primarySelectorDecision==="NONE";
         if(!skipMoondreamPoint)moondreamPointAttempted=true;
         const pointed=skipMoondreamPoint
@@ -650,7 +655,8 @@ export class LocationSuggestionService{
             alignment,
           alignmentSource,
           orientationConflict:false,autoUsable:Boolean(selectedCode),
-          calculatedLocation:calculated,selectedCode,reviewRequired:true,reason
+          calculatedLocation:calculated,selectedCode,reviewRequired:true,reason,
+          ...(input.detectBoxOnly?{timings:{detectBoxMs,totalLocalizationMs:Date.now()-detectBoxStartedAt}}:{})
         },
         requestContext:{
           face:context.container_face,lengthFt:context.length_ft,isoCode:context.observed_iso_code,
@@ -688,6 +694,7 @@ export class LocationSuggestionService{
             alignment,
         alignmentSource,
         orientationConflict:false,autoUsable:Boolean(selectedCode),
+        ...(input.detectBoxOnly?{timings:{detectBoxMs,totalLocalizationMs:Date.now()-detectBoxStartedAt}}:{}),
         location:{...calculated,code:selectedCode,reviewRequired:true,reason}
       };
     }
