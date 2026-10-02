@@ -136,6 +136,34 @@ async function compressForOcr(file) {
   }
 }
 
+const ZERO_TOUCH_AI_MAX_DIMENSION=1536;
+const ZERO_TOUCH_AI_JPEG_QUALITY=0.88;
+const ZERO_TOUCH_AI_SPEED_PROFILE="ZERO_TOUCH_FAST_1536_1200";
+
+async function compressForZeroTouchAi(file){
+  try{
+    const bitmap=await createImageBitmap(file);
+    const scale=Math.min(1,ZERO_TOUCH_AI_MAX_DIMENSION/Math.max(bitmap.width,bitmap.height));
+    if(scale===1){
+      bitmap.close();
+      return file;
+    }
+    const width=Math.max(1,Math.round(bitmap.width*scale));
+    const height=Math.max(1,Math.round(bitmap.height*scale));
+    const canvas=document.createElement("canvas");
+    canvas.width=width;canvas.height=height;
+    const context=canvas.getContext("2d");
+    if(!context){bitmap.close();return file;}
+    context.drawImage(bitmap,0,0,width,height);
+    bitmap.close();
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",ZERO_TOUCH_AI_JPEG_QUALITY));
+    if(!blob)return file;
+    return new File([blob],"overview-zero-touch-1536.jpg",{type:"image/jpeg",lastModified:Date.now()});
+  }catch{
+    return file;
+  }
+}
+
 async function imageDimensions(file, fallbackImage) {
   try {
     const bitmap = await createImageBitmap(file);
@@ -1481,9 +1509,17 @@ function renderOverviewDamagePocResult(result){
   const timingText=typeof result?.timings?.totalAutoAnalysisMs==="number"
     ?" · total "+(result.timings.totalAutoAnalysisMs/1000).toFixed(1)+"s"
     :"";
+  const qwenText=typeof result?.timings?.unifiedQwenMs==="number"
+    ?" · Qwen "+(result.timings.unifiedQwenMs/1000).toFixed(1)+"s"
+    :"";
+  const inputText=result?.aiInput?.width&&result?.aiInput?.height
+    ?" · AI input "+result.aiInput.width+"×"+result.aiInput.height
+    :"";
+  const profileText=result?.speedProfile?" · "+result.speedProfile:"";
   overviewDamagePocMeta.textContent=
     "Location "+(result?.locationCode||locationCodeInput.value||"—")+
-    " · one overview photo · AI-detected damage region · no manual box/pinpoint used"+timingText+".";
+    " · one overview photo · AI-detected damage region · no manual box/pinpoint used"+
+    inputText+qwenText+timingText+profileText+".";
   overviewDamagePocRetry.hidden=!validNormalizedBox(locationArea??aiLocationArea);
   drawOverviewComposite();
 }
@@ -1539,14 +1575,25 @@ async function runOverviewDamagePoc(){
   overviewDamagePocMeta.textContent="One full overview request · no manual damage box or pinpoint used.";
   overviewDamagePocRetry.hidden=true;
   try{
-    const upload=await compressForOcr(overviewFile);
+    const upload=await compressForZeroTouchAi(overviewFile);
     const dimensions=await imageDimensions(upload,overviewPreview);
+    const requestCaptureMetadata={
+      ...(overviewCaptureMeta??{}),
+      zeroTouchAiInput:{
+        profile:ZERO_TOUCH_AI_SPEED_PROFILE,
+        maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
+        jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
+        width:dimensions.width,
+        height:dimensions.height,
+        bytes:upload.size
+      }
+    };
     const form=new FormData();
     form.append("photo",upload,upload.name||"overview.jpg");
     form.append("findingId",currentFinding.id);
     form.append("width",String(dimensions.width));
     form.append("height",String(dimensions.height));
-    form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
+    form.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
     form.append("orchestrateLocalization","true");
     const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
     if(requestId!==overviewDamagePocRequest)return;
@@ -1640,15 +1687,28 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
           };
         }
       }
-      const upload=await compressForOcr(overviewFile);
+      const zeroTouch=Boolean(overviewDamagePocToggle?.checked);
+      const upload=zeroTouch
+        ?await compressForZeroTouchAi(overviewFile)
+        :await compressForOcr(overviewFile);
       const dimensions=await imageDimensions(upload,overviewPreview);
+      const requestCaptureMetadata=zeroTouch?{
+        ...(overviewCaptureMeta??{}),
+        zeroTouchAiInput:{
+          profile:ZERO_TOUCH_AI_SPEED_PROFILE,
+          maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
+          jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
+          width:dimensions.width,
+          height:dimensions.height,
+          bytes:upload.size
+        }
+      }:(overviewCaptureMeta??{});
       const form=new FormData();
       form.append("photo",upload,upload.name||"overview.jpg");
       form.append("findingId",currentFinding.id);
       form.append("width",String(dimensions.width));
       form.append("height",String(dimensions.height));
-      form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
-      const zeroTouch=Boolean(overviewDamagePocToggle?.checked);
+      form.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
       if(zeroTouch)form.append("orchestrateLocalization","true");
       const result=await apiJson(
         zeroTouch?"/api/poc/overview-auto-analyse":"/api/vision/locate-overview-damage",

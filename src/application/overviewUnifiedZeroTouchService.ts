@@ -4,7 +4,8 @@ import { MoondreamDamageMarker } from "../infrastructure/ai/moondreamDamageMarke
 import { FixedCameraCalibrationService } from "./fixedCameraCalibrationService";
 
 const MODEL="@cf/qwen/qwen3.8-27b";
-const MAX_COMPLETION_TOKENS=1800;
+const MAX_COMPLETION_TOKENS=1200;
+const SPEED_PROFILE="ZERO_TOUCH_FAST_1536_1200";
 const COMPONENT_REVIEW_THRESHOLD=0.8;
 const DAMAGE_REVIEW_THRESHOLD=0.8;
 const TARGET_REVIEW_THRESHOLD=0.45;
@@ -550,7 +551,11 @@ Keep reasons concise (max 15 words each). Return only JSON.`;
         selectedCandidateIndex,
         unifiedQwen:true,
         targetConfidence,
-        priorityClass:normalizedPriority
+        priorityClass:normalizedPriority,
+        speedProfile:SPEED_PROFILE,
+        aiInputWidth:input.imageWidth,
+        aiInputHeight:input.imageHeight,
+        aiInputBytes:input.file.size
       }
     });
     const localization={...locationResponse,predictionId:locationPrediction.predictionId,model:MODEL};
@@ -575,6 +580,13 @@ Keep reasons concise (max 15 words each). Return only JSON.`;
       source:"FULL_OVERVIEW_ORCHESTRATOR",
       classificationMode:"SINGLE_QWEN_LOCALIZATION_COMPONENT_DAMAGE",
       imageScope:"FULL_OVERVIEW",
+      speedProfile:SPEED_PROFILE,
+      aiInput:{
+        width:input.imageWidth,
+        height:input.imageHeight,
+        bytes:input.file.size,
+        longSide:Math.max(input.imageWidth,input.imageHeight)
+      },
       damageBox,
       locationCode,
       componentCode,
@@ -603,6 +615,10 @@ Keep reasons concise (max 15 words each). Return only JSON.`;
         locationGeometryMs,
         totalClassificationMs:unifiedQwenMs+locationGeometryMs,
         totalAutoAnalysisMs,
+        aiInputWidth:input.imageWidth,
+        aiInputHeight:input.imageHeight,
+        aiInputBytes:input.file.size,
+        aiInputLongSide:Math.max(input.imageWidth,input.imageHeight),
         qwenCalls:1,
         sharedQwenLocalizationClassification:true
       }
