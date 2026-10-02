@@ -1573,67 +1573,36 @@ async function runOverviewDamagePoc(){
   currentOverviewDamagePocResult=null;
   drawOverviewComposite();
   overviewDamagePocReview.hidden=false;
-  overviewDamagePocSuggestion.textContent="Fast zero-touch: targeted deformation pinpoint → local crop → Qwen component + damage…";
+  overviewDamagePocSuggestion.textContent="Zero-touch AI is locating the damage, calculating CEDEX location, then classifying component and damage…";
   overviewDamagePocCandidates.textContent="";
-  overviewDamagePocMeta.textContent="Trying targeted panel-deformation pinpoint first; full-overview Qwen remains the fallback.";
+  overviewDamagePocMeta.textContent="One zero-touch overview request · no separate locate-overview-damage call.";
   overviewDamagePocRetry.hidden=true;
   try{
-    const fullUpload=await compressForOcr(overviewFile);
-    const fullDimensions=await imageDimensions(fullUpload,overviewPreview);
-    const locateForm=new FormData();
-    locateForm.append("photo",fullUpload,fullUpload.name||"overview.jpg");
-    locateForm.append("findingId",currentFinding.id);
-    locateForm.append("width",String(fullDimensions.width));
-    locateForm.append("height",String(fullDimensions.height));
-    locateForm.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
-    locateForm.append("fastPointOnly","true");
+    const upload=await compressForZeroTouchAi(overviewFile);
+    const dimensions=await imageDimensions(upload,overviewPreview);
+    const requestCaptureMetadata={
+      ...(overviewCaptureMeta??{}),
+      zeroTouchAiInput:{
+        profile:ZERO_TOUCH_AI_SPEED_PROFILE,
+        maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
+        jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
+        width:dimensions.width,
+        height:dimensions.height,
+        bytes:upload.size
+      }
+    };
+    const form=new FormData();
+    form.append("photo",upload,upload.name||"overview.jpg");
+    form.append("findingId",currentFinding.id);
+    form.append("width",String(dimensions.width));
+    form.append("height",String(dimensions.height));
+    form.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
+    form.append("orchestrateLocalization","true");
 
-    let locationResult=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:locateForm});
+    const result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:form});
     if(requestId!==overviewDamagePocRequest)return;
 
-    let result;
-    if(locationResult?.found&&locationResult?.point&&validNormalizedBox(locationResult?.damageBox)){
-      const crop=await createOverviewDamagePocCrop(overviewFile,locationResult.damageBox);
-      if(!crop)throw new Error("Unable to create the automatic damage crop.");
-      const cropDimensions=await imageDimensions(crop,null);
-      const classifyForm=new FormData();
-      classifyForm.append("photo",crop,crop.name||"overview-damage-poc.jpg");
-      classifyForm.append("findingId",currentFinding.id);
-      classifyForm.append("damageBox",JSON.stringify(locationResult.damageBox));
-      classifyForm.append("locationCode",String(locationResult?.location?.code??""));
-      classifyForm.append("width",String(cropDimensions.width));
-      classifyForm.append("height",String(cropDimensions.height));
-      classifyForm.append("fastPointCrop","true");
-      classifyForm.append("localizationContext",JSON.stringify(locationResult));
-      result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:classifyForm});
-    }else{
-      overviewDamagePocSuggestion.textContent="Targeted deformation pinpoint missed; running full-overview Qwen fallback…";
-      const fallbackUpload=await compressForZeroTouchAi(overviewFile);
-      const fallbackDimensions=await imageDimensions(fallbackUpload,overviewPreview);
-      const requestCaptureMetadata={
-        ...(overviewCaptureMeta??{}),
-        zeroTouchAiInput:{
-          profile:ZERO_TOUCH_AI_SPEED_PROFILE,
-          maxDimension:ZERO_TOUCH_AI_MAX_DIMENSION,
-          jpegQuality:ZERO_TOUCH_AI_JPEG_QUALITY,
-          width:fallbackDimensions.width,
-          height:fallbackDimensions.height,
-          bytes:fallbackUpload.size
-        }
-      };
-      const fallbackForm=new FormData();
-      fallbackForm.append("photo",fallbackUpload,fallbackUpload.name||"overview.jpg");
-      fallbackForm.append("findingId",currentFinding.id);
-      fallbackForm.append("width",String(fallbackDimensions.width));
-      fallbackForm.append("height",String(fallbackDimensions.height));
-      fallbackForm.append("captureMetadata",JSON.stringify(requestCaptureMetadata));
-      fallbackForm.append("orchestrateLocalization","true");
-      result=await apiJson("/api/poc/overview-auto-analyse",{method:"POST",body:fallbackForm});
-      locationResult=result?.localization;
-    }
-
-    if(requestId!==overviewDamagePocRequest)return;
-    locationResult=result?.localization??locationResult;
+    const locationResult=result?.localization;
     if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
     renderLocationResult(locationResult);
     aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
@@ -1666,7 +1635,7 @@ async function runOverviewDamagePoc(){
       overviewDamagePocReview.hidden=false;
       overviewDamagePocSuggestion.textContent=e instanceof Error?e.message:"Zero-touch overview analysis failed.";
       overviewDamagePocCandidates.textContent="";
-      overviewDamagePocMeta.textContent="Automatic analysis failed; manual review remains available.";
+      overviewDamagePocMeta.textContent="Automatic zero-touch analysis failed; manual marking remains available.";
       overviewDamagePocRetry.hidden=false;
     }
   }
@@ -1705,94 +1674,48 @@ function selectOverviewPhoto(file,source,captureMetadata=null){
   const requestId=++overviewAiRequest;
   if(!overviewFile){locationReview.hidden=true;overviewMarkTools.hidden=true;faceReferenceTools.hidden=true;updateFindingReady();return;}
   if(source==="gallery") overviewPhoto.value=""; else overviewGalleryPhoto.value="";
-  findingMessage.textContent="Fixed Camera "+(selectedFixedCamera()?.id??"—")+" overview loaded. Face/orientation and perspective come from the stored camera profile/calibration; AI will locate the damage area.";
+  findingMessage.textContent="Fixed Camera "+(selectedFixedCamera()?.id??"—")+" overview loaded. Zero-touch AI finding will detect the damage by default.";
   showImage(overviewFile,overviewPreview,overviewStage,overviewCanvas,async()=>{
-    overviewMarkTools.hidden=Boolean(overviewDamagePocToggle?.checked);
+    const zeroTouch=Boolean(overviewDamagePocToggle?.checked);
+    overviewMarkTools.hidden=zeroTouch;
     setOverviewMarkMode("AREA");
-    tapHelp.hidden=Boolean(overviewDamagePocToggle?.checked);
-    tapHelp.textContent="AI is locating the visible structural damage area…";
-    try{
-      if(currentFixedCalibration?.available&&Array.isArray(currentFixedCalibration.corners)){
-        const edgeAlignment=estimateFixedFaceAlignment(overviewPreview,currentFixedCalibration.corners);
-        if(edgeAlignment?.box){
-          overviewCaptureMeta={
-            ...(overviewCaptureMeta??{}),
-            fixedAlignmentReferenceBox:edgeAlignment.box,
-            fixedAlignmentConfidence:edgeAlignment.confidence,
-            fixedAlignmentSource:edgeAlignment.source
-          };
-        }
-      }
-      const zeroTouch=Boolean(overviewDamagePocToggle?.checked);
-      if(zeroTouch){
-        await runOverviewDamagePoc();
-        if(requestId!==overviewAiRequest)return;
-        updateFindingReady();
-        return;
-      }
-      const upload=await compressForOcr(overviewFile);
-      const dimensions=await imageDimensions(upload,overviewPreview);
-      const form=new FormData();
-      form.append("photo",upload,upload.name||"overview.jpg");
-      form.append("findingId",currentFinding.id);
-      form.append("width",String(dimensions.width));
-      form.append("height",String(dimensions.height));
-      form.append("captureMetadata",JSON.stringify(overviewCaptureMeta??{}));
-      const result=await apiJson("/api/vision/locate-overview-damage",{method:"POST",body:form});
-      if(requestId!==overviewAiRequest)return;
-      const locationResult=result;
-      if(!locationResult)throw new Error("Zero-touch analysis did not return a localization result.");
-      renderLocationResult(locationResult);
-      aiLocationArea=validNormalizedBox(locationResult?.damageBox)?{...locationResult.damageBox}:null;
-      aiLocationPoint=locationResult?.point?{...locationResult.point}:aiLocationArea?centreOfBox(aiLocationArea):null;
-      drawOverviewComposite();
+    tapHelp.hidden=zeroTouch;
+    tapHelp.textContent=zeroTouch
+      ?"Zero-touch AI is detecting the damage automatically…"
+      :"Automatic AI detection is off. Draw the damage area or switch to pinpoint.";
 
-      if(!overviewEdited&&aiLocationArea){
-        locationArea={...aiLocationArea};
-        locationPoint=aiLocationPoint?{...aiLocationPoint}:centreOfBox(locationArea);
-        overviewMarkMode="AREA";
-        markAreaBtn.classList.add("active");markAreaBtn.setAttribute("aria-pressed","true");
-        markPointBtn.classList.remove("active");markPointBtn.setAttribute("aria-pressed","false");
-        overviewStage.dataset.markMode="AREA";
-        drawOverviewComposite();
-        tapHelp.textContent="AI proposed this damage area. Drag on the photo to redraw it, or switch to Pinpoint damage for a small defect.";
-        if(overviewDamagePocToggle?.checked){
-          overviewMarkTools.hidden=true;
-          tapHelp.hidden=true;
-        }
-      }else if(!overviewEdited&&aiLocationPoint){
-        locationPoint={...aiLocationPoint};
-        overviewMarkMode="POINT";
-        markPointBtn.classList.add("active");markPointBtn.setAttribute("aria-pressed","true");
-        markAreaBtn.classList.remove("active");markAreaBtn.setAttribute("aria-pressed","false");
-        overviewStage.dataset.markMode="POINT";
-        drawOverviewComposite();
-        tapHelp.textContent="AI proposed this damage point. Tap the photo to correct it, or switch to Draw damage area.";
-      }else if(overviewEdited){
-        await recalculateLocationFromMark();
-      }else{
-        drawOverviewComposite();
-        overviewMarkTools.hidden=false;
-        tapHelp.hidden=false;
-        tapHelp.textContent="AI could not identify the damage area. Manual marking is available only as a fallback.";
-        if(overviewDamagePocToggle?.checked){
-          overviewDamagePocReview.hidden=false;
-          overviewDamagePocSuggestion.textContent="Automatic damage localization completed but no reliable damage target was found.";
-          overviewDamagePocCandidates.textContent="";
-          overviewDamagePocMeta.textContent=result?.location?.reason||"Moondream and Qwen localization could not find a reliable damage target.";
-          overviewDamagePocRetry.hidden=true;
-        }
+    if(currentFixedCalibration?.available&&Array.isArray(currentFixedCalibration.corners)){
+      const edgeAlignment=estimateFixedFaceAlignment(overviewPreview,currentFixedCalibration.corners);
+      if(edgeAlignment?.box){
+        overviewCaptureMeta={
+          ...(overviewCaptureMeta??{}),
+          fixedAlignmentReferenceBox:edgeAlignment.box,
+          fixedAlignmentConfidence:edgeAlignment.confidence,
+          fixedAlignmentSource:edgeAlignment.source
+        };
       }
-    }catch(e){
-      if(requestId!==overviewAiRequest)return;
-      locationAutoUsable=false;
-      locationSuggestion.textContent="Automatic CEDEX location unavailable. Enter the location manually.";
-      locationGeometryMessage.textContent=e instanceof Error?e.message:"Overview analysis unavailable.";
-      tapHelp.textContent="AI marking unavailable. Draw the damage area or switch to pinpoint.";
     }
+
+    if(zeroTouch){
+      await runOverviewDamagePoc();
+      if(requestId!==overviewAiRequest)return;
+      updateFindingReady();
+      return;
+    }
+
+    // Uploading an overview no longer calls /api/vision/locate-overview-damage automatically.
+    // With zero-touch disabled, the surveyor can use the existing manual area/pinpoint tools.
+    locationReview.hidden=false;
+    locationAutoUsable=false;
+    locationSuggestion.textContent="Zero-touch AI finding is off. Mark the damage manually or enable Zero-touch AI finding.";
+    locationGeometryMessage.textContent="No automatic damage-location request was sent for this upload.";
+    overviewMarkTools.hidden=false;
+    tapHelp.hidden=false;
+    drawOverviewComposite();
     updateFindingReady();
   });
 }
+
 overviewPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewPhoto.files?.[0]??null,"system_camera"));
 overviewGalleryPhoto.addEventListener("change",()=>selectOverviewPhoto(overviewGalleryPhoto.files?.[0]??null,"gallery"));
 
