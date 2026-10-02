@@ -1840,7 +1840,7 @@ function drawBox(canvas,box,isAi=false,clear=true){
 function overviewLocalizationSourceLabel(){
   if(overviewEdited)return "Manual";
   if(["QWEN_PRIMARY_BOX","QWEN_PRIMARY_OVERRIDE_POINT","QWEN_POINT_FALLBACK"].includes(aiLocalizationSource))return "AI · Qwen";
-  if(["DETECT_BOX","POINT_FALLBACK"].includes(aiLocalizationSource))return "AI · Moondream";
+  if(["DETECT_BOX","POINT_FALLBACK","MOONDREAM_POINT_FAST"].includes(aiLocalizationSource))return "AI · Moondream";
   return "AI";
 }
 
